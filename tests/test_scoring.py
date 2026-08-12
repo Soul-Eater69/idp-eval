@@ -1,10 +1,6 @@
 """Unit tests for the deterministic scoring functions (no LLM needed)."""
 
-from idp_eval.scoring import (
-    calculate_coverage,
-    calculate_hallucination_score,
-    score_to_label,
-)
+from idp_eval.scoring import calculate_coverage, score_to_label
 
 
 def test_coverage_score():
@@ -26,31 +22,18 @@ def test_coverage_with_partial():
     assert calculate_coverage(items) == 2.5 / 4
 
 
+def test_coverage_all_covered():
+    items = [{"status": "covered"}, {"status": "covered"}]
+    assert calculate_coverage(items) == 1.0
+
+
+def test_coverage_all_missing():
+    items = [{"status": "missing"}, {"status": "missing"}]
+    assert calculate_coverage(items) == 0.0
+
+
 def test_coverage_empty_is_full():
     assert calculate_coverage([]) == 1.0
-
-
-def test_hallucination_score():
-    claims = [
-        {"status": "supported"},
-        {"status": "supported"},
-        {"status": "supported"},
-        {"status": "supported"},
-        {"status": "unsupported"},
-    ]
-    assert calculate_hallucination_score(claims) == 0.20
-
-
-def test_hallucination_counts_contradicted():
-    claims = [
-        {"status": "supported"},
-        {"status": "contradicted"},
-    ]
-    assert calculate_hallucination_score(claims) == 0.5
-
-
-def test_hallucination_empty_is_zero():
-    assert calculate_hallucination_score([]) == 0.0
 
 
 def test_score_to_label():

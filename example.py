@@ -5,11 +5,10 @@ startup, build the framework once, then evaluate cases.
 """
 
 from idp_eval import (
+    CoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessMetric,
-    HallucinationEvaluator,
-    InputCoverageEvaluator,
 )
 from idp_eval.phoenix_client import get_judge_llm, register_tracing
 
@@ -25,8 +24,7 @@ def main() -> None:
     framework = EvaluationFramework(
         evaluators=[
             FaithfulnessMetric(llm=judge_llm),
-            HallucinationEvaluator(llm=judge_llm),
-            InputCoverageEvaluator(llm=judge_llm),
+            CoverageEvaluator(llm=judge_llm),
         ]
     )
 

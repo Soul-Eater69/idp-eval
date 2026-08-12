@@ -1,7 +1,13 @@
 """Faithfulness evaluator.
 
 For v1 this wraps Phoenix's existing ``FaithfulnessEvaluator`` so we get a
-baseline grounding metric without writing our own implementation.
+grounding metric without writing our own implementation.
+
+Faithfulness is the metric we use to evaluate whether the generated output
+contains hallucinated / unsupported information relative to the authoritative
+context. Hallucination is the failure/problem being measured; faithfulness is
+the metric that detects it. There is deliberately no separate top-level
+``hallucination`` metric in v1. Higher is better.
 """
 
 from __future__ import annotations
@@ -10,10 +16,11 @@ from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
 
 
 class FaithfulnessMetric(Evaluator):
-    """Holistic grounding evaluation backed by Phoenix.
+    """Grounding evaluation backed by Phoenix.
 
-    Answers: is the generated output grounded in the provided context?
-    Direction: ``output -> context``.
+    Answers: is the generated output grounded in the provided context, or did it
+    ADD unsupported (hallucinated) information? Direction: ``output -> context``.
+    Higher is better.
     """
 
     name = "faithfulness"

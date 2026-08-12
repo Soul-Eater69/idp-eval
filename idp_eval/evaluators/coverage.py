@@ -1,28 +1,30 @@
-"""Input coverage evaluator.
+"""Coverage evaluator.
 
-The judge identifies the important source items in the context and classifies
-each as covered, partial, or missing in the output. Python calculates the
-weighted coverage score. Higher is better.
+The judge identifies the material source items in the context that are relevant
+to the requested task and classifies each as covered, partial, or missing in the
+output. Python calculates the weighted coverage score. Higher is better.
+
+Coverage answers the "did the output OMIT important relevant information?"
+question. The complementary "did the output ADD unsupported information?"
+question is handled by faithfulness.
 """
 
 from __future__ import annotations
 
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
-from idp_eval.prompts.input_coverage import (
-    INPUT_COVERAGE_PROMPT,
-    INPUT_COVERAGE_SCHEMA,
-)
+from idp_eval.prompts.coverage import COVERAGE_PROMPT, COVERAGE_SCHEMA
 from idp_eval.scoring import calculate_coverage, score_to_label
 
 
-class InputCoverageEvaluator(Evaluator):
-    """Semantic source coverage.
+class CoverageEvaluator(Evaluator):
+    """Semantic coverage of task-relevant context.
 
-    Answers: how much important information from the context is represented in
-    the output? Direction: ``context -> output``. Higher score is better.
+    Answers: how much of the material, task-relevant information from the
+    context is represented in the output? Direction: ``context -> output``.
+    Higher score is better.
     """
 
-    name = "input_coverage"
+    name = "coverage"
 
     def __init__(self, llm):
         """Initializes the evaluator.
@@ -36,7 +38,7 @@ class InputCoverageEvaluator(Evaluator):
 
     def evaluate(self, case: EvaluationCase) -> EvaluationResult:
         """Evaluates coverage for a single case."""
-        prompt = INPUT_COVERAGE_PROMPT.format(
+        prompt = COVERAGE_PROMPT.format(
             input=case.input,
             context=case.context,
             output=case.output,
@@ -44,7 +46,7 @@ class InputCoverageEvaluator(Evaluator):
 
         response = self._llm.generate_object(
             prompt=prompt,
-            schema=INPUT_COVERAGE_SCHEMA,
+            schema=COVERAGE_SCHEMA,
         )
         items = response.get("items", [])
 
@@ -60,7 +62,7 @@ class InputCoverageEvaluator(Evaluator):
             score=score,
             label=score_to_label(score),
             explanation=(
-                f"{len(missing_items)} of {len(items)} important source items "
+                f"{len(missing_items)} of {len(items)} relevant source items "
                 "are missing from the output."
             ),
             details={

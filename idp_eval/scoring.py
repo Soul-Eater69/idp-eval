@@ -1,42 +1,18 @@
 """Deterministic scoring functions.
 
-The judge LLM classifies semantics (supported / unsupported, covered / partial /
-missing). Python turns those classifications into numbers. Never ask the LLM to
-produce the final score directly.
+The judge LLM classifies semantics (covered / partial / missing). Python turns
+those classifications into numbers. Never ask the LLM to produce the final score
+directly.
 """
 
 from __future__ import annotations
 
-# Statuses that count as hallucinated when scoring hallucination.
-HALLUCINATED_STATUSES = {"unsupported", "contradicted"}
-
-# Semantic weights for input coverage.
+# Semantic weights for coverage.
 COVERAGE_VALUES = {
     "covered": 1.0,
     "partial": 0.5,
     "missing": 0.0,
 }
-
-
-def calculate_hallucination_score(claims: list[dict]) -> float:
-    """Calculates the unsupported-claim ratio.
-
-    Args:
-        claims: Claims classified with a ``"status"`` of ``supported``,
-            ``unsupported``, or ``contradicted``.
-
-    Returns:
-        Fraction of claims that are unsupported or contradicted, in ``[0, 1]``.
-        Returns ``0.0`` when there are no claims (nothing unsupported). Lower is
-        better.
-    """
-    if not claims:
-        return 0.0
-
-    unsupported = sum(
-        1 for claim in claims if claim["status"] in HALLUCINATED_STATUSES
-    )
-    return unsupported / len(claims)
 
 
 def calculate_coverage(items: list[dict]) -> float:
@@ -48,7 +24,7 @@ def calculate_coverage(items: list[dict]) -> float:
 
     Returns:
         Coverage score between ``0`` and ``1``. Returns ``1.0`` when there are
-        no important source items to cover. Higher is better.
+        no relevant source items to cover. Higher is better.
     """
     if not items:
         return 1.0

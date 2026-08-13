@@ -73,7 +73,7 @@ from idp_eval import (
     CoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
-    FaithfulnessMetric,
+    FaithfulnessEvaluator,
 )
 from idp_eval.phoenix_client import get_judge_llm, register_tracing
 
@@ -81,7 +81,7 @@ register_tracing(project_name="idp-eval")   # once, at startup
 judge_llm = get_judge_llm()                  # once
 
 framework = EvaluationFramework(evaluators=[
-    FaithfulnessMetric(llm=judge_llm),
+    FaithfulnessEvaluator(llm=judge_llm),
     CoverageEvaluator(llm=judge_llm),
 ])
 

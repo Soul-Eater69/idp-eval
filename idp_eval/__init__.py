@@ -10,7 +10,7 @@ v1 metrics:
         omissions). Higher is better.
 """
 
-from idp_eval.evaluators import CoverageEvaluator, FaithfulnessMetric
+from idp_eval.evaluators import CoverageEvaluator, FaithfulnessEvaluator
 from idp_eval.framework import EvaluationFramework
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
 
@@ -19,7 +19,7 @@ __all__ = [
     "EvaluationResult",
     "Evaluator",
     "EvaluationFramework",
-    "FaithfulnessMetric",
+    "FaithfulnessEvaluator",
     "CoverageEvaluator",
 ]
 

@@ -15,8 +15,12 @@ from __future__ import annotations
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
 
 
-class FaithfulnessMetric(Evaluator):
+class FaithfulnessEvaluator(Evaluator):
     """Grounding evaluation backed by Phoenix.
+
+    A thin adapter around Phoenix's built-in ``FaithfulnessEvaluator`` (imported
+    here as ``PhoenixFaithfulnessEvaluator``) that returns our common
+    ``EvaluationResult``.
 
     Answers: is the generated output grounded in the provided context, or did it
     ADD unsupported (hallucinated) information? Direction: ``output -> context``.
@@ -26,16 +30,19 @@ class FaithfulnessMetric(Evaluator):
     name = "faithfulness"
 
     def __init__(self, llm):
-        """Initializes the metric.
+        """Initializes the evaluator.
 
         Args:
             llm: A Phoenix ``LLM`` (or compatible) judge object.
         """
         # Imported lazily so the rest of the framework (models, scoring) can be
-        # used and tested without Phoenix installed.
-        from phoenix.evals.metrics import FaithfulnessEvaluator
+        # used and tested without Phoenix installed. Aliased to avoid colliding
+        # with our own class of the same name.
+        from phoenix.evals.metrics import (
+            FaithfulnessEvaluator as PhoenixFaithfulnessEvaluator,
+        )
 
-        self._evaluator = FaithfulnessEvaluator(llm=llm)
+        self._evaluator = PhoenixFaithfulnessEvaluator(llm=llm)
 
     def evaluate(self, case: EvaluationCase) -> EvaluationResult:
         """Evaluates grounding for a single case."""

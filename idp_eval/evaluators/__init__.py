@@ -1,9 +1,9 @@
 """Concrete evaluators for the v1 metrics."""
 
 from idp_eval.evaluators.coverage import CoverageEvaluator
-from idp_eval.evaluators.faithfulness import FaithfulnessMetric
+from idp_eval.evaluators.faithfulness import FaithfulnessEvaluator
 
 __all__ = [
-    "FaithfulnessMetric",
+    "FaithfulnessEvaluator",
     "CoverageEvaluator",
 ]

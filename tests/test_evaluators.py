@@ -9,7 +9,7 @@ from idp_eval import (
     CoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
-    FaithfulnessMetric,
+    FaithfulnessEvaluator,
 )
 from idp_eval.models import EvaluationResult, Evaluator
 
@@ -41,9 +41,9 @@ class _FakePhoenixResult:
 
 @pytest.fixture(autouse=True)
 def fake_phoenix(monkeypatch):
-    """Installs a fake ``phoenix.evals.metrics`` so FaithfulnessMetric works.
+    """Installs a fake ``phoenix.evals.metrics`` so FaithfulnessEvaluator works.
 
-    Lets us exercise ``FaithfulnessMetric`` without installing Phoenix or making
+    Lets us exercise ``FaithfulnessEvaluator`` without installing Phoenix or making
     real LLM calls.
     """
 
@@ -116,8 +116,8 @@ def test_coverage_partial_and_missing():
     assert result.details["missing_items"] == ["c"]
 
 
-def test_faithfulness_metric():
-    result = FaithfulnessMetric(llm=object()).evaluate(CASE)
+def test_faithfulness_evaluator():
+    result = FaithfulnessEvaluator(llm=object()).evaluate(CASE)
 
     assert result.metric == "faithfulness"
     assert result.score == 1.0
@@ -128,7 +128,7 @@ def test_faithfulness_metric():
 def test_framework_runs_all_metrics_by_default():
     framework = EvaluationFramework(
         evaluators=[
-            FaithfulnessMetric(llm=object()),
+            FaithfulnessEvaluator(llm=object()),
             CoverageEvaluator(llm=_coverage_judge()),
         ]
     )
@@ -140,7 +140,7 @@ def test_framework_runs_all_metrics_by_default():
 def test_framework_runs_selected_metrics():
     framework = EvaluationFramework(
         evaluators=[
-            FaithfulnessMetric(llm=object()),
+            FaithfulnessEvaluator(llm=object()),
             CoverageEvaluator(llm=_coverage_judge()),
         ]
     )

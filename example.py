@@ -10,8 +10,9 @@ from idp_eval import (
     EvaluationFramework,
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
+    create_judge,
+    register_tracing,
 )
-from idp_eval.phoenix_client import get_judge_llm, register_tracing
 
 
 def _print(results) -> None:
@@ -23,19 +24,20 @@ def _print(results) -> None:
 
 
 def main() -> None:
-    # 1. Tracing stays separate from scoring logic.
+    # 1. Tracing stays separate from judge creation.
     register_tracing(project_name="idp-eval")
 
-    # 2. Build the judge once (wire the corporate gateway http client here).
-    judge_llm = get_judge_llm()
+    # 2. Configure the judge once (from args / env / optional YAML).
+    judge = create_judge()
 
-    # 3. Build the framework once.
+    # 3. Build the framework from evaluator classes + the shared judge.
     framework = EvaluationFramework(
         evaluators=[
-            FaithfulnessEvaluator(llm=judge_llm),
-            CoverageEvaluator(llm=judge_llm),
-            InstructionAdherenceEvaluator(llm=judge_llm),
-        ]
+            FaithfulnessEvaluator,
+            CoverageEvaluator,
+            InstructionAdherenceEvaluator,
+        ],
+        judge=judge,
     )
 
     # 4. Faithfulness/coverage: input is the task used to scope the context.

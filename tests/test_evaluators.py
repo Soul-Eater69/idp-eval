@@ -197,3 +197,77 @@ def test_custom_evaluator_needs_no_framework_change():
     framework = EvaluationFramework(evaluators=[ConstantEvaluator()])
     results = framework.evaluate(CASE)
     assert results["constant"].score == 1.0
+
+
+# --- class-based construction (preferred API) -------------------------------
+
+
+def test_framework_from_classes_shares_judge():
+    judge = _coverage_judge()
+    framework = EvaluationFramework(
+        evaluators=[CoverageEvaluator, InstructionAdherenceEvaluator],
+        judge=judge,
+    )
+    assert set(framework.metrics) == {"coverage", "instruction_adherence"}
+    # The same judge instance was injected into each constructed evaluator.
+    assert framework._evaluators["coverage"]._llm is judge
+    assert framework._evaluators["instruction_adherence"]._llm is judge
+
+
+def test_framework_classes_select_two_only():
+    framework = EvaluationFramework(
+        evaluators=[FaithfulnessEvaluator, CoverageEvaluator],
+        judge=object(),
+    )
+    assert set(framework.metrics) == {"faithfulness", "coverage"}
+
+
+def test_framework_all_three_classes():
+    framework = EvaluationFramework(
+        evaluators=[
+            FaithfulnessEvaluator,
+            CoverageEvaluator,
+            InstructionAdherenceEvaluator,
+        ],
+        judge=object(),
+    )
+    assert set(framework.metrics) == {
+        "faithfulness",
+        "coverage",
+        "instruction_adherence",
+    }
+
+
+def test_framework_duplicate_classes_fail():
+    with pytest.raises(ValueError):
+        EvaluationFramework(
+            evaluators=[CoverageEvaluator, CoverageEvaluator], judge=object()
+        )
+
+
+def test_framework_class_without_judge_raises():
+    with pytest.raises(ValueError):
+        EvaluationFramework(evaluators=[CoverageEvaluator])
+
+
+def test_framework_rejects_invalid_entry():
+    with pytest.raises(TypeError):
+        EvaluationFramework(evaluators=[123], judge=object())
+
+
+def test_framework_custom_evaluator_class_with_judge():
+    class MyEvaluator(Evaluator):
+        name = "my_metric"
+
+        def __init__(self, llm):
+            self._llm = llm
+
+        def evaluate(self, case: EvaluationCase) -> EvaluationResult:
+            return EvaluationResult(
+                metric=self.name, score=0.5, label="medium", explanation="ok"
+            )
+
+    judge = object()
+    framework = EvaluationFramework(evaluators=[MyEvaluator], judge=judge)
+    assert framework._evaluators["my_metric"]._llm is judge
+    assert framework.evaluate(CASE)["my_metric"].score == 0.5

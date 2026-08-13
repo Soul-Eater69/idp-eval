@@ -123,26 +123,32 @@ from idp_eval import (
     EvaluationFramework,
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
+    create_judge,
+    register_tracing,
 )
-from idp_eval.phoenix_client import get_judge_llm, register_tracing
 
-register_tracing(project_name="idp-eval")   # once, at startup
-judge_llm = get_judge_llm()                  # once
+register_tracing(project_name="idp-eval")   # once, at startup (optional)
+judge = create_judge()                       # configure the judge once
 
-framework = EvaluationFramework(evaluators=[
-    FaithfulnessEvaluator(llm=judge_llm),
-    CoverageEvaluator(llm=judge_llm),
-    InstructionAdherenceEvaluator(llm=judge_llm),
-])
+framework = EvaluationFramework(
+    evaluators=[
+        FaithfulnessEvaluator,
+        CoverageEvaluator,
+        InstructionAdherenceEvaluator,
+    ],
+    judge=judge,
+)
 
 results = framework.evaluate(EvaluationCase(
-    input=user_instruction,
+    input=user_task,
     context=source_context,
     output=generated_output,
 ))
 # results["coverage"].score -> 0.75
 ```
 
+You pass evaluator **classes** plus one shared `judge`; the framework constructs
+each with `cls(llm=judge)`. (Passing already-constructed instances still works.)
 Run a subset with `framework.evaluate(case, metrics=["faithfulness", "coverage"])`.
 
 For instruction adherence, put the instruction text in the `instructions` field:
@@ -158,6 +164,41 @@ results = framework.evaluate(case, metrics=["instruction_adherence"])
 ```
 
 See `example.py` for a full runnable script.
+
+## Configuring the judge
+
+`create_judge()` builds a Phoenix judge backed by the corporate IDP gateway. It
+resolves configuration with the precedence **explicit argument > environment
+variable > YAML file**, and raises a `ValueError` listing any missing field names
+(never secret values) if configuration is incomplete. There are no built-in
+defaults for required fields.
+
+Preferred environment variables:
+
+| Field               | Env var                   | Secret |
+| ------------------- | ------------------------- | ------ |
+| `model`             | `IDP_EVAL_MODEL`          |        |
+| `base_url`          | `IDP_EVAL_BASE_URL`       |        |
+| `app_id`            | `IDP_EVAL_APP_ID`         |        |
+| `idp_auth_url`      | `IDP_EVAL_AUTH_URL`       |        |
+| `idp_client_id`     | `IDP_EVAL_CLIENT_ID`      |        |
+| `idp_client_secret` | `IDP_EVAL_CLIENT_SECRET`  | ✓      |
+| `idp_user`          | `IDP_EVAL_USER`           |        |
+| `idp_password`      | `IDP_EVAL_PASSWORD`       | ✓      |
+
+Optional YAML (see `config.example.yaml`); point at it with `IDP_EVAL_CONFIG` or
+`create_judge(config_path=...)`. Keep secrets out of committed YAML — provide
+`idp_client_secret` / `idp_password` via environment variables or explicit args.
+
+```python
+judge = create_judge()                          # all from env / YAML
+judge = create_judge(model="gpt-5-idp-test")    # override just the model
+judge = create_judge(verify_ssl=False)          # local self-signed testing only
+```
+
+TLS verification defaults to `True`; set `verify_ssl=False` (or
+`IDP_EVAL_VERIFY_SSL=false`) only for local testing. Secrets and JWTs are never
+logged or included in error messages.
 
 ## Every metric returns the same shape
 
@@ -175,7 +216,8 @@ idp_eval/
 ├── models.py            # EvaluationCase, EvaluationResult, Evaluator interface
 ├── framework.py         # EvaluationFramework orchestrator
 ├── scoring.py           # deterministic scoring functions
-├── phoenix_client.py    # judge LLM + tracing wiring (one place)
+├── judge.py             # JudgeConfig + create_judge (IDP gateway wiring)
+├── phoenix_client.py    # Phoenix tracing registration
 ├── evaluators/          # faithfulness, coverage, instruction_adherence
 └── prompts/             # versioned judge prompts + JSON schemas (custom metrics)
 ```

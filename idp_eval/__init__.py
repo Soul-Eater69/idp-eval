@@ -24,7 +24,9 @@ from idp_eval.evaluators import (
     InstructionAdherenceEvaluator,
 )
 from idp_eval.framework import EvaluationFramework
+from idp_eval.judge import JudgeConfig, create_judge
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
+from idp_eval.phoenix_client import register_tracing
 
 __all__ = [
     "EvaluationCase",
@@ -34,6 +36,9 @@ __all__ = [
     "FaithfulnessEvaluator",
     "CoverageEvaluator",
     "InstructionAdherenceEvaluator",
+    "JudgeConfig",
+    "create_judge",
+    "register_tracing",
 ]
 
 __version__ = "0.1.0"

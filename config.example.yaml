@@ -1,0 +1,21 @@
+# Example judge configuration for idp-eval (fake values only).
+#
+# Precedence: explicit create_judge(...) args > environment variables > this file.
+# Point at this file with the IDP_EVAL_CONFIG env var or
+# create_judge(config_path="config.yaml").
+#
+# Keep SECRETS OUT of committed config. Provide these via environment variables
+# (or explicit arguments) instead:
+#   idp_client_secret  -> IDP_EVAL_CLIENT_SECRET
+#   idp_password       -> IDP_EVAL_PASSWORD
+#
+# Non-secret values may live here if you prefer:
+#   idp_client_id      -> IDP_EVAL_CLIENT_ID
+#   idp_user           -> IDP_EVAL_USER
+
+judge:
+  model: gpt-5-idp
+  base_url: https://example-gateway
+  app_id: example-app
+  idp_auth_url: https://example-auth
+  # verify_ssl: true   # default; set false only for local self-signed testing

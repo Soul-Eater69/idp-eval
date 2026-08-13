@@ -17,13 +17,13 @@ output  = generated content being evaluated
 | ----------------------- | --------------------------------------------- | ----------------------- | ------ |
 | `faithfulness`          | Is the output grounded in the context?        | `output -> context`     | higher |
 | `coverage`              | How much relevant context reached the output? | `context -> output`     | higher |
-| `instruction_following` | Did the output follow the explicit instructions? | `instructions -> output` | higher |
+| `instruction_adherence` | Did the output obey the supplied explicit instructions? | `instructions -> output` | higher |
 
 Three complementary questions:
 
 - **Faithfulness** — did the output **ADD** unsupported information?
 - **Coverage** — did the output **OMIT** important task-relevant source information?
-- **Instruction Following** — did the output **OBEY** the supplied explicit instructions?
+- **Instruction Adherence** — did the output **OBEY** the supplied explicit instructions?
 
 ### Faithfulness vs. hallucination
 
@@ -62,25 +62,36 @@ COVERAGE_VALUES = {"covered": 1.0, "partial": 0.5, "missing": 0.0}
 coverage = sum(values) / len(items)
 ```
 
-### Instruction Following
+### Instruction Adherence
 
-Instruction following is a **custom** LLM-as-a-judge metric measuring whether the
+Instruction adherence is a **custom** LLM-as-a-judge metric measuring whether the
 output **obeys the explicit instructions** it was given. It uses a versioned
-Phoenix-style prompt (`prompts/instruction_following.py`). The judge decomposes
+Phoenix-style prompt (`prompts/instruction_adherence.py`). The judge decomposes
 the instructions into atomic instructions and classifies each `followed`,
-`partial`, or `violated`; Python computes the score:
+`partial`, `violated`, or `not_applicable`; Python computes the score over the
+**applicable** instructions only:
 
 ```python
-INSTRUCTION_FOLLOWING_VALUES = {"followed": 1.0, "partial": 0.5, "violated": 0.0}
-instruction_following = sum(values) / len(instructions)
+INSTRUCTION_ADHERENCE_VALUES = {"followed": 1.0, "partial": 0.5, "violated": 0.0}
+applicable = [i for i in instructions if i["status"] != "not_applicable"]
+instruction_adherence = sum(values) / len(applicable)
 ```
+
+`not_applicable` covers instructions that genuinely do not apply — e.g. a
+conditional "If the account is inactive, include a warning." when the context
+says the account is active. It is **excluded from the denominator**, not scored
+as a success.
 
 For this metric, **`EvaluationCase.input` must contain only the explicit
 instruction text to evaluate** — not the full generation prompt. `context` is
 optional and consulted only when an instruction requires it (e.g. "only use
-information from the context"). When no meaningful instructions are supplied, the
-result is `score=None`, `label="not_applicable"` (instructions are never
-invented, and "none supplied" is not treated as a perfect score).
+information from the context").
+
+The metric returns `score=None`, `label="not_applicable"` when there is nothing
+applicable to evaluate, with an explanation distinguishing the reason: no
+instructions supplied, no meaningful instructions found, or all supplied
+instructions were not applicable. None of these is treated as a perfect or
+failing score.
 
 ### The generic `input` field
 
@@ -88,7 +99,7 @@ invented, and "none supplied" is not treated as a perfect score).
 
 - **faithfulness** — task information passed to Phoenix alongside context/output.
 - **coverage** — the task/request used to scope relevant context.
-- **instruction_following** — the explicit instructions to evaluate.
+- **instruction_adherence** — the explicit instructions to evaluate.
 
 ## Install
 
@@ -104,7 +115,7 @@ from idp_eval import (
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessEvaluator,
-    InstructionFollowingEvaluator,
+    InstructionAdherenceEvaluator,
 )
 from idp_eval.phoenix_client import get_judge_llm, register_tracing
 
@@ -114,7 +125,7 @@ judge_llm = get_judge_llm()                  # once
 framework = EvaluationFramework(evaluators=[
     FaithfulnessEvaluator(llm=judge_llm),
     CoverageEvaluator(llm=judge_llm),
-    InstructionFollowingEvaluator(llm=judge_llm),
+    InstructionAdherenceEvaluator(llm=judge_llm),
 ])
 
 results = framework.evaluate(EvaluationCase(
@@ -127,7 +138,7 @@ results = framework.evaluate(EvaluationCase(
 
 Run a subset with `framework.evaluate(case, metrics=["faithfulness", "coverage"])`.
 
-For instruction following, put the instruction text in `input`:
+For instruction adherence, put the instruction text in `input`:
 
 ```python
 case = EvaluationCase(
@@ -135,7 +146,7 @@ case = EvaluationCase(
     context=source_context,
     output=generated_output,
 )
-results = framework.evaluate(case, metrics=["instruction_following"])
+results = framework.evaluate(case, metrics=["instruction_adherence"])
 ```
 
 See `example.py` for a full runnable script.
@@ -157,7 +168,7 @@ idp_eval/
 ├── framework.py         # EvaluationFramework orchestrator
 ├── scoring.py           # deterministic scoring functions
 ├── phoenix_client.py    # judge LLM + tracing wiring (one place)
-├── evaluators/          # faithfulness, coverage, instruction_following
+├── evaluators/          # faithfulness, coverage, instruction_adherence
 └── prompts/             # versioned judge prompts + JSON schemas (custom metrics)
 ```
 
@@ -167,8 +178,8 @@ Implement the `Evaluator` interface and pass it to `EvaluationFramework`. No cor
 change is required.
 
 ```python
-class InstructionFollowingEvaluator(Evaluator):
-    name = "instruction_following"
+class InstructionAdherenceEvaluator(Evaluator):
+    name = "instruction_adherence"
     def evaluate(self, case: EvaluationCase) -> EvaluationResult: ...
 ```
 

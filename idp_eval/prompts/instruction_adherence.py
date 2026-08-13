@@ -1,6 +1,6 @@
-"""Prompt for the instruction-following evaluator.
+"""Prompt for the instruction-adherence evaluator.
 
-Instruction following runs from INSTRUCTIONS to OUTPUT: it measures how well the
+Instruction adherence runs from INSTRUCTIONS to OUTPUT: it measures how well the
 generated OUTPUT satisfies the explicit instructions supplied in INPUT. INPUT is
 authoritative for what to evaluate; CONTEXT is only consulted when an instruction
 requires it.
@@ -15,12 +15,12 @@ from __future__ import annotations
 # --- System rubric ----------------------------------------------------------
 # Contains no ``{}`` placeholders so it is safe to leave untouched during
 # rendering.
-_INSTRUCTION_FOLLOWING_SYSTEM_V1 = """\
-You are a strict evaluator measuring INSTRUCTION FOLLOWING: how well a generated
+_INSTRUCTION_ADHERENCE_SYSTEM_V1 = """\
+You are a strict evaluator measuring INSTRUCTION ADHERENCE: how well a generated
 output satisfies the explicit instructions it was given.
 
 DEFINITION
-Instruction Following measures how well the generated OUTPUT satisfies the
+Instruction Adherence measures how well the generated OUTPUT satisfies the
 explicit instructions provided in INSTRUCTIONS. INSTRUCTIONS is authoritative for
 what should be evaluated.
 
@@ -51,8 +51,15 @@ Classify each instruction as exactly one of:
   fails, weakens, or incompletely satisfies another material part.
 - "violated": the OUTPUT does not satisfy the instruction or directly conflicts
   with it.
+- "not_applicable": the instruction does not apply to this specific case because
+  its condition was not triggered or the required situation is absent.
 
-Provide a short reason for each classification.
+Only use "not_applicable" when the instruction genuinely does not apply. Do NOT
+mark an instruction "not_applicable" merely because the OUTPUT failed to satisfy
+it — that is "violated" or "partial".
+
+Provide a short, concise reason for every classification (one sentence). Do not
+produce long chain-of-thought reasoning.
 
 SEMANTIC INSTRUCTIONS
 Instructions such as "Use a professional tone.", "Explain this for a beginner.",
@@ -73,8 +80,12 @@ OUTPUT clearly performs the prohibited action.
 CONDITIONAL INSTRUCTIONS
 For instructions such as "If the account is inactive, include a warning.",
 consult CONTEXT only if needed to determine whether the condition applies. If the
-condition does not apply, do not mark the instruction violated; explain this in
-the reason (it may be treated as followed since there is nothing to violate).
+condition's premise is false or does not apply to this case, classify the
+instruction "not_applicable" (not "followed" and not "violated") and explain in
+the reason why it does not apply. For example, given the instruction "If the
+account is inactive, include a warning." and CONTEXT stating the account is
+active, the correct status is "not_applicable". If the condition is true, evaluate
+whether the required action was performed and classify accordingly.
 
 CONFLICTING INSTRUCTIONS
 If two instructions conflict (e.g. "Be very detailed." and "Keep the answer under
@@ -83,14 +94,15 @@ evaluate what can reasonably be determined for each.
 
 OUTPUT FORMAT
 Return one entry per instruction, each with the instruction text, its status, and
-a brief reason. Do NOT return any numeric score, percentage, or weighting. Python
-computes the score from your classifications.\
+a concise reason (all three are required). Do NOT return any numeric score,
+percentage, weighting, confidence value, or aggregate rating. Python computes the
+score from your classifications.\
 """
 
 # --- User data template ------------------------------------------------------
 # Holds only the data being evaluated; ``{input}``/``{context}``/``{output}`` are
-# filled per call by ``render_instruction_following_prompt``.
-_INSTRUCTION_FOLLOWING_USER_TEMPLATE_V1 = """\
+# filled per call by ``render_instruction_adherence_prompt``.
+_INSTRUCTION_ADHERENCE_USER_TEMPLATE_V1 = """\
 [BEGIN DATA]
 
 [INSTRUCTIONS]
@@ -110,18 +122,18 @@ instruction. OUTPUT is the generated response being evaluated."""
 
 # Versioned message-list prompt. The user message still carries placeholders; it
 # is rendered per call so the module-level template is never mutated.
-INSTRUCTION_FOLLOWING_PROMPT_V1 = [
-    {"role": "system", "content": _INSTRUCTION_FOLLOWING_SYSTEM_V1},
-    {"role": "user", "content": _INSTRUCTION_FOLLOWING_USER_TEMPLATE_V1},
+INSTRUCTION_ADHERENCE_PROMPT_V1 = [
+    {"role": "system", "content": _INSTRUCTION_ADHERENCE_SYSTEM_V1},
+    {"role": "user", "content": _INSTRUCTION_ADHERENCE_USER_TEMPLATE_V1},
 ]
 
 # Current prompt used by the evaluator. Point this at a new version (e.g.
-# INSTRUCTION_FOLLOWING_PROMPT_V2) to benchmark prompts without silently changing
+# INSTRUCTION_ADHERENCE_PROMPT_V2) to benchmark prompts without silently changing
 # the metric.
-INSTRUCTION_FOLLOWING_PROMPT = INSTRUCTION_FOLLOWING_PROMPT_V1
+INSTRUCTION_ADHERENCE_PROMPT = INSTRUCTION_ADHERENCE_PROMPT_V1
 
 # JSON schema for the structured judge response. ``reason`` explains each call.
-INSTRUCTION_FOLLOWING_SCHEMA = {
+INSTRUCTION_ADHERENCE_SCHEMA = {
     "type": "object",
     "properties": {
         "instructions": {
@@ -132,11 +144,16 @@ INSTRUCTION_FOLLOWING_SCHEMA = {
                     "instruction": {"type": "string"},
                     "status": {
                         "type": "string",
-                        "enum": ["followed", "partial", "violated"],
+                        "enum": [
+                            "followed",
+                            "partial",
+                            "violated",
+                            "not_applicable",
+                        ],
                     },
                     "reason": {"type": "string"},
                 },
-                "required": ["instruction", "status"],
+                "required": ["instruction", "status", "reason"],
             },
         }
     },
@@ -144,15 +161,15 @@ INSTRUCTION_FOLLOWING_SCHEMA = {
 }
 
 
-def render_instruction_following_prompt(
+def render_instruction_adherence_prompt(
     input_text: str,
     context: str,
     output: str,
 ) -> list[dict[str, str]]:
-    """Renders the current instruction-following prompt into a fresh message list.
+    """Renders the current instruction-adherence prompt into a fresh message list.
 
     A new list of message dicts is built on every call; the module-level
-    ``INSTRUCTION_FOLLOWING_PROMPT`` template is never mutated. Only the user
+    ``INSTRUCTION_ADHERENCE_PROMPT`` template is never mutated. Only the user
     message's data placeholders are filled; the system rubric is passed through
     unchanged.
 
@@ -166,7 +183,7 @@ def render_instruction_following_prompt(
         A list of ``{"role", "content"}`` message dicts ready for the judge.
     """
     rendered: list[dict[str, str]] = []
-    for message in INSTRUCTION_FOLLOWING_PROMPT:
+    for message in INSTRUCTION_ADHERENCE_PROMPT:
         content = message["content"]
         if message["role"] == "user":
             content = content.format(

@@ -14,8 +14,9 @@ COVERAGE_VALUES = {
     "missing": 0.0,
 }
 
-# Semantic weights for instruction following.
-INSTRUCTION_FOLLOWING_VALUES = {
+# Semantic weights for instruction adherence. ``not_applicable`` is deliberately
+# absent: those instructions are excluded from scoring, not weighted.
+INSTRUCTION_ADHERENCE_VALUES = {
     "followed": 1.0,
     "partial": 0.5,
     "violated": 0.0,
@@ -40,21 +41,36 @@ def calculate_coverage(items: list[dict]) -> float:
     return total / len(items)
 
 
-def calculate_instruction_following(instructions: list[dict]) -> float:
-    """Calculates the instruction-following score.
+def calculate_instruction_adherence(instructions: list[dict]) -> float:
+    """Calculates the instruction-adherence score.
+
+    Instructions classified ``not_applicable`` are excluded before scoring: they
+    are neither a success nor a failure, so they must not affect the denominator.
 
     Args:
         instructions: Instructions classified with a ``"status"`` of
-            ``followed``, ``partial``, or ``violated``. Must be non-empty; the
-            evaluator handles the "no instructions supplied" case separately as
-            not-applicable, so this function is never called with an empty list.
+            ``followed``, ``partial``, ``violated``, or ``not_applicable``.
 
     Returns:
-        Score between ``0`` and ``1`` equal to the mean of the per-instruction
-        status values. Higher is better.
+        Score between ``0`` and ``1`` equal to the mean of the applicable
+        instructions' status values. Higher is better.
+
+    Raises:
+        ValueError: If no applicable instruction remains after excluding
+            ``not_applicable`` ones. The evaluator is responsible for handling
+            that case as not-applicable before calling this function.
     """
-    total = sum(INSTRUCTION_FOLLOWING_VALUES[i["status"]] for i in instructions)
-    return total / len(instructions)
+    applicable = [
+        i for i in instructions if i["status"] != "not_applicable"
+    ]
+    if not applicable:
+        raise ValueError(
+            "At least one applicable instruction is required to calculate "
+            "instruction adherence."
+        )
+
+    total = sum(INSTRUCTION_ADHERENCE_VALUES[i["status"]] for i in applicable)
+    return total / len(applicable)
 
 
 def score_to_label(score: float, high: float = 0.66, low: float = 0.33) -> str:

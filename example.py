@@ -9,7 +9,7 @@ from idp_eval import (
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessEvaluator,
-    InstructionFollowingEvaluator,
+    InstructionAdherenceEvaluator,
 )
 from idp_eval.phoenix_client import get_judge_llm, register_tracing
 
@@ -34,7 +34,7 @@ def main() -> None:
         evaluators=[
             FaithfulnessEvaluator(llm=judge_llm),
             CoverageEvaluator(llm=judge_llm),
-            InstructionFollowingEvaluator(llm=judge_llm),
+            InstructionAdherenceEvaluator(llm=judge_llm),
         ]
     )
 
@@ -52,7 +52,7 @@ def main() -> None:
     )
     _print(framework.evaluate(case, metrics=["faithfulness", "coverage"]))
 
-    # 5. Instruction following: input is ONLY the explicit instructions.
+    # 5. Instruction adherence: input is ONLY the explicit instructions.
     instruction_case = EvaluationCase(
         input=(
             "Use exactly 3 bullet points.\n"
@@ -66,7 +66,7 @@ def main() -> None:
             "- Payment triggers a confirmation."
         ),
     )
-    _print(framework.evaluate(instruction_case, metrics=["instruction_following"]))
+    _print(framework.evaluate(instruction_case, metrics=["instruction_adherence"]))
 
 
 if __name__ == "__main__":

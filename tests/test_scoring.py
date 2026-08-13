@@ -2,7 +2,7 @@
 
 from idp_eval.scoring import (
     calculate_coverage,
-    calculate_instruction_following,
+    calculate_instruction_adherence,
     score_to_label,
 )
 
@@ -40,24 +40,24 @@ def test_coverage_empty_is_full():
     assert calculate_coverage([]) == 1.0
 
 
-def test_instruction_following_mixed():
+def test_instruction_adherence_mixed():
     instructions = [
         {"status": "followed"},
         {"status": "followed"},
         {"status": "partial"},
         {"status": "violated"},
     ]
-    assert calculate_instruction_following(instructions) == 0.625
+    assert calculate_instruction_adherence(instructions) == 0.625
 
 
-def test_instruction_following_all_followed():
+def test_instruction_adherence_all_followed():
     instructions = [{"status": "followed"}, {"status": "followed"}]
-    assert calculate_instruction_following(instructions) == 1.0
+    assert calculate_instruction_adherence(instructions) == 1.0
 
 
-def test_instruction_following_all_violated():
+def test_instruction_adherence_all_violated():
     instructions = [{"status": "violated"}, {"status": "violated"}]
-    assert calculate_instruction_following(instructions) == 0.0
+    assert calculate_instruction_adherence(instructions) == 0.0
 
 
 def test_score_to_label():

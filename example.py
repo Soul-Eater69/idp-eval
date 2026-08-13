@@ -9,8 +9,17 @@ from idp_eval import (
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessEvaluator,
+    InstructionFollowingEvaluator,
 )
 from idp_eval.phoenix_client import get_judge_llm, register_tracing
+
+
+def _print(results) -> None:
+    for name, result in results.items():
+        print(f"[{name}] score={result.score} label={result.label}")
+        print(f"    {result.explanation}")
+        if result.details:
+            print(f"    details={result.details}")
 
 
 def main() -> None:
@@ -25,10 +34,11 @@ def main() -> None:
         evaluators=[
             FaithfulnessEvaluator(llm=judge_llm),
             CoverageEvaluator(llm=judge_llm),
+            InstructionFollowingEvaluator(llm=judge_llm),
         ]
     )
 
-    # 4. Describe any generated output with the generic triple.
+    # 4. Faithfulness/coverage: input is the task used to scope the context.
     case = EvaluationCase(
         input="Generate a feature summary from the provided source.",
         context=(
@@ -40,15 +50,23 @@ def main() -> None:
             "Invoices show the total amount due."
         ),
     )
+    _print(framework.evaluate(case, metrics=["faithfulness", "coverage"]))
 
-    # 5. Run everything (or pass metrics=[...] for a subset).
-    results = framework.evaluate(case)
-
-    for name, result in results.items():
-        print(f"[{name}] score={result.score} label={result.label}")
-        print(f"    {result.explanation}")
-        if result.details:
-            print(f"    details={result.details}")
+    # 5. Instruction following: input is ONLY the explicit instructions.
+    instruction_case = EvaluationCase(
+        input=(
+            "Use exactly 3 bullet points.\n"
+            "Keep each bullet concise.\n"
+            "Do not mention customer names."
+        ),
+        context="",
+        output=(
+            "- Invoices are viewable by users.\n"
+            "- Each invoice shows the total due.\n"
+            "- Payment triggers a confirmation."
+        ),
+    )
+    _print(framework.evaluate(instruction_case, metrics=["instruction_following"]))
 
 
 if __name__ == "__main__":

@@ -13,15 +13,17 @@ output  = generated content being evaluated
 
 ## Metrics (v1)
 
-| Metric         | Question                                     | Direction          | Better |
-| -------------- | -------------------------------------------- | ------------------ | ------ |
-| `faithfulness` | Is the output grounded in the context?       | `output -> context`| higher |
-| `coverage`     | How much relevant context reached the output?| `context -> output`| higher |
+| Metric                  | Question                                      | Direction               | Better |
+| ----------------------- | --------------------------------------------- | ----------------------- | ------ |
+| `faithfulness`          | Is the output grounded in the context?        | `output -> context`     | higher |
+| `coverage`              | How much relevant context reached the output? | `context -> output`     | higher |
+| `instruction_following` | Did the output follow the explicit instructions? | `instructions -> output` | higher |
 
-Two complementary questions:
+Three complementary questions:
 
 - **Faithfulness** — did the output **ADD** unsupported information?
-- **Coverage** — did the output **OMIT** important relevant information?
+- **Coverage** — did the output **OMIT** important task-relevant source information?
+- **Instruction Following** — did the output **OBEY** the supplied explicit instructions?
 
 ### Faithfulness vs. hallucination
 
@@ -60,6 +62,34 @@ COVERAGE_VALUES = {"covered": 1.0, "partial": 0.5, "missing": 0.0}
 coverage = sum(values) / len(items)
 ```
 
+### Instruction Following
+
+Instruction following is a **custom** LLM-as-a-judge metric measuring whether the
+output **obeys the explicit instructions** it was given. It uses a versioned
+Phoenix-style prompt (`prompts/instruction_following.py`). The judge decomposes
+the instructions into atomic instructions and classifies each `followed`,
+`partial`, or `violated`; Python computes the score:
+
+```python
+INSTRUCTION_FOLLOWING_VALUES = {"followed": 1.0, "partial": 0.5, "violated": 0.0}
+instruction_following = sum(values) / len(instructions)
+```
+
+For this metric, **`EvaluationCase.input` must contain only the explicit
+instruction text to evaluate** — not the full generation prompt. `context` is
+optional and consulted only when an instruction requires it (e.g. "only use
+information from the context"). When no meaningful instructions are supplied, the
+result is `score=None`, `label="not_applicable"` (instructions are never
+invented, and "none supplied" is not treated as a perfect score).
+
+### The generic `input` field
+
+`EvaluationCase` stays generic; the meaning of `input` depends on the metric:
+
+- **faithfulness** — task information passed to Phoenix alongside context/output.
+- **coverage** — the task/request used to scope relevant context.
+- **instruction_following** — the explicit instructions to evaluate.
+
 ## Install
 
 ```bash
@@ -74,6 +104,7 @@ from idp_eval import (
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessEvaluator,
+    InstructionFollowingEvaluator,
 )
 from idp_eval.phoenix_client import get_judge_llm, register_tracing
 
@@ -83,6 +114,7 @@ judge_llm = get_judge_llm()                  # once
 framework = EvaluationFramework(evaluators=[
     FaithfulnessEvaluator(llm=judge_llm),
     CoverageEvaluator(llm=judge_llm),
+    InstructionFollowingEvaluator(llm=judge_llm),
 ])
 
 results = framework.evaluate(EvaluationCase(
@@ -94,6 +126,18 @@ results = framework.evaluate(EvaluationCase(
 ```
 
 Run a subset with `framework.evaluate(case, metrics=["faithfulness", "coverage"])`.
+
+For instruction following, put the instruction text in `input`:
+
+```python
+case = EvaluationCase(
+    input="Use exactly 3 bullet points.\nDo not mention customer names.",
+    context=source_context,
+    output=generated_output,
+)
+results = framework.evaluate(case, metrics=["instruction_following"])
+```
+
 See `example.py` for a full runnable script.
 
 ## Every metric returns the same shape
@@ -113,8 +157,8 @@ idp_eval/
 ├── framework.py         # EvaluationFramework orchestrator
 ├── scoring.py           # deterministic scoring functions
 ├── phoenix_client.py    # judge LLM + tracing wiring (one place)
-├── evaluators/          # faithfulness, coverage
-└── prompts/             # versioned judge prompt + JSON schema (coverage)
+├── evaluators/          # faithfulness, coverage, instruction_following
+└── prompts/             # versioned judge prompts + JSON schemas (custom metrics)
 ```
 
 ## Adding a metric

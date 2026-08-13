@@ -10,6 +10,7 @@ from idp_eval import (
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessEvaluator,
+    InstructionFollowingEvaluator,
 )
 from idp_eval.models import EvaluationResult, Evaluator
 
@@ -135,6 +136,22 @@ def test_framework_runs_all_metrics_by_default():
     results = framework.evaluate(CASE)
 
     assert set(results) == {"faithfulness", "coverage"}
+
+
+def test_framework_runs_all_three_metrics():
+    instruction_judge = FakeJudge(
+        {"instructions": [{"instruction": "x", "status": "followed"}]}
+    )
+    framework = EvaluationFramework(
+        evaluators=[
+            FaithfulnessEvaluator(llm=object()),
+            CoverageEvaluator(llm=_coverage_judge()),
+            InstructionFollowingEvaluator(llm=instruction_judge),
+        ]
+    )
+    results = framework.evaluate(CASE)
+
+    assert set(results) == {"faithfulness", "coverage", "instruction_following"}
 
 
 def test_framework_runs_selected_metrics():

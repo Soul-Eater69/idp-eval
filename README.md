@@ -6,10 +6,16 @@ summarization, or test-case generation. Every evaluation uses the same generic
 triple:
 
 ```text
-input   = what the model was asked to do
-context = authoritative source information
-output  = generated content being evaluated
+input        = what the model was asked to do (the task/request)
+context      = authoritative source information
+output       = generated content being evaluated
+instructions = explicit instructions to check (optional; instruction_adherence only)
 ```
+
+`input` and `instructions` are separate fields with fixed meanings, so the same
+`EvaluationCase` can be run through every metric without any field changing
+meaning. `instruction_adherence` reads `instructions` and never falls back to
+`input`.
 
 ## Metrics (v1)
 
@@ -82,10 +88,10 @@ conditional "If the account is inactive, include a warning." when the context
 says the account is active. It is **excluded from the denominator**, not scored
 as a success.
 
-For this metric, **`EvaluationCase.input` must contain only the explicit
-instruction text to evaluate** — not the full generation prompt. `context` is
-optional and consulted only when an instruction requires it (e.g. "only use
-information from the context").
+For this metric, put the explicit instruction text in the dedicated
+**`EvaluationCase.instructions`** field (not `input`). `context` is optional and
+consulted only when an instruction requires it (e.g. "only use information from
+the context").
 
 The metric returns `score=None`, `label="not_applicable"` when there is nothing
 applicable to evaluate, with an explanation distinguishing the reason: no
@@ -93,13 +99,14 @@ instructions supplied, no meaningful instructions found, or all supplied
 instructions were not applicable. None of these is treated as a perfect or
 failing score.
 
-### The generic `input` field
+### Which fields each metric reads
 
-`EvaluationCase` stays generic; the meaning of `input` depends on the metric:
+`EvaluationCase` fields have fixed meanings; each metric reads only what it needs:
 
-- **faithfulness** — task information passed to Phoenix alongside context/output.
-- **coverage** — the task/request used to scope relevant context.
-- **instruction_adherence** — the explicit instructions to evaluate.
+- **faithfulness** — `input` (task) + `context` + `output`, passed to Phoenix.
+- **coverage** — `input` (task, used to scope relevant context) + `context` + `output`.
+- **instruction_adherence** — `instructions` + `context` + `output`. Reads the
+  dedicated `instructions` field, never `input`.
 
 ## Install
 
@@ -138,11 +145,12 @@ results = framework.evaluate(EvaluationCase(
 
 Run a subset with `framework.evaluate(case, metrics=["faithfulness", "coverage"])`.
 
-For instruction adherence, put the instruction text in `input`:
+For instruction adherence, put the instruction text in the `instructions` field:
 
 ```python
 case = EvaluationCase(
-    input="Use exactly 3 bullet points.\nDo not mention customer names.",
+    input=user_task,
+    instructions="Use exactly 3 bullet points.\nDo not mention customer names.",
     context=source_context,
     output=generated_output,
 )

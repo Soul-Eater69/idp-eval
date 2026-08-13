@@ -1,18 +1,19 @@
 """Instruction-adherence evaluator.
 
-The judge decomposes the explicit instructions supplied in ``EvaluationCase.input``
-into atomic instructions and classifies each as followed, partial, violated, or
-not_applicable in the output. Python calculates the score. Higher is better.
+The judge decomposes the explicit instructions supplied in
+``EvaluationCase.instructions`` into atomic instructions and classifies each as
+followed, partial, violated, or not_applicable in the output. Python calculates
+the score. Higher is better.
 
-For this metric, ``input`` contains ONLY the instructions to evaluate (not the
-full generation prompt). ``context`` is optional supporting information consulted
-only when an instruction requires it. Direction: ``instructions -> output``.
+This metric reads ``case.instructions`` (the dedicated instruction field), never
+``case.input``. ``context`` is optional supporting information consulted only
+when an instruction requires it. Direction: ``instructions -> output``.
 
 ``not_applicable`` instructions (e.g. an untriggered conditional) are excluded
 from scoring entirely. The metric returns ``score=None`` with
 ``label="not_applicable"`` when there is nothing applicable to evaluate. Three
 distinct situations produce that result, distinguished by their explanation:
-    - no instructions supplied in input;
+    - no instructions supplied on the case;
     - the judge found no meaningful instructions;
     - every supplied instruction was not applicable to this case.
 None of these is treated as a perfect (1.0) or failing (0.0) score.
@@ -51,14 +52,15 @@ class InstructionAdherenceEvaluator(Evaluator):
     def evaluate(self, case: EvaluationCase) -> EvaluationResult:
         """Evaluates instruction adherence for a single case."""
         # No instructions supplied: the metric does not apply. Short-circuit
-        # before calling the judge so it cannot invent instructions.
-        if not case.input or not case.input.strip():
+        # before calling the judge so it cannot invent instructions. This reads
+        # the dedicated instructions field, never falling back to input.
+        if not case.instructions or not case.instructions.strip():
             return self._not_applicable(
-                "No instructions were supplied in input.", instructions=[]
+                "No instructions were supplied on the case.", instructions=[]
             )
 
         prompt = render_instruction_adherence_prompt(
-            input_text=case.input,
+            instructions=case.instructions,
             context=case.context,
             output=case.output,
         )

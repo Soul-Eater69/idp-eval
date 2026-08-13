@@ -1,7 +1,7 @@
 """Prompt for the instruction-adherence evaluator.
 
 Instruction adherence runs from INSTRUCTIONS to OUTPUT: it measures how well the
-generated OUTPUT satisfies the explicit instructions supplied in INPUT. INPUT is
+generated OUTPUT satisfies the explicit INSTRUCTIONS. INSTRUCTIONS is
 authoritative for what to evaluate; CONTEXT is only consulted when an instruction
 requires it.
 
@@ -100,13 +100,13 @@ score from your classifications.\
 """
 
 # --- User data template ------------------------------------------------------
-# Holds only the data being evaluated; ``{input}``/``{context}``/``{output}`` are
-# filled per call by ``render_instruction_adherence_prompt``.
+# Holds only the data being evaluated; ``{instructions}``/``{context}``/
+# ``{output}`` are filled per call by ``render_instruction_adherence_prompt``.
 _INSTRUCTION_ADHERENCE_USER_TEMPLATE_V1 = """\
 [BEGIN DATA]
 
 [INSTRUCTIONS]
-{input}
+{instructions}
 
 [CONTEXT]
 {context}
@@ -162,7 +162,7 @@ INSTRUCTION_ADHERENCE_SCHEMA = {
 
 
 def render_instruction_adherence_prompt(
-    input_text: str,
+    instructions: str,
     context: str,
     output: str,
 ) -> list[dict[str, str]]:
@@ -174,8 +174,8 @@ def render_instruction_adherence_prompt(
     unchanged.
 
     Args:
-        input_text: The explicit instructions to evaluate
-            (``EvaluationCase.input``).
+        instructions: The explicit instructions to evaluate
+            (``EvaluationCase.instructions``).
         context: Optional supporting/source information.
         output: The generated content being evaluated.
 
@@ -187,7 +187,7 @@ def render_instruction_adherence_prompt(
         content = message["content"]
         if message["role"] == "user":
             content = content.format(
-                input=input_text,
+                instructions=instructions,
                 context=context,
                 output=output,
             )

@@ -68,6 +68,7 @@ def fake_phoenix(monkeypatch):
 
 CASE = EvaluationCase(
     input="Summarize the invoice features from the provided source.",
+    instructions="Keep it concise.",
     context="Users can view invoices. Invoices show the total amount due.",
     output="Users can view invoices. Invoices are stored in AWS S3.",
 )

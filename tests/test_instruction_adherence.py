@@ -42,7 +42,8 @@ def _judge(*statuses: str) -> FakeJudge:
 
 
 CASE = EvaluationCase(
-    input="Use exactly 3 bullet points.\nDo not mention customer names.",
+    input="Summarize the invoice features.",
+    instructions="Use exactly 3 bullet points.\nDo not mention customer names.",
     context="",
     output="- a\n- b\n- c",
 )
@@ -89,13 +90,27 @@ def test_returns_evaluation_result():
 # --- empty / not-applicable behavior ----------------------------------------
 
 
-def test_no_instructions_blank_input_is_not_applicable():
+def test_no_instructions_blank_is_not_applicable():
     judge = _judge("followed")  # would score 1.0 if it were ever called
-    case = EvaluationCase(input="   ", context="", output="whatever")
+    case = EvaluationCase(
+        input="Some task.", instructions="   ", context="", output="whatever"
+    )
     result = InstructionAdherenceEvaluator(llm=judge).evaluate(case)
     assert result.score is None
     assert result.label == "not_applicable"
     # The judge must not be consulted when there are no instructions.
+    assert judge.calls == []
+
+
+def test_missing_instructions_field_is_not_applicable():
+    # instructions defaults to None; input must NOT be used as a fallback.
+    judge = _judge("followed")
+    case = EvaluationCase(
+        input="Use exactly 3 bullet points.", context="", output="- a"
+    )
+    result = InstructionAdherenceEvaluator(llm=judge).evaluate(case)
+    assert result.score is None
+    assert result.label == "not_applicable"
     assert judge.calls == []
 
 
@@ -192,7 +207,8 @@ def test_conditional_instruction_condition_applies():
     # The condition depends on context; verify context reaches the judge prompt
     # so it can decide whether the instruction applies. Here it applies.
     case = EvaluationCase(
-        input="If the account is inactive, include a warning.",
+        input="Draft an account summary.",
+        instructions="If the account is inactive, include a warning.",
         context="Account status: inactive.",
         output="Warning: this account is inactive.",
     )
@@ -217,7 +233,8 @@ def test_conditional_instruction_condition_does_not_apply():
     # Condition is false (account active) -> the single instruction is
     # not_applicable, so the metric has nothing applicable to score.
     case = EvaluationCase(
-        input="If the account is inactive, include a warning.",
+        input="Draft an account summary.",
+        instructions="If the account is inactive, include a warning.",
         context="Account status: active.",
         output="Your account summary is ready.",
     )
@@ -267,15 +284,17 @@ def test_prompt_is_message_list_and_scoped():
     system = prompt[0]["content"]
     assert "Instruction Adherence measures" in system
     user = prompt[1]["content"]
-    assert "[INSTRUCTIONS]" in user and CASE.input in user
+    assert "[INSTRUCTIONS]" in user and CASE.instructions in user
     assert "[OUTPUT]" in user and CASE.output in user
+    # The task input must NOT leak into the instruction-adherence prompt.
+    assert CASE.input not in user
 
 
 def test_render_does_not_mutate_global_template():
     before = copy.deepcopy(INSTRUCTION_ADHERENCE_PROMPT)
-    render_instruction_adherence_prompt(input_text="a", context="b", output="c")
+    render_instruction_adherence_prompt(instructions="a", context="b", output="c")
     assert INSTRUCTION_ADHERENCE_PROMPT == before
-    assert "{input}" in INSTRUCTION_ADHERENCE_PROMPT[1]["content"]
+    assert "{instructions}" in INSTRUCTION_ADHERENCE_PROMPT[1]["content"]
 
 
 # --- framework integration --------------------------------------------------

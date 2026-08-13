@@ -11,10 +11,11 @@ v1 metrics:
     instruction_adherence: does the output obey the explicit instructions in
         input? Higher is better.
 
-The meaning of ``EvaluationCase.input`` depends on the metric/application:
-    faithfulness: task information passed to Phoenix alongside context/output.
-    coverage: the task/request used to scope relevant context.
-    instruction_adherence: the explicit instruction text to evaluate.
+Which ``EvaluationCase`` fields each metric reads:
+    faithfulness: input (task) + context + output, passed to Phoenix.
+    coverage: input (task, used to scope relevant context) + context + output.
+    instruction_adherence: instructions + context + output. It reads the
+        dedicated ``instructions`` field, never ``input``.
 """
 
 from idp_eval.evaluators import (

@@ -16,10 +16,20 @@ from typing import Any
 class EvaluationCase:
     """A single generated output to evaluate.
 
+    ``input`` and ``instructions`` are distinct on purpose so the same case can
+    be run through every metric without any field changing meaning:
+
+    - ``input`` is the task/request (used by ``coverage`` to scope relevant
+      context, and passed to Phoenix by ``faithfulness``).
+    - ``instructions`` is the explicit instruction text evaluated by
+      ``instruction_adherence``. It is never derived from ``input``.
+
     Attributes:
-        input: What the model was asked to do.
+        input: What the model was asked to do (the task/request).
         context: Authoritative source information.
         output: Generated content being evaluated.
+        instructions: Explicit instructions to evaluate for adherence. Optional;
+            required only by the ``instruction_adherence`` metric.
         case_id: Optional identifier for tracing and reporting.
         metadata: Optional free-form metadata carried alongside the case.
     """
@@ -27,6 +37,7 @@ class EvaluationCase:
     input: str
     context: str
     output: str
+    instructions: str | None = None
     case_id: str | None = None
     metadata: dict[str, Any] | None = None
 

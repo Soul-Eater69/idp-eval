@@ -52,9 +52,10 @@ def main() -> None:
     )
     _print(framework.evaluate(case, metrics=["faithfulness", "coverage"]))
 
-    # 5. Instruction adherence: input is ONLY the explicit instructions.
+    # 5. Instruction adherence: the explicit instructions go in `instructions`.
     instruction_case = EvaluationCase(
-        input=(
+        input="Summarize the invoice features.",
+        instructions=(
             "Use exactly 3 bullet points.\n"
             "Keep each bullet concise.\n"
             "Do not mention customer names."

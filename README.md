@@ -32,24 +32,28 @@ There is deliberately **no separate `hallucination` metric**.
 - **Faithfulness** = the metric used to evaluate grounding and detect that
   failure. Higher faithfulness means fewer hallucinated / unsupported additions.
 
-Faithfulness wraps Phoenix's built-in `FaithfulnessEvaluator`.
+Faithfulness is **Phoenix built-in** (`FaithfulnessEvaluator`) and measures
+whether the output **adds unsupported information**.
 
 ### Coverage
 
-Coverage is our custom LLM-as-a-judge metric. It means:
+Coverage is our **custom** LLM-as-a-judge metric. It measures whether the output
+**omits material, task-relevant information** from the context:
 
 > How much of the material information in the authoritative context that is
 > relevant to satisfying the task (`input`) is represented in the `output`?
 
-The judge uses `input` to understand the requested task, identifies only the
-material, task-relevant context items (ignoring boilerplate, IDs, repetition,
-and formatting), and classifies each item semantically as `covered`, `partial`,
-or `missing`. Semantic paraphrases count as covered, exact wording is not
-required, and unsupported *additions* are **not** penalized here — those belong
-to faithfulness.
+It uses a **versioned, Phoenix-style judge prompt** (a system + user message
+list in `prompts/coverage.py`, `COVERAGE_PROMPT_V1`). The system message holds
+the rubric; the user message holds the `[BEGIN DATA]` block. The judge uses
+`input` to scope the task, extracts only material, task-relevant context items
+(ignoring boilerplate, IDs, repetition, formatting), judges semantically
+(paraphrases count; no fuzzy string matching), and classifies each item as
+`covered`, `partial`, or `missing`. Unsupported *additions* are **not** penalized
+here — those belong to faithfulness.
 
-The judge only **classifies**; deterministic Python in `scoring.py` computes the
-number:
+The **LLM only classifies** (never returns a number); deterministic Python in
+`scoring.py` computes the coverage score:
 
 ```python
 COVERAGE_VALUES = {"covered": 1.0, "partial": 0.5, "missing": 0.0}

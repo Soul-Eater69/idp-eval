@@ -2,7 +2,7 @@
 
 The judge identifies the material source items in the context that are relevant
 to the requested task and classifies each as covered, partial, or missing in the
-output. Python calculates the weighted coverage score. Higher is better.
+output. Python calculates the coverage score. Higher is better.
 
 Coverage answers the "did the output OMIT important relevant information?"
 question. The complementary "did the output ADD unsupported information?"
@@ -12,7 +12,7 @@ question is handled by faithfulness.
 from __future__ import annotations
 
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
-from idp_eval.prompts.coverage import COVERAGE_PROMPT, COVERAGE_SCHEMA
+from idp_eval.prompts.coverage import COVERAGE_SCHEMA, render_coverage_prompt
 from idp_eval.scoring import calculate_coverage, score_to_label
 
 
@@ -31,15 +31,16 @@ class CoverageEvaluator(Evaluator):
 
         Args:
             llm: A judge object exposing
-                ``generate_object(prompt: str, schema: dict) -> dict``. Phoenix's
-                ``LLM`` satisfies this contract.
+                ``generate_object(prompt, schema: dict) -> dict`` where ``prompt``
+                is a Phoenix-style message list (``[{"role", "content"}, ...]``).
+                Phoenix's ``LLM`` satisfies this contract.
         """
         self._llm = llm
 
     def evaluate(self, case: EvaluationCase) -> EvaluationResult:
         """Evaluates coverage for a single case."""
-        prompt = COVERAGE_PROMPT.format(
-            input=case.input,
+        prompt = render_coverage_prompt(
+            input_text=case.input,
             context=case.context,
             output=case.output,
         )

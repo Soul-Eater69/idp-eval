@@ -90,8 +90,14 @@ def test_coverage_evaluator():
     assert result.metric == "coverage"
     assert result.score == 0.5
     assert result.details["missing_items"] == ["Invoices show total amount due."]
-    # Judge was actually invoked with a formatted prompt.
-    assert CASE.output in judge.calls[0]["prompt"]
+    # Judge was invoked with a rendered message-list prompt.
+    prompt = judge.calls[0]["prompt"]
+    assert isinstance(prompt, list)
+    roles = [message["role"] for message in prompt]
+    assert roles == ["system", "user"]
+    user_content = prompt[1]["content"]
+    assert CASE.output in user_content
+    assert CASE.input in user_content
 
 
 def test_coverage_partial_and_missing():

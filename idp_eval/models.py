@@ -1,8 +1,9 @@
 """Core data model and evaluator interface for the idp eval framework.
 
 These types are intentionally generic. They carry no application-specific
-vocabulary (no Jira, no RAG, no test cases) so any generated AI output can be
-described with the same ``input`` / ``context`` / ``output`` triple.
+vocabulary (no Jira, no RAG, no test cases). A generated output is described by
+an ``input`` (task/request), optional explicit ``instructions``, authoritative
+``context``, and the generated ``output``.
 """
 
 from __future__ import annotations

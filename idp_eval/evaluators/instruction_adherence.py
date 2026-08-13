@@ -33,7 +33,8 @@ class InstructionAdherenceEvaluator(Evaluator):
     """Semantic instruction-adherence judgment.
 
     Answers: how well does the output obey the explicit instructions provided in
-    ``input``? Direction: ``instructions -> output``. Higher score is better.
+    ``instructions``? Direction: ``instructions -> output``. Higher score is
+    better.
     """
 
     name = "instruction_adherence"
@@ -74,7 +75,7 @@ class InstructionAdherenceEvaluator(Evaluator):
         # The judge found no meaningful instructions to evaluate.
         if not instructions:
             return self._not_applicable(
-                "No meaningful instructions were found in input.", instructions=[]
+                "No meaningful instructions were found.", instructions=[]
             )
 
         applicable = [

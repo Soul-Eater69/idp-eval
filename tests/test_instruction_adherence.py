@@ -119,7 +119,7 @@ def test_judge_finds_no_instructions_is_not_applicable():
     result = InstructionAdherenceEvaluator(llm=judge).evaluate(CASE)
     assert result.score is None
     assert result.label == "not_applicable"
-    assert result.explanation == "No meaningful instructions were found in input."
+    assert result.explanation == "No meaningful instructions were found."
 
 
 def test_not_applicable_excluded_from_denominator():

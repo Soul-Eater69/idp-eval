@@ -39,10 +39,20 @@ instructions. For example, the text
 "Use exactly 3 bullet points. Keep each bullet under 20 words. Do not mention
 customer names. Focus on business impact." yields four instructions.
 
-Keep instructions atomic but meaningful. Do not split one instruction into
-meaningless wording fragments. For example, "Use exactly three concise bullet
-points." must NOT become "use bullets", "use three", "be concise" unless those
-are genuinely independent, separately evaluable constraints.
+Split a compound instruction when it contains independently satisfiable or
+independently violatable requirements, while keeping each extracted requirement
+semantically meaningful. For example, "Use exactly three concise bullet points."
+may be decomposed into:
+- "Use exactly three bullet points."
+- "Keep the bullet points concise."
+This is desirable because one requirement can be satisfied while the other is
+violated: three extremely long bullet points satisfy the count requirement but
+violate the conciseness requirement.
+
+Do not split instructions into meaningless lexical fragments. For example, do NOT
+produce "use", "three", "bullet", "concise". The goal is decomposition that is
+atomic enough for accurate scoring and diagnostics, semantically meaningful, and
+independently evaluable where appropriate.
 
 CLASSIFICATION
 Classify each instruction as exactly one of:

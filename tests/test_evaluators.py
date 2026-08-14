@@ -77,9 +77,17 @@ CASE = EvaluationCase(
 def _coverage_judge():
     return FakeJudge(
         {
-            "items": [
-                {"source_item": "Users can view invoices.", "status": "covered"},
-                {"source_item": "Invoices show total amount due.", "status": "missing"},
+            "requirements": [
+                {
+                    "requirement": "Users can view invoices.",
+                    "status": "covered",
+                    "reason": "Output states invoices are viewable.",
+                },
+                {
+                    "requirement": "Invoices show total amount due.",
+                    "status": "missing",
+                    "reason": "Output omits the total amount due.",
+                },
             ]
         }
     )
@@ -91,7 +99,8 @@ def test_coverage_evaluator():
 
     assert result.metric == "coverage"
     assert result.score == 0.5
-    assert result.details["missing_items"] == ["Invoices show total amount due."]
+    assert result.details["total_requirements"] == 2
+    assert result.details["missing_count"] == 1
     # Judge was invoked with a rendered message-list prompt.
     prompt = judge.calls[0]["prompt"]
     assert isinstance(prompt, list)
@@ -105,17 +114,18 @@ def test_coverage_evaluator():
 def test_coverage_partial_and_missing():
     judge = FakeJudge(
         {
-            "items": [
-                {"source_item": "a", "status": "covered"},
-                {"source_item": "b", "status": "partial"},
-                {"source_item": "c", "status": "missing"},
+            "requirements": [
+                {"requirement": "a", "status": "covered", "reason": "r"},
+                {"requirement": "b", "status": "partial", "reason": "r"},
+                {"requirement": "c", "status": "missing", "reason": "r"},
             ]
         }
     )
     result = CoverageEvaluator(llm=judge).evaluate(CASE)
 
     assert result.score == (1.0 + 0.5 + 0.0) / 3
-    assert result.details["missing_items"] == ["c"]
+    assert result.details["missing_count"] == 1
+    assert result.details["items"][1]["score"] == 0.5
 
 
 def test_faithfulness_evaluator():

@@ -4,21 +4,23 @@ import copy
 
 from idp_eval.prompts.coverage import (
     COVERAGE_PROMPT,
-    COVERAGE_PROMPT_V1,
+    COVERAGE_PROMPT_V2,
     COVERAGE_SCHEMA,
     render_coverage_prompt,
 )
 
 
 def test_prompt_is_message_list_with_system_and_user():
-    assert COVERAGE_PROMPT is COVERAGE_PROMPT_V1
+    assert COVERAGE_PROMPT is COVERAGE_PROMPT_V2
     roles = [message["role"] for message in COVERAGE_PROMPT]
     assert roles == ["system", "user"]
 
 
 def test_system_message_holds_rubric_not_data():
     system = COVERAGE_PROMPT[0]["content"]
-    assert "Coverage measures how much of the material information" in system
+    assert "How much of the task-relevant information" in system
+    # Recall-style decomposition + classification vocabulary is present.
+    assert "atomic requirements" in system
     assert "covered" in system and "partial" in system and "missing" in system
     # Rubric explicitly separates coverage from faithfulness.
     assert "faithfulness" in system.lower()
@@ -35,7 +37,6 @@ def test_render_fills_user_sections():
         output="OUTPUT_TEXT",
     )
     user = messages[1]["content"]
-    # Data lands in the correct labelled sections.
     assert "[INPUT]\nTASK_TEXT" in user
     assert "[CONTEXT]\nCONTEXT_TEXT" in user
     assert "[OUTPUT]\nOUTPUT_TEXT" in user
@@ -45,7 +46,6 @@ def test_render_fills_user_sections():
 def test_render_does_not_mutate_global_template():
     before = copy.deepcopy(COVERAGE_PROMPT)
     render_coverage_prompt(input_text="a", context="b", output="c")
-    # The module-level template is untouched: still has placeholders.
     assert COVERAGE_PROMPT == before
     assert "{input}" in COVERAGE_PROMPT[1]["content"]
 
@@ -60,11 +60,15 @@ def test_render_returns_fresh_object_each_call():
 
 def test_system_rubric_forbids_numeric_scores():
     system = COVERAGE_PROMPT[0]["content"]
-    assert "Do NOT return any numeric score" in system
+    assert "Do NOT return any aggregate score" in system
 
 
-def test_schema_allows_optional_reason():
-    item_props = COVERAGE_SCHEMA["properties"]["items"]["items"]["properties"]
-    assert set(item_props) == {"source_item", "status", "reason"}
-    required = COVERAGE_SCHEMA["properties"]["items"]["items"]["required"]
-    assert "reason" not in required
+def test_schema_uses_requirements_with_required_reason():
+    req_items = COVERAGE_SCHEMA["properties"]["requirements"]["items"]
+    assert set(req_items["properties"]) == {"requirement", "status", "reason"}
+    assert req_items["required"] == ["requirement", "status", "reason"]
+    assert req_items["properties"]["status"]["enum"] == [
+        "covered",
+        "partial",
+        "missing",
+    ]

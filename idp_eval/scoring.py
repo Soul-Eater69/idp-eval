@@ -23,21 +23,46 @@ INSTRUCTION_ADHERENCE_VALUES = {
 }
 
 
-def calculate_coverage(items: list[dict]) -> float:
-    """Calculates semantic source coverage.
+def coverage_status_score(status: str) -> float:
+    """Maps one coverage status to its deterministic numeric score.
 
     Args:
-        items: Source items classified with a ``"status"`` of ``covered``,
+        status: One of ``covered``, ``partial``, or ``missing``.
+
+    Returns:
+        ``1.0`` / ``0.5`` / ``0.0`` respectively.
+
+    Raises:
+        ValueError: If ``status`` is not a recognized coverage status. Unknown
+            statuses fail loudly rather than silently receiving a score.
+    """
+    try:
+        return COVERAGE_VALUES[status]
+    except KeyError:
+        raise ValueError(f"Unknown coverage status: {status!r}") from None
+
+
+def calculate_coverage(items: list[dict]) -> float:
+    """Aggregates item-level coverage classifications into a single score.
+
+    Each item's ``"status"`` is mapped deterministically to a numeric score and
+    the mean is returned. The LLM never produces this number.
+
+    Args:
+        items: Requirements/items classified with a ``"status"`` of ``covered``,
             ``partial``, or ``missing``.
 
     Returns:
         Coverage score between ``0`` and ``1``. Returns ``1.0`` when there are
-        no relevant source items to cover. Higher is better.
+        no task-relevant requirements to cover. Higher is better.
+
+    Raises:
+        ValueError: If any item carries an unrecognized status.
     """
     if not items:
         return 1.0
 
-    total = sum(COVERAGE_VALUES[item["status"]] for item in items)
+    total = sum(coverage_status_score(item["status"]) for item in items)
     return total / len(items)
 
 

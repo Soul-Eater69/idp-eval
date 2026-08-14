@@ -45,28 +45,38 @@ whether the output **adds unsupported information**.
 
 ### Coverage
 
-Coverage is our **custom** LLM-as-a-judge metric. It measures whether the output
-**omits material, task-relevant information** from the context:
+Coverage measures how completely the generated output represents the
+task-relevant information in the supplied context. The judge decomposes the
+relevant context into **atomic requirements** and classifies each as `covered`,
+`partial`, or `missing`. The final score is calculated deterministically from
+those item-level judgments — it is an aggregate coverage score derived from
+item-level judgments, not an "exact semantic percentage" produced by the LLM.
 
-> How much of the material information in the authoritative context that is
-> relevant to satisfying the task (`input`) is represented in the `output`?
+Flow: `input + context` → derive task-relevant atomic requirements → compare each
+to `output` → `covered / partial / missing` → deterministic mapping → aggregate.
+The judge uses `input` to scope which context is relevant (ignoring boilerplate,
+IDs, repetition, unrelated details), keeps important qualifiers (e.g. "25%",
+"real-time") attached to each requirement, and judges semantically (paraphrases
+count). Unsupported *additions* are **not** penalized here — coverage does not do
+hallucination detection; that is faithfulness's job.
 
-It uses a **versioned, Phoenix-style judge prompt** (a system + user message
-list in `prompts/coverage.py`, `COVERAGE_PROMPT_V1`). The system message holds
-the rubric; the user message holds the `[BEGIN DATA]` block. The judge uses
-`input` to scope the task, extracts only material, task-relevant context items
-(ignoring boilerplate, IDs, repetition, formatting), judges semantically
-(paraphrases count; no fuzzy string matching), and classifies each item as
-`covered`, `partial`, or `missing`. Unsupported *additions* are **not** penalized
-here — those belong to faithfulness.
-
-The **LLM only classifies** (never returns a number); deterministic Python in
-`scoring.py` computes the coverage score:
+The **LLM only decomposes and classifies** (it never returns a number).
+Deterministic Python in `scoring.py` computes the score:
 
 ```python
 COVERAGE_VALUES = {"covered": 1.0, "partial": 0.5, "missing": 0.0}
-coverage = sum(values) / len(items)
+coverage = sum(item_scores) / number_of_requirements
 ```
+
+For example, four requirements judged `covered`, `missing`, `covered`, `partial`
+give `(1.0 + 0.0 + 1.0 + 0.5) / 4 = 0.625` → **62.5%**. The `EvaluationResult`
+exposes both the aggregate `score` and a per-requirement breakdown in `details`
+(`total_requirements`, `covered_count`, `partial_count`, `missing_count`, and
+`items` with each requirement's status, Python-computed score, and reason).
+
+Uses a **versioned, Phoenix-style judge prompt** (`prompts/coverage.py`,
+`COVERAGE_PROMPT_V2`; the earlier `COVERAGE_PROMPT_V1` is retained for
+benchmarking).
 
 ### Instruction Adherence
 

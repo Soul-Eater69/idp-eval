@@ -74,6 +74,18 @@ exposes both the aggregate `score` and a per-requirement breakdown in `details`
 (`total_requirements`, `covered_count`, `partial_count`, `missing_count`, and
 `items` with each requirement's status, Python-computed score, and reason).
 
+Before scoring, Python removes **normalized-exact** duplicate requirements
+(lowercase + collapsed whitespace), keeping the first occurrence. If the judge
+returns **no** task-relevant requirements, coverage is **not-applicable**
+(`score=None`, `label="not_applicable"`) — a failure to identify requirements is
+not treated as perfect coverage.
+
+**Known limitations (v1):** it is a single judge call, so the same call both
+derives the requirements and sees the output while classifying them (possible
+extraction bias); and deduplication is normalized-exact only, so semantic
+near-duplicates may remain distinct. Both are accepted for now — see
+[Roadmap](#coverage-roadmap-not-yet-implemented).
+
 Uses a **versioned, Phoenix-style judge prompt** (`prompts/coverage.py`,
 `COVERAGE_PROMPT_V2`; the earlier `COVERAGE_PROMPT_V1` is retained for
 benchmarking).
@@ -252,3 +264,59 @@ pytest
 - `tests/test_scoring.py` — scoring logic, no LLM.
 - `tests/test_evaluators.py` — evaluators + framework via a `FakeJudge` and a
   fake Phoenix module, no real LLM calls.
+
+Unit tests never call a real LLM or the IDP gateway.
+
+## Benchmarking coverage
+
+### Determinism / stability (developer tool)
+
+LLM output is not deterministic, and the single-call coverage design can vary its
+requirement set run to run. To *observe* how stable it actually is, run the same
+case repeatedly against the configured real judge:
+
+```bash
+python -m scripts.coverage_stability --runs 20
+```
+
+It prints each run's requirement count and score, then a summary: score
+mean/min/max/range/stddev, requirement-count spread, and mean pairwise
+normalized-exact requirement overlap (Jaccard). This is a manual developer tool —
+it uses the real judge and is **not** part of the unit test suite (only the pure
+`summarize_runs` statistics are unit-tested with fake data).
+
+### Ground truth for coverage quality
+
+Do not treat "another LLM said coverage = 78%" as ground truth. Recommended:
+
+1. Human reviewers identify/review the golden atomic task-relevant requirements.
+2. Humans label each requirement `covered` / `partial` / `missing`.
+3. Python computes the GT score with the same `1.0 / 0.5 / 0.0` mapping.
+4. Compare the evaluator's labels and score against those. A strong LLM may
+   *bootstrap* proposed labels, but humans establish the final GT.
+
+```json
+{
+  "input": "...", "context": "...", "output": "...",
+  "gold_requirements": [
+    {"requirement": "Reduce onboarding time by 25%", "status": "covered"},
+    {"requirement": "Reduce abandoned registrations", "status": "missing"},
+    {"requirement": "Automate identity verification", "status": "covered"},
+    {"requirement": "Reduce verification effort by 40%", "status": "partial"}
+  ],
+  "gold_score": 0.625
+}
+```
+
+## Coverage roadmap (not yet implemented)
+
+Deliberately deferred until stability benchmarking shows they are needed:
+
+- **Two-call evaluation** — extract requirements from `input + context` (call 1),
+  then classify against `output` (call 2). Reduces output-conditioned extraction
+  bias; roughly doubles judge calls.
+- **Pinned / golden requirement checklist** — evaluate different outputs against a
+  fixed human-reviewed requirement set (stable denominator) for benchmark use.
+- **Importance weighting** — `must` / `should` / `nice` weights, only after
+  benchmark evidence that the flat mean is misleading.
+- **Semantic deduplication** — only if normalized-exact dedup proves insufficient.

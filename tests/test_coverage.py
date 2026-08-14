@@ -115,14 +115,53 @@ def test_unsupported_addition_does_not_lower_coverage():
     assert result.score == 1.0
 
 
-def test_no_requirements_is_full_and_explained():
+def test_no_requirements_is_not_applicable():
     result = _evaluate(FakeJudge({"requirements": []}))
-    assert result.score == 1.0
+    assert result.score is None
+    assert result.label == "not_applicable"
     assert result.details["total_requirements"] == 0
+    assert result.details["items"] == []
     assert (
         result.explanation
         == "No task-relevant requirements were identified in the supplied context."
     )
+
+
+def test_normalized_exact_duplicates_collapse():
+    judge = FakeJudge(
+        {
+            "requirements": [
+                {"requirement": "Reduce onboarding time", "status": "covered", "reason": "r"},
+                {"requirement": " reduce   onboarding time ", "status": "covered", "reason": "r"},
+                {"requirement": "REDUCE ONBOARDING TIME", "status": "covered", "reason": "r"},
+            ]
+        }
+    )
+    result = _evaluate(judge)
+    assert result.details["total_requirements"] == 1
+    assert result.score == 1.0
+    # First occurrence is kept verbatim.
+    assert result.details["items"][0]["requirement"] == "Reduce onboarding time"
+
+
+def test_dedup_keeps_distinct_requirements():
+    judge = _requirements(
+        ("Reduce onboarding time", "covered"),
+        ("Automate verification", "missing"),
+    )
+    result = _evaluate(judge)
+    assert result.details["total_requirements"] == 2
+    assert result.score == 0.5
+
+
+def test_near_duplicates_remain_distinct():
+    # Documented limitation: semantic near-duplicates are NOT merged.
+    judge = _requirements(
+        ("Automate verification", "covered"),
+        ("Verification should be automated", "covered"),
+    )
+    result = _evaluate(judge)
+    assert result.details["total_requirements"] == 2
 
 
 def test_unknown_status_fails_clearly():

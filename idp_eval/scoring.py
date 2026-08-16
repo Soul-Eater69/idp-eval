@@ -42,6 +42,42 @@ def coverage_status_score(status: str) -> float:
         raise ValueError(f"Unknown coverage status: {status!r}") from None
 
 
+def coverage_status_from_binary(
+    meaningfully_present: bool, fully_present: bool
+) -> str:
+    """Derives the three-way coverage status from two binary judgments.
+
+    The judge returns only the two booleans; Python derives the category:
+
+        not meaningfully_present            -> "missing"
+        meaningfully_present, fully_present -> "covered"
+        meaningfully_present, not full      -> "partial"
+
+    Args:
+        meaningfully_present: Whether any meaningful part of the requirement is
+            represented in the output.
+        fully_present: Whether the full material requirement (including
+            qualifiers) is represented.
+
+    Returns:
+        One of ``"covered"``, ``"partial"``, or ``"missing"``.
+
+    Raises:
+        ValueError: For the logically inconsistent combination
+            ``fully_present=True`` with ``meaningfully_present=False``.
+    """
+    if fully_present and not meaningfully_present:
+        raise ValueError(
+            "Invalid coverage classification: fully_present=True requires "
+            "meaningfully_present=True."
+        )
+    if not meaningfully_present:
+        return "missing"
+    if fully_present:
+        return "covered"
+    return "partial"
+
+
 def calculate_coverage(items: list[dict]) -> float:
     """Aggregates item-level coverage classifications into a single score.
 

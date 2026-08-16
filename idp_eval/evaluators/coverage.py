@@ -1,66 +1,60 @@
-"""Coverage evaluator.
+"""Coverage evaluator (two-stage, QAG-style).
 
-Recall-style, auditable coverage using a single judge call:
+Coverage measures how completely the generated output represents the
+task-relevant information in the supplied context. It runs two isolated judge
+calls per case:
 
-    input + context + output   (ONE judge call)
-                    -> derive task-relevant atomic requirements
-                    -> classify each requirement against output
-                    -> covered / partial / missing
-                    -> normalize + exact-dedup (Python)
-                    -> deterministic numeric mapping (Python)
-                    -> aggregate 0.0-1.0 score
+    STAGE 1 - extraction:  input + context            -> atomic requirements
+    STAGE 2 - classification: requirements + output   -> two binary judgments/req
 
-The judge only performs semantic decomposition and item-level classification.
-Python maps ``covered/partial/missing`` to ``1.0/0.5/0.0`` and averages them, so
-the aggregate score is reproducible and every requirement is explained.
+Python then derives covered/partial/missing from the booleans, maps them to
+1.0/0.5/0.0, and averages. Stage 1 never sees the output (so extraction cannot be
+biased by it), and Stage 2 cannot change the requirement set (so the denominator
+is fixed). The judge never emits a numeric score.
+
+Cost: exactly two judge calls for a non-applicable-or-scored evaluation, and one
+call when extraction finds no requirements. It is two calls total, never one call
+per requirement.
 
 Coverage answers "did the output OMIT important task-relevant information?" The
-complementary "did the output ADD unsupported information?" question is handled
-by faithfulness; coverage never performs hallucination detection.
+"did the output ADD unsupported information?" question is faithfulness's job;
+coverage never performs hallucination detection.
 
-Known limitations (v1, intentionally accepted for now):
-    - Single call: the same call both derives the requirements and sees the
-      output while classifying them, which can bias extraction. A future
-      two-call design would extract requirements without the output.
-    - Deduplication is normalized-exact only; semantic near-duplicates (e.g.
-      "automate verification" vs "verification should be automated") may remain
-      distinct and each count toward the denominator.
+Known limitation (v1): deduplication is normalized-exact only, so semantic
+near-duplicate requirements may remain distinct and each count in the denominator.
 """
 
 from __future__ import annotations
 
+import json
+
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
-from idp_eval.prompts.coverage import COVERAGE_SCHEMA, render_coverage_prompt
+from idp_eval.prompts.coverage_classify import (
+    COVERAGE_CLASSIFY_SCHEMA,
+    render_coverage_classify_prompt,
+)
+from idp_eval.prompts.coverage_extract import (
+    COVERAGE_EXTRACT_SCHEMA,
+    render_coverage_extract_prompt,
+)
 from idp_eval.scoring import (
     calculate_coverage,
+    coverage_status_from_binary,
     coverage_status_score,
     score_to_label,
 )
 
 
 def _normalize_requirement(text: str) -> str:
-    """Normalizes requirement text for exact-match deduplication.
-
-    Lowercases and collapses all runs of whitespace to single spaces, so
-    ``"Reduce Onboarding Time"``, ``" reduce   onboarding time "``, and
-    ``"REDUCE ONBOARDING TIME"`` normalize to the same key.
-
-    Args:
-        text: Raw requirement text from the judge.
-
-    Returns:
-        A normalized key string.
-    """
+    """Normalizes requirement text for exact-match deduplication."""
     return " ".join(text.lower().split())
 
 
 def _dedup_requirements(requirements: list[dict]) -> list[dict]:
     """Removes normalized-exact duplicate requirements, keeping first occurrence.
 
-    This is a lightweight safeguard; semantic near-duplicates are not merged.
-
     Args:
-        requirements: Parsed judge requirement entries.
+        requirements: Parsed extraction entries (each with ``requirement``).
 
     Returns:
         The requirements with normalized-exact duplicates removed.
@@ -68,7 +62,7 @@ def _dedup_requirements(requirements: list[dict]) -> list[dict]:
     seen: set[str] = set()
     deduped: list[dict] = []
     for req in requirements:
-        key = _normalize_requirement(req.get("requirement", ""))
+        key = _normalize_requirement(req["requirement"])
         if key in seen:
             continue
         seen.add(key)
@@ -77,11 +71,9 @@ def _dedup_requirements(requirements: list[dict]) -> list[dict]:
 
 
 class CoverageEvaluator(Evaluator):
-    """Semantic coverage of task-relevant context.
+    """Two-stage semantic coverage of task-relevant context.
 
-    Answers: how completely does the output represent the task-relevant
-    information in the context? Direction: ``input + context -> output``. Higher
-    score is better.
+    Direction: ``input + context -> output``. Higher score is better.
     """
 
     name = "coverage"
@@ -92,28 +84,17 @@ class CoverageEvaluator(Evaluator):
         Args:
             llm: A judge object exposing
                 ``generate_object(prompt, schema: dict) -> dict`` where ``prompt``
-                is a Phoenix-style message list (``[{"role", "content"}, ...]``).
-                Phoenix's ``LLM`` satisfies this contract.
+                is a Phoenix-style message list. The same judge is reused for both
+                stages. Phoenix's ``LLM`` satisfies this contract.
         """
         self._llm = llm
 
     def evaluate(self, case: EvaluationCase) -> EvaluationResult:
-        """Evaluates coverage for a single case."""
-        prompt = render_coverage_prompt(
-            input_text=case.input,
-            context=case.context,
-            output=case.output,
-        )
+        """Evaluates coverage for a single case using two judge calls."""
+        requirements = self._extract_requirements(case)
 
-        response = self._llm.generate_object(
-            prompt=prompt,
-            schema=COVERAGE_SCHEMA,
-        )
-        requirements = _dedup_requirements(response.get("requirements", []))
-
-        # No task-relevant requirements: the metric does not apply. Returning a
-        # perfect 1.0 here would make a failure to identify requirements look
-        # like perfect coverage, so return not-applicable instead.
+        # No task-relevant requirements: skip Stage 2, do not divide by zero, and
+        # do not report perfect coverage for a failure to identify requirements.
         if not requirements:
             return EvaluationResult(
                 metric=self.name,
@@ -132,28 +113,17 @@ class CoverageEvaluator(Evaluator):
                 },
             )
 
-        # Attach the deterministic per-item score in Python (never the LLM).
-        # Unknown statuses raise a clear ValueError via coverage_status_score.
-        items = [
-            {
-                "requirement": req.get("requirement", ""),
-                "status": req["status"],
-                "score": coverage_status_score(req["status"]),
-                "reason": req.get("reason", ""),
-            }
-            for req in requirements
-        ]
-
-        score = calculate_coverage(requirements)
+        classifications = self._classify_requirements(case, requirements)
+        items = self._build_items(requirements, classifications)
+        score = calculate_coverage(items)
 
         covered = [i for i in items if i["status"] == "covered"]
         partial = [i for i in items if i["status"] == "partial"]
         missing = [i for i in items if i["status"] == "missing"]
-        total = len(items)
 
         percentage = f"{round(score * 100, 1):g}"
         explanation = (
-            f"Coverage was {percentage}% across {total} task-relevant "
+            f"Coverage was {percentage}% across {len(items)} task-relevant "
             f"requirements: {len(covered)} covered, {len(partial)} partial, "
             f"and {len(missing)} missing."
         )
@@ -164,10 +134,105 @@ class CoverageEvaluator(Evaluator):
             label=score_to_label(score),
             explanation=explanation,
             details={
-                "total_requirements": total,
+                "total_requirements": len(items),
                 "covered_count": len(covered),
                 "partial_count": len(partial),
                 "missing_count": len(missing),
                 "items": items,
             },
         )
+
+    def _extract_requirements(self, case: EvaluationCase) -> list[dict]:
+        """Stage 1: derives deduplicated, id-tagged requirements (no output).
+
+        Returns:
+            A list of ``{"id": "r<n>", "requirement": str}`` in extraction order.
+        """
+        prompt = render_coverage_extract_prompt(
+            input_text=case.input,
+            context=case.context,
+        )
+        response = self._llm.generate_object(
+            prompt=prompt,
+            schema=COVERAGE_EXTRACT_SCHEMA,
+        )
+        raw = _dedup_requirements(response.get("requirements", []))
+        return [
+            {"id": f"r{index}", "requirement": req["requirement"]}
+            for index, req in enumerate(raw, start=1)
+        ]
+
+    def _classify_requirements(
+        self, case: EvaluationCase, requirements: list[dict]
+    ) -> list[dict]:
+        """Stage 2: batched binary classification of the fixed requirement set."""
+        requirements_json = json.dumps(requirements, ensure_ascii=False)
+        prompt = render_coverage_classify_prompt(
+            input_text=case.input,
+            requirements_json=requirements_json,
+            output=case.output,
+        )
+        response = self._llm.generate_object(
+            prompt=prompt,
+            schema=COVERAGE_CLASSIFY_SCHEMA,
+        )
+        return response.get("requirements", [])
+
+    @staticmethod
+    def _build_items(
+        requirements: list[dict], classifications: list[dict]
+    ) -> list[dict]:
+        """Validates id integrity and derives per-requirement status + score.
+
+        The classification must cover exactly the extracted requirement ids —
+        once each, no unknown ids, none missing. Results are reconstructed in the
+        original extraction order regardless of the order returned.
+
+        Raises:
+            ValueError: On duplicate, unknown, or missing ids, non-boolean
+                fields, or a logically inconsistent binary combination.
+        """
+        by_id: dict[str, dict] = {}
+        for entry in classifications:
+            cid = entry["id"]
+            if cid in by_id:
+                raise ValueError(
+                    f"Duplicate requirement id in classification: {cid!r}"
+                )
+            by_id[cid] = entry
+
+        expected = {req["id"] for req in requirements}
+        unknown = sorted(set(by_id) - expected)
+        if unknown:
+            raise ValueError(
+                f"Unknown requirement id(s) in classification: {unknown}"
+            )
+        missing = sorted(expected - set(by_id))
+        if missing:
+            raise ValueError(
+                f"Missing classification for requirement id(s): {missing}"
+            )
+
+        items: list[dict] = []
+        for req in requirements:  # original extraction order
+            entry = by_id[req["id"]]
+            present = entry["meaningfully_present"]
+            full = entry["fully_present"]
+            if not isinstance(present, bool) or not isinstance(full, bool):
+                raise ValueError(
+                    f"Non-boolean classification for {req['id']!r}: "
+                    "meaningfully_present/fully_present must be booleans."
+                )
+            status = coverage_status_from_binary(present, full)
+            items.append(
+                {
+                    "id": req["id"],
+                    "requirement": req["requirement"],
+                    "meaningfully_present": present,
+                    "fully_present": full,
+                    "status": status,
+                    "score": coverage_status_score(status),
+                    "reason": entry.get("reason", ""),
+                }
+            )
+        return items

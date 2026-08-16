@@ -1,13 +1,16 @@
 """Development-only coverage stability benchmark.
 
-Runs the SAME case through the coverage evaluator many times against the
-configured real judge and reports how stable the single-call result is (score
-spread, requirement-count spread, and normalized-exact requirement overlap).
+Runs the SAME case through the two-stage coverage evaluator many times against
+the configured real judge and reports how stable the result is: score spread,
+requirement-count spread, normalized-exact requirement-set overlap (Stage 1
+extraction stability), and status consistency for requirements that recur across
+runs (Stage 2 classification stability).
 
-This is a manual developer tool. It is NOT part of the public evaluation API and
-is NOT exercised by the unit test suite (the unit tests only cover the pure
-``summarize_runs`` statistics via fake data). LLM behavior is not deterministic;
-this tool is for *observing* stability, not asserting it.
+Because Stage 1 is now isolated from the output, this tool is especially useful
+for measuring extraction stability. It is a manual developer tool: NOT part of the
+public API and NOT exercised by the unit suite (only the pure ``summarize_runs``
+statistics are unit-tested with fake data). LLM behavior is not deterministic;
+this observes stability, it does not assert it. Each run costs two judge calls.
 
 Usage:
     python -m scripts.coverage_stability --runs 20
@@ -27,10 +30,13 @@ class RunRecord:
     Attributes:
         score: Aggregate coverage score, or ``None`` for a not-applicable result.
         requirements: The requirement texts the judge derived this run.
+        statuses: Optional mapping of normalized requirement text -> derived
+            status for this run, used to measure classification consistency.
     """
 
     score: float | None
     requirements: list[str]
+    statuses: dict[str, str] | None = None
 
 
 def _normalize(text: str) -> str:
@@ -61,6 +67,33 @@ def _mean_pairwise_overlap(run_requirement_sets: list[set[str]]) -> float | None
     return sum(jaccards) / len(jaccards)
 
 
+def _status_consistency(records: list[RunRecord]) -> float | None:
+    """Fraction of recurring requirements that got the same status every run.
+
+    Considers only normalized requirements that appear (with a status) in at
+    least two runs.
+
+    Args:
+        records: Per-run coverage observations.
+
+    Returns:
+        Consistency fraction in ``[0, 1]``, or ``None`` when no requirement
+        recurs across runs or statuses were not recorded.
+    """
+    per_requirement: dict[str, list[str]] = {}
+    for record in records:
+        if record.statuses is None:
+            continue
+        for norm_req, status in record.statuses.items():
+            per_requirement.setdefault(norm_req, []).append(status)
+
+    recurring = {k: v for k, v in per_requirement.items() if len(v) >= 2}
+    if not recurring:
+        return None
+    consistent = sum(1 for statuses in recurring.values() if len(set(statuses)) == 1)
+    return consistent / len(recurring)
+
+
 def summarize_runs(records: list[RunRecord]) -> dict:
     """Computes stability statistics over repeated runs of the same case.
 
@@ -69,7 +102,8 @@ def summarize_runs(records: list[RunRecord]) -> dict:
 
     Returns:
         A dict of stability statistics. Score statistics ignore not-applicable
-        (``None``) scores; requirement-overlap uses normalized-exact matching.
+        (``None``) scores; requirement-overlap and status-consistency use
+        normalized-exact matching.
     """
     scores = [r.score for r in records if r.score is not None]
     counts = [len(r.requirements) for r in records]
@@ -94,6 +128,7 @@ def summarize_runs(records: list[RunRecord]) -> dict:
         "score": _stats(scores),
         "requirement_count": _stats([float(c) for c in counts]),
         "mean_pairwise_requirement_overlap": overlap,
+        "status_consistency": _status_consistency(records),
     }
 
 
@@ -139,8 +174,12 @@ def main() -> None:
     records: list[RunRecord] = []
     for run in range(1, args.runs + 1):
         result = evaluator.evaluate(case)
-        requirements = [item["requirement"] for item in result.details["items"]]
-        records.append(RunRecord(score=result.score, requirements=requirements))
+        items = result.details["items"]
+        requirements = [item["requirement"] for item in items]
+        statuses = {_normalize(item["requirement"]): item["status"] for item in items}
+        records.append(
+            RunRecord(score=result.score, requirements=requirements, statuses=statuses)
+        )
         print(f"Run {run}: requirements={len(requirements)} score={result.score}")
 
     summary = summarize_runs(records)

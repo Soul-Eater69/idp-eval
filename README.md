@@ -46,49 +46,58 @@ whether the output **adds unsupported information**.
 ### Coverage
 
 Coverage measures how completely the generated output represents the
-task-relevant information in the supplied context. The judge decomposes the
-relevant context into **atomic requirements** and classifies each as `covered`,
-`partial`, or `missing`. The final score is calculated deterministically from
-those item-level judgments — it is an aggregate coverage score derived from
-item-level judgments, not an "exact semantic percentage" produced by the LLM.
+task-relevant information in the supplied context. It is a **two-stage** metric —
+**two judge calls** per case:
 
-Flow: `input + context` → derive task-relevant atomic requirements → compare each
-to `output` → `covered / partial / missing` → deterministic mapping → aggregate.
-The judge uses `input` to scope which context is relevant (ignoring boilerplate,
-IDs, repetition, unrelated details), keeps important qualifiers (e.g. "25%",
-"real-time") attached to each requirement, and judges semantically (paraphrases
-count). Unsupported *additions* are **not** penalized here — coverage does not do
-hallucination detection; that is faithfulness's job.
+```
+Stage 1 (extraction):     input + context        → atomic requirements   (no output)
+Stage 2 (classification): requirements + output  → 2 booleans / requirement
+```
 
-The **LLM only decomposes and classifies** (it never returns a number).
-Deterministic Python in `scoring.py` computes the score:
+**Stage 1** derives the atomic, task-relevant requirements from `input + context`
+and **never sees the output**, so extraction can't be biased by what was
+generated. It keeps important qualifiers (e.g. "25%", "real-time") attached and
+splits compound requirements. Python then dedups (**normalized-exact**: lowercase
++ collapsed whitespace, first kept) and assigns stable ids `r1, r2, …`.
+
+**Stage 2** classifies exactly that fixed requirement set against the `output`
+(it cannot add/remove/rewrite requirements, so the denominator is fixed). For each
+requirement the judge returns two booleans — `meaningfully_present` and
+`fully_present` — and **Python derives the status**:
 
 ```python
-COVERAGE_VALUES = {"covered": 1.0, "partial": 0.5, "missing": 0.0}
+not meaningfully_present            -> "missing"   (0.0)
+meaningfully_present & fully_present -> "covered"  (1.0)
+meaningfully_present & not full      -> "partial"  (0.5)
 coverage = sum(item_scores) / number_of_requirements
 ```
 
-For example, four requirements judged `covered`, `missing`, `covered`, `partial`
-give `(1.0 + 0.0 + 1.0 + 0.5) / 4 = 0.625` → **62.5%**. The `EvaluationResult`
-exposes both the aggregate `score` and a per-requirement breakdown in `details`
-(`total_requirements`, `covered_count`, `partial_count`, `missing_count`, and
-`items` with each requirement's status, Python-computed score, and reason).
+The **LLM never returns a number**. For example four requirements judged
+`covered, missing, partial, covered` give `(1.0 + 0.0 + 0.5 + 1.0) / 4 = 0.625` →
+**62.5%**. `EvaluationResult.details` exposes `total_requirements`, the
+covered/partial/missing counts, and `items` (each with `id`, `requirement`, both
+booleans, derived `status`, Python `score`, and `reason`).
 
-Before scoring, Python removes **normalized-exact** duplicate requirements
-(lowercase + collapsed whitespace), keeping the first occurrence. If the judge
-returns **no** task-relevant requirements, coverage is **not-applicable**
-(`score=None`, `label="not_applicable"`) — a failure to identify requirements is
-not treated as perfect coverage.
+If Stage 1 finds **no** task-relevant requirements, coverage is **not-applicable**
+(`score=None`, `label="not_applicable"`) and Stage 2 is skipped (one call only) —
+a failure to identify requirements is not treated as perfect coverage.
 
-**Known limitations (v1):** it is a single judge call, so the same call both
-derives the requirements and sees the output while classifying them (possible
-extraction bias); and deduplication is normalized-exact only, so semantic
-near-duplicates may remain distinct. Both are accepted for now — see
+Coverage measures completeness (omissions). Unsupported *additions* are **not**
+penalized here — that is faithfulness's job; coverage never does hallucination
+detection.
+
+**Cost:** coverage uses **two judge calls total** per case (extraction +
+batched classification), never one call per requirement. This is intentional — it
+isolates the requirement denominator from the output and improves auditability and
+stability.
+
+**Known limitation (v1):** deduplication is normalized-exact only, so semantic
+near-duplicates may remain distinct. See
 [Roadmap](#coverage-roadmap-not-yet-implemented).
 
-Uses a **versioned, Phoenix-style judge prompt** (`prompts/coverage.py`,
-`COVERAGE_PROMPT_V2`; the earlier `COVERAGE_PROMPT_V1` is retained for
-benchmarking).
+Uses two versioned Phoenix-style prompts: `prompts/coverage_extract.py`
+(`COVERAGE_EXTRACT_PROMPT_V1`) and `prompts/coverage_classify.py`
+(`COVERAGE_CLASSIFY_PROMPT_V1`).
 
 ### Instruction Adherence
 
@@ -271,19 +280,21 @@ Unit tests never call a real LLM or the IDP gateway.
 
 ### Determinism / stability (developer tool)
 
-LLM output is not deterministic, and the single-call coverage design can vary its
-requirement set run to run. To *observe* how stable it actually is, run the same
-case repeatedly against the configured real judge:
+LLM output is not deterministic, and extraction can vary its requirement set run
+to run. To *observe* how stable it actually is, run the same case repeatedly
+against the configured real judge:
 
 ```bash
 python -m scripts.coverage_stability --runs 20
 ```
 
 It prints each run's requirement count and score, then a summary: score
-mean/min/max/range/stddev, requirement-count spread, and mean pairwise
-normalized-exact requirement overlap (Jaccard). This is a manual developer tool —
-it uses the real judge and is **not** part of the unit test suite (only the pure
-`summarize_runs` statistics are unit-tested with fake data).
+mean/min/max/range/stddev, requirement-count spread, mean pairwise
+normalized-exact requirement overlap (Stage 1 extraction stability), and status
+consistency for recurring requirements (Stage 2 classification stability). This is
+a manual developer tool — it uses the real judge (two calls per run) and is
+**not** part of the unit test suite (only the pure `summarize_runs` statistics are
+unit-tested with fake data).
 
 ### Ground truth for coverage quality
 
@@ -312,9 +323,6 @@ Do not treat "another LLM said coverage = 78%" as ground truth. Recommended:
 
 Deliberately deferred until stability benchmarking shows they are needed:
 
-- **Two-call evaluation** — extract requirements from `input + context` (call 1),
-  then classify against `output` (call 2). Reduces output-conditioned extraction
-  bias; roughly doubles judge calls.
 - **Pinned / golden requirement checklist** — evaluate different outputs against a
   fixed human-reviewed requirement set (stable denominator) for benchmark use.
 - **Importance weighting** — `must` / `should` / `nice` weights, only after

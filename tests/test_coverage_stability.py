@@ -53,3 +53,16 @@ def test_summary_ignores_not_applicable_scores():
     summary = summarize_runs(records)
     assert summary["applicable_runs"] == 1
     assert summary["score"]["mean"] == 0.8
+    # No statuses recorded -> consistency is not computable.
+    assert summary["status_consistency"] is None
+
+
+def test_status_consistency_across_runs():
+    records = [
+        RunRecord(score=0.5, requirements=["a", "b"],
+                  statuses={"a": "covered", "b": "missing"}),
+        RunRecord(score=0.5, requirements=["a", "b"],
+                  statuses={"a": "covered", "b": "partial"}),
+    ]
+    # "a" agrees (covered/covered), "b" disagrees -> 1 of 2 consistent.
+    assert summarize_runs(records)["status_consistency"] == 0.5

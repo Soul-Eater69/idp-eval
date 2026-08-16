@@ -19,7 +19,7 @@ class FakeJudge:
     """A judge stub that returns a canned structured response.
 
     Mirrors the ``generate_object(prompt, schema) -> dict`` contract that the
-    custom coverage evaluator depends on.
+    instruction-adherence evaluator depends on.
     """
 
     def __init__(self, response: dict):
@@ -29,6 +29,18 @@ class FakeJudge:
     def generate_object(self, prompt: str, schema: dict) -> dict:
         self.calls.append({"prompt": prompt, "schema": schema})
         return self.response
+
+
+class ScriptedJudge:
+    """Returns queued structured responses in order (for the two-stage coverage)."""
+
+    def __init__(self, *responses: dict):
+        self._responses = list(responses)
+        self.calls: list[dict] = []
+
+    def generate_object(self, prompt, schema: dict) -> dict:
+        self.calls.append({"prompt": prompt, "schema": schema})
+        return self._responses.pop(0)
 
 
 class _FakePhoenixResult:
@@ -75,21 +87,22 @@ CASE = EvaluationCase(
 
 
 def _coverage_judge():
-    return FakeJudge(
+    """Scripted two-stage coverage judge: 1 covered + 1 missing -> score 0.5."""
+    return ScriptedJudge(
         {
             "requirements": [
-                {
-                    "requirement": "Users can view invoices.",
-                    "status": "covered",
-                    "reason": "Output states invoices are viewable.",
-                },
-                {
-                    "requirement": "Invoices show total amount due.",
-                    "status": "missing",
-                    "reason": "Output omits the total amount due.",
-                },
+                {"requirement": "Users can view invoices."},
+                {"requirement": "Invoices show total amount due."},
             ]
-        }
+        },
+        {
+            "requirements": [
+                {"id": "r1", "meaningfully_present": True, "fully_present": True,
+                 "reason": "Output states invoices are viewable."},
+                {"id": "r2", "meaningfully_present": False, "fully_present": False,
+                 "reason": "Output omits the total amount due."},
+            ]
+        },
     )
 
 
@@ -101,25 +114,22 @@ def test_coverage_evaluator():
     assert result.score == 0.5
     assert result.details["total_requirements"] == 2
     assert result.details["missing_count"] == 1
-    # Judge was invoked with a rendered message-list prompt.
-    prompt = judge.calls[0]["prompt"]
-    assert isinstance(prompt, list)
-    roles = [message["role"] for message in prompt]
-    assert roles == ["system", "user"]
-    user_content = prompt[1]["content"]
-    assert CASE.output in user_content
-    assert CASE.input in user_content
+    # Two judge calls (extraction then classification).
+    assert len(judge.calls) == 2
+    extract_user = judge.calls[0]["prompt"][1]["content"]
+    assert CASE.input in extract_user
+    assert CASE.output not in extract_user  # Stage 1 never sees the output
 
 
 def test_coverage_partial_and_missing():
-    judge = FakeJudge(
-        {
-            "requirements": [
-                {"requirement": "a", "status": "covered", "reason": "r"},
-                {"requirement": "b", "status": "partial", "reason": "r"},
-                {"requirement": "c", "status": "missing", "reason": "r"},
-            ]
-        }
+    judge = ScriptedJudge(
+        {"requirements": [{"requirement": "a"}, {"requirement": "b"},
+                          {"requirement": "c"}]},
+        {"requirements": [
+            {"id": "r1", "meaningfully_present": True, "fully_present": True, "reason": "r"},
+            {"id": "r2", "meaningfully_present": True, "fully_present": False, "reason": "r"},
+            {"id": "r3", "meaningfully_present": False, "fully_present": False, "reason": "r"},
+        ]},
     )
     result = CoverageEvaluator(llm=judge).evaluate(CASE)
 

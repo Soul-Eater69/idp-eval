@@ -5,6 +5,7 @@ import pytest
 from idp_eval.scoring import (
     calculate_coverage,
     calculate_instruction_adherence,
+    coverage_status_from_binary,
     coverage_status_score,
     score_to_label,
 )
@@ -76,6 +77,17 @@ def test_coverage_unknown_status_raises():
         coverage_status_score("mostly")
     with pytest.raises(ValueError, match="Unknown coverage status"):
         calculate_coverage([{"status": "covered"}, {"status": "bogus"}])
+
+
+def test_coverage_status_from_binary():
+    assert coverage_status_from_binary(True, True) == "covered"
+    assert coverage_status_from_binary(True, False) == "partial"
+    assert coverage_status_from_binary(False, False) == "missing"
+
+
+def test_coverage_status_from_binary_invalid_combo_raises():
+    with pytest.raises(ValueError, match="Invalid coverage classification"):
+        coverage_status_from_binary(False, True)
 
 
 def test_instruction_adherence_mixed():

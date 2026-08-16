@@ -1,4 +1,4 @@
-"""Coverage evaluator behavior tests using a fake judge (no real LLM)."""
+"""Two-stage coverage evaluator tests using a scripted fake judge (no real LLM)."""
 
 import pytest
 
@@ -6,179 +6,248 @@ from idp_eval import CoverageEvaluator, EvaluationCase
 from idp_eval.models import EvaluationResult
 
 
-class FakeJudge:
-    """Judge stub returning a canned structured coverage response."""
+class ScriptedJudge:
+    """Returns queued structured responses in order and records each call."""
 
-    def __init__(self, response: dict):
-        self.response = response
+    def __init__(self, *responses):
+        self._responses = list(responses)
         self.calls: list[dict] = []
 
     def generate_object(self, prompt, schema: dict) -> dict:
         self.calls.append({"prompt": prompt, "schema": schema})
-        return self.response
+        if not self._responses:
+            raise AssertionError("Unexpected extra judge call")
+        return self._responses.pop(0)
 
 
-def _requirements(*pairs) -> FakeJudge:
-    """Builds a judge whose response has (requirement, status) entries."""
-    return FakeJudge(
-        {
-            "requirements": [
-                {"requirement": req, "status": status, "reason": "r"}
-                for req, status in pairs
-            ]
-        }
-    )
+def _extract(*requirements: str) -> dict:
+    return {"requirements": [{"requirement": r} for r in requirements]}
+
+
+def _classify(*entries) -> dict:
+    """entries: (id, meaningfully_present, fully_present) tuples."""
+    return {
+        "requirements": [
+            {
+                "id": rid,
+                "meaningfully_present": present,
+                "fully_present": full,
+                "reason": "r",
+            }
+            for (rid, present, full) in entries
+        ]
+    }
 
 
 CASE = EvaluationCase(
     input="Generate a Jira Epic from the provided Theme.",
     context="Theme with onboarding goals.",
-    output="Epic body.",
+    output="UNIQUE_OUTPUT_TOKEN epic body.",
 )
 
 
-def _evaluate(judge) -> EvaluationResult:
+def _run(judge) -> EvaluationResult:
     return CoverageEvaluator(llm=judge).evaluate(CASE)
 
 
+# --- aggregation & binary-to-status logic -----------------------------------
+
+
 def test_full_coverage():
-    result = _evaluate(_requirements(("a", "covered"), ("b", "covered")))
+    judge = ScriptedJudge(
+        _extract("a", "b"),
+        _classify(("r1", True, True), ("r2", True, True)),
+    )
+    result = _run(judge)
     assert result.score == 1.0
     assert result.details["covered_count"] == 2
-    assert result.details["missing_count"] == 0
 
 
 def test_complete_omission():
-    result = _evaluate(_requirements(("a", "missing"), ("b", "missing")))
+    judge = ScriptedJudge(
+        _extract("a", "b"),
+        _classify(("r1", False, False), ("r2", False, False)),
+    )
+    result = _run(judge)
     assert result.score == 0.0
     assert result.details["missing_count"] == 2
 
 
-def test_mixed_coverage_deterministic_aggregation():
-    result = _evaluate(
-        _requirements(
-            ("a", "covered"),
-            ("b", "covered"),
-            ("c", "partial"),
-            ("d", "missing"),
-        )
+def test_mixed_deterministic_aggregation():
+    judge = ScriptedJudge(
+        _extract("a", "b", "c", "d"),
+        _classify(
+            ("r1", True, True),    # covered  -> 1.0
+            ("r2", False, False),  # missing  -> 0.0
+            ("r3", True, False),   # partial  -> 0.5
+            ("r4", True, True),    # covered  -> 1.0
+        ),
     )
+    result = _run(judge)
     assert result.score == 0.625
-    assert result.details["total_requirements"] == 4
     assert "62.5%" in result.explanation
-    # Every item carries its Python-computed numeric score.
-    scores = [item["score"] for item in result.details["items"]]
-    assert scores == [1.0, 1.0, 0.5, 0.0]
+    assert [i["status"] for i in result.details["items"]] == [
+        "covered",
+        "missing",
+        "partial",
+        "covered",
+    ]
+    assert [i["score"] for i in result.details["items"]] == [1.0, 0.0, 0.5, 1.0]
 
 
-def test_compound_requirement_decomposed_by_judge():
-    # The judge represents a compound sentence as two atomic requirements.
-    result = _evaluate(
-        _requirements(
-            ("Reduce onboarding time by 25%.", "covered"),
-            ("Automate manual verification.", "covered"),
-        )
+def test_binary_combinations_map_to_status():
+    judge = ScriptedJudge(
+        _extract("present-full", "present-partial", "absent"),
+        _classify(
+            ("r1", True, True),
+            ("r2", True, False),
+            ("r3", False, False),
+        ),
     )
-    assert result.score == 1.0
-    assert result.details["total_requirements"] == 2
+    items = _run(judge).details["items"]
+    assert items[0]["status"] == "covered"
+    assert items[1]["status"] == "partial"
+    assert items[2]["status"] == "missing"
 
 
-def test_qualifier_partial():
-    result = _evaluate(
-        _requirements(("Reduce manual verification effort by 40%.", "partial"))
+def test_invalid_binary_combination_fails():
+    judge = ScriptedJudge(
+        _extract("a"),
+        _classify(("r1", False, True)),  # meaningfully_present=False + full=True
     )
-    assert result.score == 0.5
-    assert result.details["partial_count"] == 1
+    with pytest.raises(ValueError, match="Invalid coverage classification"):
+        _run(judge)
 
 
-def test_paraphrase_counts_as_covered():
-    result = _evaluate(
-        _requirements(("Automate manual identity verification.", "covered"))
+def test_non_boolean_classification_fails():
+    judge = ScriptedJudge(
+        _extract("a"),
+        {"requirements": [{"id": "r1", "meaningfully_present": "yes",
+                           "fully_present": False, "reason": "r"}]},
     )
-    assert result.score == 1.0
+    with pytest.raises(ValueError, match="Non-boolean"):
+        _run(judge)
 
 
-def test_irrelevant_context_not_counted():
-    # The judge only returns task-relevant requirements; irrelevant office /
-    # employee details never appear, so they never affect the denominator.
-    judge = _requirements(("Business risk A.", "covered"), ("Business risk B.", "covered"))
-    result = _evaluate(judge)
-    requirements = [item["requirement"] for item in result.details["items"]]
-    assert requirements == ["Business risk A.", "Business risk B."]
-    assert result.score == 1.0
+# --- extraction: dedup, empty, malformed ------------------------------------
 
 
-def test_unsupported_addition_does_not_lower_coverage():
-    # Output covers all required info (plus an unsupported claim faithfulness
-    # would catch). Coverage stays full: it does not do hallucination detection.
-    result = _evaluate(_requirements(("Goal 1.", "covered"), ("Goal 2.", "covered")))
-    assert result.score == 1.0
-
-
-def test_no_requirements_is_not_applicable():
-    result = _evaluate(FakeJudge({"requirements": []}))
-    assert result.score is None
-    assert result.label == "not_applicable"
-    assert result.details["total_requirements"] == 0
-    assert result.details["items"] == []
-    assert (
-        result.explanation
-        == "No task-relevant requirements were identified in the supplied context."
+def test_normalized_exact_dedup_after_extraction():
+    judge = ScriptedJudge(
+        _extract("Reduce onboarding time", " reduce   onboarding time ",
+                 "REDUCE ONBOARDING TIME"),
+        _classify(("r1", True, True)),
     )
-
-
-def test_normalized_exact_duplicates_collapse():
-    judge = FakeJudge(
-        {
-            "requirements": [
-                {"requirement": "Reduce onboarding time", "status": "covered", "reason": "r"},
-                {"requirement": " reduce   onboarding time ", "status": "covered", "reason": "r"},
-                {"requirement": "REDUCE ONBOARDING TIME", "status": "covered", "reason": "r"},
-            ]
-        }
-    )
-    result = _evaluate(judge)
+    result = _run(judge)
     assert result.details["total_requirements"] == 1
-    assert result.score == 1.0
-    # First occurrence is kept verbatim.
     assert result.details["items"][0]["requirement"] == "Reduce onboarding time"
 
 
-def test_dedup_keeps_distinct_requirements():
-    judge = _requirements(
-        ("Reduce onboarding time", "covered"),
-        ("Automate verification", "missing"),
-    )
-    result = _evaluate(judge)
-    assert result.details["total_requirements"] == 2
-    assert result.score == 0.5
+def test_empty_extraction_is_not_applicable_and_skips_stage_two():
+    judge = ScriptedJudge(_extract())  # only one response queued
+    result = _run(judge)
+    assert result.score is None
+    assert result.label == "not_applicable"
+    assert result.details == {
+        "total_requirements": 0,
+        "covered_count": 0,
+        "partial_count": 0,
+        "missing_count": 0,
+        "items": [],
+    }
+    # Stage 2 was never called.
+    assert len(judge.calls) == 1
 
 
-def test_near_duplicates_remain_distinct():
-    # Documented limitation: semantic near-duplicates are NOT merged.
-    judge = _requirements(
-        ("Automate verification", "covered"),
-        ("Verification should be automated", "covered"),
-    )
-    result = _evaluate(judge)
-    assert result.details["total_requirements"] == 2
-
-
-def test_unknown_status_fails_clearly():
-    judge = FakeJudge(
-        {"requirements": [{"requirement": "a", "status": "kinda", "reason": "r"}]}
-    )
-    with pytest.raises(ValueError, match="Unknown coverage status"):
-        _evaluate(judge)
-
-
-def test_missing_status_key_fails_clearly():
-    judge = FakeJudge({"requirements": [{"requirement": "a", "reason": "r"}]})
+def test_malformed_extraction_missing_key_fails():
+    judge = ScriptedJudge({"requirements": [{"note": "no requirement field"}]})
     with pytest.raises(KeyError):
-        _evaluate(judge)
+        _run(judge)
 
 
-def test_percentage_formatting_whole_number():
-    result = _evaluate(_requirements(("a", "covered"), ("b", "missing")))
-    # 0.5 -> "50%", not "50.0%".
-    assert "50%" in result.explanation
+# --- two-call behavior & stage isolation ------------------------------------
+
+
+def test_two_calls_for_non_empty_and_stage_isolation():
+    judge = ScriptedJudge(
+        _extract("a", "b"),
+        _classify(("r1", True, True), ("r2", False, False)),
+    )
+    _run(judge)
+    assert len(judge.calls) == 2
+
+    extract_user = judge.calls[0]["prompt"][1]["content"]
+    assert CASE.input in extract_user
+    assert CASE.context in extract_user
+    assert CASE.output not in extract_user  # Stage 1 must NOT see output
+
+    classify_user = judge.calls[1]["prompt"][1]["content"]
+    assert CASE.output in classify_user
+    assert '"id": "r1"' in classify_user  # fixed requirement set passed in
+    assert CASE.context not in classify_user  # full context not leaked
+
+
+# --- requirement id integrity -----------------------------------------------
+
+
+def test_missing_id_fails():
+    judge = ScriptedJudge(_extract("a", "b"), _classify(("r1", True, True)))
+    with pytest.raises(ValueError, match="Missing classification"):
+        _run(judge)
+
+
+def test_unknown_id_fails():
+    judge = ScriptedJudge(
+        _extract("a"),
+        _classify(("r1", True, True), ("r2", True, True)),
+    )
+    with pytest.raises(ValueError, match="Unknown requirement id"):
+        _run(judge)
+
+
+def test_duplicate_id_fails():
+    judge = ScriptedJudge(
+        _extract("a"),
+        _classify(("r1", True, True), ("r1", False, False)),
+    )
+    with pytest.raises(ValueError, match="Duplicate requirement id"):
+        _run(judge)
+
+
+def test_reordered_ids_are_reconstructed_in_original_order():
+    judge = ScriptedJudge(
+        _extract("first", "second"),
+        _classify(("r2", True, False), ("r1", True, True)),  # returned reversed
+    )
+    items = _run(judge).details["items"]
+    assert [i["id"] for i in items] == ["r1", "r2"]
+    assert items[0]["requirement"] == "first"
+    assert items[0]["status"] == "covered"
+    assert items[1]["status"] == "partial"
+
+
+# --- semantic expectations (via fake judgments) -----------------------------
+
+
+def test_paraphrase_counts_as_covered():
+    judge = ScriptedJudge(
+        _extract("Automate identity verification."),
+        _classify(("r1", True, True)),
+    )
+    assert _run(judge).score == 1.0
+
+
+def test_qualifier_omission_is_partial():
+    judge = ScriptedJudge(
+        _extract("Reduce verification effort by 40%."),
+        _classify(("r1", True, False)),
+    )
+    assert _run(judge).score == 0.5
+
+
+def test_unsupported_addition_does_not_lower_coverage():
+    judge = ScriptedJudge(
+        _extract("Goal 1.", "Goal 2."),
+        _classify(("r1", True, True), ("r2", True, True)),
+    )
+    assert _run(judge).score == 1.0

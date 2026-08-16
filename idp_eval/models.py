@@ -72,6 +72,11 @@ class Evaluator(ABC):
     not need to change to accommodate it.
     """
 
+    # How this evaluator's results are produced, for publishing/annotation.
+    # Built-in LLM judges are "LLM"; deterministic Python evaluators may set
+    # "CODE". One of ``idp_eval.output.ANNOTATOR_KINDS``.
+    annotator_kind: str = "LLM"
+
     @property
     @abstractmethod
     def name(self) -> str:

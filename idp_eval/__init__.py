@@ -26,6 +26,14 @@ from idp_eval.evaluators import (
 from idp_eval.framework import EvaluationFramework
 from idp_eval.judge import JudgeConfig, create_judge
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
+from idp_eval.output import (
+    ANNOTATOR_KINDS,
+    EvaluationRecord,
+    EvaluationWriter,
+    ExcelEvaluationWriter,
+    PersistenceError,
+    PhoenixEvaluationWriter,
+)
 from idp_eval.phoenix_client import register_tracing
 
 __all__ = [
@@ -39,6 +47,12 @@ __all__ = [
     "JudgeConfig",
     "create_judge",
     "register_tracing",
+    "ANNOTATOR_KINDS",
+    "EvaluationRecord",
+    "EvaluationWriter",
+    "ExcelEvaluationWriter",
+    "PhoenixEvaluationWriter",
+    "PersistenceError",
 ]
 
 __version__ = "0.1.0"

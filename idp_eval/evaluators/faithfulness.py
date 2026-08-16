@@ -12,6 +12,7 @@ the metric that detects it. There is deliberately no separate top-level
 
 from __future__ import annotations
 
+from idp_eval import tracing
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
 
 
@@ -46,13 +47,16 @@ class FaithfulnessEvaluator(Evaluator):
 
     def evaluate(self, case: EvaluationCase) -> EvaluationResult:
         """Evaluates grounding for a single case."""
-        result = self._evaluator.evaluate(
-            {
-                "input": case.input,
-                "context": case.context,
-                "output": case.output,
-            }
-        )[0]
+        with tracing.judge_span(
+            "faithfulness.evaluate", {"idp_eval.metric": self.name}
+        ):
+            result = self._evaluator.evaluate(
+                {
+                    "input": case.input,
+                    "context": case.context,
+                    "output": case.output,
+                }
+            )[0]
 
         return EvaluationResult(
             metric=self.name,

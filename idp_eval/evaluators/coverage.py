@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 
+from idp_eval import tracing
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
 from idp_eval.prompts.coverage_classify import (
     COVERAGE_CLASSIFY_SCHEMA,
@@ -152,10 +153,14 @@ class CoverageEvaluator(Evaluator):
             input_text=case.input,
             context=case.context,
         )
-        response = self._llm.generate_object(
-            prompt=prompt,
-            schema=COVERAGE_EXTRACT_SCHEMA,
-        )
+        with tracing.judge_span(
+            "coverage.extract",
+            {"idp_eval.metric": self.name, "idp_eval.stage": "extract"},
+        ):
+            response = self._llm.generate_object(
+                prompt=prompt,
+                schema=COVERAGE_EXTRACT_SCHEMA,
+            )
         raw = _dedup_requirements(response.get("requirements", []))
         return [
             {"id": f"r{index}", "requirement": req["requirement"]}
@@ -172,10 +177,14 @@ class CoverageEvaluator(Evaluator):
             requirements_json=requirements_json,
             output=case.output,
         )
-        response = self._llm.generate_object(
-            prompt=prompt,
-            schema=COVERAGE_CLASSIFY_SCHEMA,
-        )
+        with tracing.judge_span(
+            "coverage.classify",
+            {"idp_eval.metric": self.name, "idp_eval.stage": "classify"},
+        ):
+            response = self._llm.generate_object(
+                prompt=prompt,
+                schema=COVERAGE_CLASSIFY_SCHEMA,
+            )
         return response.get("requirements", [])
 
     @staticmethod

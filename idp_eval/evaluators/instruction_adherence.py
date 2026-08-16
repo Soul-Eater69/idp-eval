@@ -21,6 +21,7 @@ None of these is treated as a perfect (1.0) or failing (0.0) score.
 
 from __future__ import annotations
 
+from idp_eval import tracing
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
 from idp_eval.prompts.instruction_adherence import (
     INSTRUCTION_ADHERENCE_SCHEMA,
@@ -66,10 +67,13 @@ class InstructionAdherenceEvaluator(Evaluator):
             output=case.output,
         )
 
-        response = self._llm.generate_object(
-            prompt=prompt,
-            schema=INSTRUCTION_ADHERENCE_SCHEMA,
-        )
+        with tracing.judge_span(
+            "instruction_adherence.evaluate", {"idp_eval.metric": self.name}
+        ):
+            response = self._llm.generate_object(
+                prompt=prompt,
+                schema=INSTRUCTION_ADHERENCE_SCHEMA,
+            )
         instructions = response.get("instructions", [])
 
         # The judge found no meaningful instructions to evaluate.

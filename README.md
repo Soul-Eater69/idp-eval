@@ -2,8 +2,8 @@
 
 A reusable evaluation framework on top of [Arize Phoenix](https://github.com/Arize-ai/phoenix)
 that can evaluate **any** generated AI output. It is not tied to Jira, RAG,
-summarization, or test-case generation. Every evaluation uses the same generic
-triple:
+summarization, or test-case generation. Evaluation cases use these generic
+fields:
 
 ```text
 input        = what the model was asked to do (the task/request)
@@ -102,33 +102,29 @@ Uses two versioned Phoenix-style prompts: `prompts/coverage_extract.py`
 ### Instruction Adherence
 
 Instruction adherence is a **custom** LLM-as-a-judge metric measuring whether the
-output **obeys the explicit instructions** it was given. It uses a versioned
-Phoenix-style prompt (`prompts/instruction_adherence.py`). The judge decomposes
-the instructions into atomic instructions and classifies each `followed`,
-`partial`, `violated`, or `not_applicable`; Python computes the score over the
-**applicable** instructions only:
+output **obeys the explicit instructions** it was given. It uses two versioned
+Phoenix-style prompts: extraction receives only `EvaluationCase.instructions`,
+then batched classification receives the fixed extracted instructions and
+`output`. Each instruction is classified as exactly `followed` or `violated`;
+Python computes the binary mean:
 
 ```python
-INSTRUCTION_ADHERENCE_VALUES = {"followed": 1.0, "partial": 0.5, "violated": 0.0}
-applicable = [i for i in instructions if i["status"] != "not_applicable"]
-instruction_adherence = sum(values) / len(applicable)
+INSTRUCTION_ADHERENCE_VALUES = {"followed": 1.0, "violated": 0.0}
+instruction_adherence = sum(item_scores) / len(instructions)
 ```
 
-`not_applicable` covers instructions that genuinely do not apply — e.g. a
-conditional "If the account is inactive, include a warning." when the context
-says the account is active. It is **excluded from the denominator**, not scored
-as a success.
+There is no partial credit and the judge never generates a numeric score. The
+extractor splits compound text when its parts can independently be followed or
+violated, preserves material qualifiers, and removes normalized-exact duplicate
+instructions before Python assigns deterministic IDs.
 
 For this metric, put the explicit instruction text in the dedicated
-**`EvaluationCase.instructions`** field (not `input`). `context` is optional and
-consulted only when an instruction requires it (e.g. "only use information from
-the context").
+**`EvaluationCase.instructions`** field. The evaluator does not use `input` or
+`context` as fallback instruction sources.
 
 The metric returns `score=None`, `label="not_applicable"` when there is nothing
-applicable to evaluate, with an explanation distinguishing the reason: no
-instructions supplied, no meaningful instructions found, or all supplied
-instructions were not applicable. None of these is treated as a perfect or
-failing score.
+to evaluate because no instructions were supplied or extraction found no
+meaningful instructions. Neither case is treated as a perfect or failing score.
 
 ### Which fields each metric reads
 
@@ -136,8 +132,9 @@ failing score.
 
 - **faithfulness** — `input` (task) + `context` + `output`, passed to Phoenix.
 - **coverage** — `input` (task, used to scope relevant context) + `context` + `output`.
-- **instruction_adherence** — `instructions` + `context` + `output`. Reads the
-  dedicated `instructions` field, never `input`.
+- **instruction_adherence** — `instructions` + `output`. Reads only the dedicated
+  `instructions` field as its instruction source; never falls back to `input` or
+  `context`.
 
 ## Install
 
@@ -257,7 +254,9 @@ named child span. Nothing else is traced (no app/RAG/agent/tool spans yet).
 | `coverage`              | `coverage.extract` + `coverage.classify` (2)      |
 | `coverage` (no reqs)    | `coverage.extract` only (1 — Stage 2 skipped)     |
 | `faithfulness`          | `faithfulness.evaluate` (1)                        |
-| `instruction_adherence` | `instruction_adherence.evaluate` (1, or 0 if N/A) |
+| `instruction_adherence` | `instruction_adherence.extract` + `.classify` (2) |
+| `instruction_adherence` (no instructions) | no judge spans (0) |
+| `instruction_adherence` (empty extraction) | `.extract` only (1) |
 
 Running all three on one case:
 
@@ -266,7 +265,8 @@ Trace gt-001 (idp_eval.evaluate)
 ├── coverage.extract
 ├── coverage.classify
 ├── faithfulness.evaluate
-└── instruction_adherence.evaluate
+├── instruction_adherence.extract
+└── instruction_adherence.classify
 ```
 
 **15 GT rows with coverage only → 15 traces and ~30 judge spans** (2 per case;
@@ -408,6 +408,24 @@ consistency for recurring requirements (Stage 2 classification stability). This 
 a manual developer tool — it uses the real judge (two calls per run) and is
 **not** part of the unit test suite (only the pure `summarize_runs` statistics are
 unit-tested with fake data).
+
+### Two-stage stability benchmark (`scripts/coverage_benchmark.py`)
+
+This manual benchmark measures production coverage extraction stability,
+fixed-requirement classification stability, and optional end-to-end score
+stability. It uses a direct OpenAI judge only in the development script;
+production `create_judge()` and the IDP gateway are unchanged.
+
+```bash
+export OPENAI_API_KEY="..."
+export OPENAI_MODEL="gpt-4o-mini"  # optional
+
+python -m scripts.coverage_benchmark --runs 3 --cases 3 --end-to-end
+```
+
+The script prints its call estimate before execution and writes JSON under the
+gitignored `benchmark_results/` directory. Unit tests cover pure helpers only;
+they never call a model.
 
 ### Ground truth for coverage quality
 

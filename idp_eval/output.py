@@ -164,24 +164,47 @@ class PhoenixEvaluationWriter:
         self,
         client: Any | None = None,
         *,
+        base_url: str | None = None,
+        api_key: str | None = None,
         ingest_timeout: float = 10.0,
         poll_interval: float = 0.5,
     ):
         """Args:
-            client: An injected Phoenix client (built lazily if ``None``).
+            client: An injected Phoenix client. When provided it is used as-is
+                (``base_url`` / ``api_key`` are ignored), which keeps dependency
+                injection for tests intact.
+            base_url: Phoenix REST base URL. ``None`` → Phoenix reads
+                ``PHOENIX_BASE_URL`` (default ``http://localhost:6006``).
+            api_key: API key for authenticated Phoenix. ``None`` → Phoenix reads
+                ``PHOENIX_API_KEY``. Sent by the Phoenix client as a bearer token;
+                never logged or written into annotations.
             ingest_timeout: Max seconds to wait for the target span to be
                 ingested before failing.
             poll_interval: Delay between write retries while waiting for ingest.
         """
         self._client = client
+        self._base_url = base_url
+        self._api_key = api_key
         self._ingest_timeout = ingest_timeout
         self._poll_interval = poll_interval
 
     def _get_client(self) -> Any:
+        """Returns the injected client, or lazily builds a Phoenix ``Client``.
+
+        With no explicit ``base_url`` / ``api_key``, ``Client()`` is used so
+        Phoenix resolves ``PHOENIX_BASE_URL`` / ``PHOENIX_API_KEY`` from the
+        environment. Explicit values are forwarded to the native client kwargs;
+        no Authorization header is constructed by hand.
+        """
         if self._client is None:
             from phoenix.client import Client
 
-            self._client = Client()
+            kwargs: dict[str, Any] = {}
+            if self._base_url is not None:
+                kwargs["base_url"] = self._base_url
+            if self._api_key is not None:
+                kwargs["api_key"] = self._api_key
+            self._client = Client(**kwargs)
         return self._client
 
     @staticmethod

@@ -196,6 +196,11 @@ results = framework.evaluate(case, metrics=["instruction_adherence"])
 
 See `example.py` for a full runnable script.
 
+Local Phoenix tracing/annotations work with no configuration. Remote or
+authenticated Phoenix uses the standard Phoenix environment variables
+(`PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_BASE_URL`, `PHOENIX_API_KEY`) — see the
+[setup and usage guide](docs/SETUP_AND_USAGE.md#3-optional-phoenix-setup).
+
 ## Configuring the judge
 
 `create_judge()` builds a Phoenix judge backed by the corporate IDP gateway. It

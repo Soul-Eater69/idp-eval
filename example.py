@@ -24,7 +24,9 @@ def _print(results) -> None:
 
 
 def main() -> None:
-    # 1. Tracing stays separate from judge creation.
+    # 1. Tracing stays separate from judge creation. Phoenix destination/auth
+    #    come from the standard env vars (PHOENIX_COLLECTOR_ENDPOINT /
+    #    PHOENIX_BASE_URL / PHOENIX_API_KEY); local Phoenix needs none.
     register_tracing(project_name="idp-eval")
 
     # 2. Configure the judge once (from args / env / optional YAML).

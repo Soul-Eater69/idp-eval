@@ -64,22 +64,68 @@ workflow.
 
 ## 3. Optional Phoenix Setup
 
-Tracing and judge creation are separate. If a local Phoenix server is installed,
-start it separately:
+Tracing and judge creation are separate concerns (Phoenix config never touches
+`create_judge`). Phoenix is configured primarily through its standard environment
+variables, which the Phoenix SDK resolves natively:
+
+| Variable                    | Used by                          | Purpose                                          |
+| --------------------------- | -------------------------------- | ------------------------------------------------ |
+| `PHOENIX_COLLECTOR_ENDPOINT`| `phoenix.otel` (trace export)    | Where OTEL traces are sent                       |
+| `PHOENIX_BASE_URL`          | `phoenix.client` (REST)          | Phoenix REST/client URL for span annotations     |
+| `PHOENIX_API_KEY`           | both OTEL export and the client  | Authentication for OTEL export and REST calls    |
+| `PHOENIX_PROJECT_NAME`      | `phoenix.otel`                   | Default project name                             |
+
+`PHOENIX_COLLECTOR_ENDPOINT` (trace export) and `PHOENIX_BASE_URL` (REST
+annotations) are **distinct paths**; set both to your Phoenix host for a remote
+instance. `PHOENIX_API_KEY` authenticates both.
+
+### Local Phoenix (no API key)
 
 ```bash
 phoenix serve
 ```
 
-Then register tracing once at application startup:
-
 ```python
 from idp_eval import register_tracing
 
+register_tracing(project_name="my-eval-project")
+```
+
+Unauthenticated local Phoenix needs **no** API key and no endpoint — the Phoenix
+SDK defaults to `http://localhost:6006`.
+
+### Authenticated / remote Phoenix (environment-driven — recommended)
+
+```bash
+export PHOENIX_COLLECTOR_ENDPOINT="https://phoenix.example.com"
+export PHOENIX_BASE_URL="https://phoenix.example.com"
+export PHOENIX_API_KEY="your-api-key"        # keep secrets in the environment
+```
+
+```python
+register_tracing(project_name="my-eval-project")
+```
+
+The same configuration drives trace export, root evaluation spans, native model
+spans, and the `PhoenixEvaluationWriter` span annotations (`output="phoenix"`).
+
+### Explicit arguments (optional)
+
+`register_tracing` also accepts explicit `endpoint` / `api_key`, resolved as
+**explicit argument → Phoenix env var → SDK default**. Prefer env vars for
+secrets; a placeholder is shown only to illustrate the argument:
+
+```python
 register_tracing(
     project_name="my-eval-project",
+    endpoint="https://phoenix.example.com",
+    # api_key="your-api-key",  # prefer PHOENIX_API_KEY in the environment
 )
 ```
+
+For programmatic (non-env) REST config, `PhoenixEvaluationWriter(base_url=...,
+api_key=...)` forwards to the native `phoenix.client.Client`. `EvaluationFramework`
+itself has no Phoenix parameters — configure via environment variables.
 
 When tracing is registered, each `framework.evaluate(...)` call creates one root
 `idp_eval.evaluate` trace for that case. Tracing is optional.
@@ -260,6 +306,11 @@ Phoenix receives one root evaluation trace, evaluator stage spans, native model
 spans when model instrumentation is active, and native metric annotations on the
 root span. Requesting Phoenix output without an active root span raises a clear
 persistence error.
+
+Annotation logging uses the `phoenix.client.Client`, which reads `PHOENIX_BASE_URL`
+and `PHOENIX_API_KEY` from the environment (see section 3) — the same
+authenticated remote setup that drives trace export also drives annotations, with
+no manual client or header construction.
 
 ## 13. Excel Output
 

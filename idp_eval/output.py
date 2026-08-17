@@ -274,8 +274,9 @@ class PhoenixEvaluationWriter:
                 time.sleep(self._poll_interval)
 
 
-# Main-sheet columns, in order.
-_EXCEL_COLUMNS = (
+# ``evaluations`` summary-sheet columns, in order. ``raw_details_json`` is an
+# optional lossless trailing column (structured sheets are the primary view).
+_SUMMARY_COLUMNS = (
     "run_name",
     "dataset_name",
     "case_id",
@@ -285,28 +286,116 @@ _EXCEL_COLUMNS = (
     "label",
     "explanation",
     "annotator_kind",
-    "details_json",
     "timestamp",
+    "raw_details_json",
+)
+
+# Identity columns prefixed onto every metric-detail sheet row.
+_ITEM_IDENTITY_COLUMNS = (
+    "run_name",
+    "dataset_name",
+    "case_id",
+    "trace_id",
+    "metric",
+)
+
+
+@dataclass(frozen=True)
+class _ItemSheet:
+    """Declarative mapping from a metric's ``details`` to a flat detail sheet.
+
+    ``columns`` pairs each output column name with the field to read from each
+    item dict, so one generic loop can flatten any registered metric — no
+    per-metric branching in the writer.
+    """
+
+    sheet: str
+    list_key: str                          # details key holding the item list
+    columns: tuple[tuple[str, str], ...]   # (output column, item field)
+
+
+# Small declarative registry (not per-metric if/else): each entry flattens one
+# metric's item list into a dedicated sheet. Metrics without an entry
+# (faithfulness, arbitrary custom metrics) appear only in the summary sheet.
+_ITEM_SHEETS: dict[str, _ItemSheet] = {
+    "source_coverage": _ItemSheet(
+        "source_coverage_items",
+        "items",
+        (
+            ("item_id", "id"),
+            ("source_item", "source_item"),
+            ("meaningfully_present", "meaningfully_present"),
+            ("fully_present", "fully_present"),
+            ("status", "status"),
+            ("item_score", "score"),
+            ("reason", "reason"),
+        ),
+    ),
+    "task_coverage": _ItemSheet(
+        "task_coverage_items",
+        "items",
+        (
+            ("item_id", "id"),
+            ("requirement", "requirement"),
+            ("meaningfully_present", "meaningfully_present"),
+            ("fully_present", "fully_present"),
+            ("status", "status"),
+            ("item_score", "score"),
+            ("reason", "reason"),
+        ),
+    ),
+    "instruction_adherence": _ItemSheet(
+        "instruction_adherence_items",
+        "instructions",
+        (
+            ("instruction_id", "id"),
+            ("instruction", "instruction"),
+            ("status", "status"),
+            ("item_score", "score"),
+            ("reason", "reason"),
+        ),
+    ),
+}
+
+# Columns given extra width because they hold free text.
+_WIDE_COLUMNS = frozenset(
+    {
+        "explanation",
+        "reason",
+        "requirement",
+        "source_item",
+        "instruction",
+        "raw_details_json",
+    }
 )
 
 
 class ExcelEvaluationWriter:
-    """Appends one row per (case + metric) to an ``.xlsx`` workbook.
+    """Writes evaluation results to a multi-sheet ``.xlsx`` workbook.
 
-    Rows accumulate in memory and the whole file is rewritten on each
-    :meth:`write`, so the file is always current for single-case and batch runs.
-    Nested evaluator ``details`` are serialized into a single ``details_json``
-    column so arbitrary custom metrics need no dynamic columns. Independent of
-    Phoenix.
+    - ``evaluations``: one row per (case + metric) — the human-readable summary.
+    - ``<metric>_items``: one row per structured detail item for metrics with a
+      registered item layout (coverage requirements / source items, adherence
+      instructions), so results are inspectable without reading JSON.
+
+    The workbook is created once and held in memory; each :meth:`write` appends
+    rows to the open sheets and saves the file, so it stays current for
+    single-case and batch runs (evaluators are never re-run). Metrics without a
+    registered layout (faithfulness, custom code metrics) appear only in the
+    summary; their full ``details`` remain available in ``raw_details_json``.
+    Independent of Phoenix.
     """
 
     def __init__(self, path: str):
         self._path = path
-        self._rows: list[list[Any]] = []
+        self._workbook: Any | None = None
+        self._summary: Any | None = None
+        self._item_sheets: dict[str, Any] = {}
 
     def write(self, records: list[EvaluationRecord]) -> None:
+        self._ensure_workbook()
         for record in records:
-            self._rows.append(
+            self._summary.append(
                 [
                     record.run_name,
                     record.dataset_name,
@@ -317,24 +406,75 @@ class ExcelEvaluationWriter:
                     record.label,
                     record.explanation,
                     record.annotator_kind,
+                    record.timestamp,
                     json.dumps(record.details, default=str)
                     if record.details is not None
                     else None,
-                    record.timestamp,
                 ]
             )
-        self._flush()
+            self._append_item_rows(record)
+        self._workbook.save(self._path)
 
-    def _flush(self) -> None:
+    def _ensure_workbook(self) -> None:
+        """Builds the workbook and summary sheet once, on the first write."""
+        if self._workbook is not None:
+            return
         from openpyxl import Workbook
 
-        workbook = Workbook()
-        sheet = workbook.active
-        sheet.title = "evaluations"
-        sheet.append(list(_EXCEL_COLUMNS))
-        for row in self._rows:
+        self._workbook = Workbook()
+        self._summary = self._workbook.active
+        self._summary.title = "evaluations"
+        self._init_sheet(self._summary, _SUMMARY_COLUMNS)
+
+    def _append_item_rows(self, record: EvaluationRecord) -> None:
+        """Flattens one record's structured items onto its metric-detail sheet."""
+        spec = _ITEM_SHEETS.get(record.metric)
+        if spec is None or not record.details:
+            return
+        items = record.details.get(spec.list_key)
+        if not isinstance(items, list) or not items:
+            return
+        sheet = self._item_sheet(spec)
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            row = [
+                record.run_name,
+                record.dataset_name,
+                record.case_id,
+                record.trace_id,
+                record.metric,
+            ]
+            row.extend(item.get(field) for _, field in spec.columns)
             sheet.append(row)
-        workbook.save(self._path)
+
+    def _item_sheet(self, spec: _ItemSheet) -> Any:
+        """Returns the detail sheet for ``spec``, creating it on first use."""
+        sheet = self._item_sheets.get(spec.sheet)
+        if sheet is None:
+            sheet = self._workbook.create_sheet(spec.sheet)
+            headers = list(_ITEM_IDENTITY_COLUMNS) + [
+                column for column, _ in spec.columns
+            ]
+            self._init_sheet(sheet, headers)
+            self._item_sheets[spec.sheet] = sheet
+        return sheet
+
+    @staticmethod
+    def _init_sheet(sheet: Any, headers) -> None:
+        """Writes a styled header row: bold, frozen, auto-filtered, sized."""
+        from openpyxl.styles import Font
+        from openpyxl.utils import get_column_letter
+
+        headers = list(headers)
+        sheet.append(headers)
+        for cell in sheet[1]:
+            cell.font = Font(bold=True)
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
+        for index, header in enumerate(headers, start=1):
+            width = 48 if header in _WIDE_COLUMNS else max(len(header) + 2, 12)
+            sheet.column_dimensions[get_column_letter(index)].width = width
 
 
 def build_writers(

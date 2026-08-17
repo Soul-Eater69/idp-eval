@@ -5,11 +5,13 @@ import json
 import pytest
 
 from idp_eval import (
-    TaskCoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
     EvaluationResult,
+    InstructionAdherenceEvaluator,
     PersistenceError,
+    SourceCoverageEvaluator,
+    TaskCoverageEvaluator,
 )
 from idp_eval.output import (
     ANNOTATOR_KINDS,
@@ -42,12 +44,20 @@ class CountingScriptedJudge:
 CASE = EvaluationCase(case_id="gt-001", input="task", context="ctx", output="out")
 
 
-def _read_xlsx(path):
+def _read_xlsx(path, sheet="evaluations"):
     workbook = openpyxl.load_workbook(path)
-    sheet = workbook["evaluations"]
-    rows = list(sheet.iter_rows(values_only=True))
+    rows = list(workbook[sheet].iter_rows(values_only=True))
     header, *data = rows
     return header, data
+
+
+def _sheet_names(path):
+    return openpyxl.load_workbook(path).sheetnames
+
+
+def _rows_as_dicts(path, sheet):
+    header, data = _read_xlsx(path, sheet)
+    return [dict(zip(header, row)) for row in data]
 
 
 # --- writer construction & modes --------------------------------------------
@@ -99,7 +109,38 @@ def test_record_from_result_validates_kind():
 # --- excel output -----------------------------------------------------------
 
 
-def test_excel_only_writes_expected_columns(tmp_path):
+def _source_judge():
+    return ScriptedTwoStage(
+        {"source_items": [{"source_item": "Keep the identity provider."}]},
+        {"requirements": [
+            {"id": "s1", "meaningfully_present": True, "fully_present": False,
+             "reason": "IdP kept but SSO qualifier dropped."},
+        ]},
+    )
+
+
+def _instruction_judge():
+    return ScriptedTwoStage(
+        {"instructions": [{"instruction": "Use 3 bullets"},
+                          {"instruction": "Do not mention pricing"}]},
+        {"answers": [
+            {"id": "I1", "status": "followed", "reason": "Three bullets."},
+            {"id": "I2", "status": "violated", "reason": "Mentions pricing."},
+        ]},
+    )
+
+
+class ScriptedTwoStage:
+    """Returns queued two-stage responses in order."""
+
+    def __init__(self, *responses):
+        self._responses = list(responses)
+
+    def generate_object(self, prompt, schema):
+        return self._responses.pop(0)
+
+
+def test_summary_sheet_columns_and_values(tmp_path):
     path = tmp_path / "evals.xlsx"
     framework = EvaluationFramework(
         evaluators=[TaskCoverageEvaluator(CountingScriptedJudge())],
@@ -111,19 +152,164 @@ def test_excel_only_writes_expected_columns(tmp_path):
     header, data = _read_xlsx(path)
     assert header == (
         "run_name", "dataset_name", "case_id", "trace_id", "metric", "score",
-        "label", "explanation", "annotator_kind", "details_json", "timestamp",
+        "label", "explanation", "annotator_kind", "timestamp",
+        "raw_details_json",
     )
+    assert "details_json" not in header  # opaque main column is gone
     assert len(data) == 1
     row = dict(zip(header, data[0]))
     assert row["run_name"] == "benchmark-v1"
     assert row["dataset_name"] == "theme-epic-gt"
     assert row["case_id"] == "gt-001"
     assert row["metric"] == "task_coverage"
-    assert row["score"] == 0.5
+    assert row["score"] == 0.5  # stored as a numeric cell
+    assert isinstance(row["score"], float)
     assert row["annotator_kind"] == "LLM"
-    # Nested details land in a single JSON column.
-    details = json.loads(row["details_json"])
-    assert details["total_requirements"] == 2
+    # Lossless raw JSON is retained in the trailing optional column.
+    assert json.loads(row["raw_details_json"])["total_requirements"] == 2
+
+
+def test_task_coverage_items_sheet(tmp_path):
+    path = tmp_path / "tc.xlsx"
+    framework = EvaluationFramework(
+        evaluators=[TaskCoverageEvaluator(CountingScriptedJudge())],
+        output="excel",
+        excel_path=str(path),
+    )
+    framework.evaluate(CASE, run_name="r1", dataset_name="d1")
+
+    assert "task_coverage_items" in _sheet_names(path)
+    header, _ = _read_xlsx(path, "task_coverage_items")
+    assert header == (
+        "run_name", "dataset_name", "case_id", "trace_id", "metric",
+        "item_id", "requirement", "meaningfully_present", "fully_present",
+        "status", "item_score", "reason",
+    )
+    rows = _rows_as_dicts(path, "task_coverage_items")
+    assert [r["item_id"] for r in rows] == ["r1", "r2"]
+    assert rows[0]["requirement"] == "a"
+    assert rows[0]["status"] == "covered"
+    assert rows[0]["item_score"] == 1.0
+    assert rows[0]["meaningfully_present"] is True
+    assert rows[1]["status"] == "missing"
+    assert rows[1]["item_score"] == 0.0
+    # Identity columns are carried onto every item row.
+    assert rows[0]["case_id"] == "gt-001" and rows[0]["metric"] == "task_coverage"
+
+
+def test_source_coverage_items_sheet(tmp_path):
+    path = tmp_path / "sc.xlsx"
+    framework = EvaluationFramework(
+        evaluators=[SourceCoverageEvaluator(_source_judge())],
+        output="excel",
+        excel_path=str(path),
+    )
+    framework.evaluate(CASE)
+
+    assert "source_coverage_items" in _sheet_names(path)
+    header, _ = _read_xlsx(path, "source_coverage_items")
+    assert header == (
+        "run_name", "dataset_name", "case_id", "trace_id", "metric",
+        "item_id", "source_item", "meaningfully_present", "fully_present",
+        "status", "item_score", "reason",
+    )
+    rows = _rows_as_dicts(path, "source_coverage_items")
+    assert rows[0]["source_item"] == "Keep the identity provider."
+    assert rows[0]["status"] == "partial"
+    assert rows[0]["item_score"] == 0.5
+
+
+def test_instruction_adherence_items_sheet(tmp_path):
+    path = tmp_path / "ia.xlsx"
+    case = EvaluationCase(
+        case_id="gt-002", input="t", context="c", output="o",
+        instructions="Use 3 bullets. Do not mention pricing.",
+    )
+    framework = EvaluationFramework(
+        evaluators=[InstructionAdherenceEvaluator(_instruction_judge())],
+        output="excel",
+        excel_path=str(path),
+    )
+    framework.evaluate(case)
+
+    assert "instruction_adherence_items" in _sheet_names(path)
+    header, _ = _read_xlsx(path, "instruction_adherence_items")
+    assert header == (
+        "run_name", "dataset_name", "case_id", "trace_id", "metric",
+        "instruction_id", "instruction", "status", "item_score", "reason",
+    )
+    rows = _rows_as_dicts(path, "instruction_adherence_items")
+    assert [r["instruction_id"] for r in rows] == ["I1", "I2"]
+    assert rows[0]["status"] == "followed" and rows[0]["item_score"] == 1.0
+    assert rows[1]["status"] == "violated" and rows[1]["item_score"] == 0.0
+
+
+def test_multiple_metrics_share_one_workbook(tmp_path):
+    path = tmp_path / "multi.xlsx"
+    case = EvaluationCase(
+        case_id="gt-003", input="t", context="c", output="o",
+        instructions="Use 3 bullets. Do not mention pricing.",
+    )
+    framework = EvaluationFramework(
+        evaluators=[
+            TaskCoverageEvaluator(CountingScriptedJudge()),
+            InstructionAdherenceEvaluator(_instruction_judge()),
+        ],
+        output="excel",
+        excel_path=str(path),
+    )
+    framework.evaluate(case)
+
+    names = _sheet_names(path)
+    assert names[0] == "evaluations"
+    assert "task_coverage_items" in names
+    assert "instruction_adherence_items" in names
+    # Two metric rows in the summary, one workbook.
+    _, summary = _read_xlsx(path)
+    assert {row[4] for row in summary} == {"task_coverage", "instruction_adherence"}
+
+
+def test_multiple_cases_append_to_item_sheet(tmp_path):
+    path = tmp_path / "append.xlsx"
+    framework = EvaluationFramework(
+        evaluators=[SourceCoverageEvaluator(_source_judge())],
+        output="excel",
+        excel_path=str(path),
+    )
+    framework.evaluate(EvaluationCase(case_id="c1", input="t", context="c", output="o"))
+    # Second case reuses the SAME writer so rows accumulate in one workbook; a
+    # fresh scripted judge answers the new case's two stages.
+    framework._evaluators["source_coverage"] = SourceCoverageEvaluator(_source_judge())
+    framework.evaluate(EvaluationCase(case_id="c2", input="t", context="c", output="o"))
+
+    rows = _rows_as_dicts(path, "source_coverage_items")
+    assert [r["case_id"] for r in rows] == ["c1", "c2"]
+
+
+def test_faithfulness_has_no_item_sheet(tmp_path):
+    path = tmp_path / "faith.xlsx"
+    framework = EvaluationFramework(output="excel", excel_path=str(path), evaluators=[])
+    # Faithfulness result carries details=None -> summary only, no item sheet.
+    framework.log_evaluation(
+        EvaluationResult("faithfulness", 1.0, "faithful", "Grounded.", None),
+        case_id="gt-001", annotator_kind="LLM",
+    )
+    assert _sheet_names(path) == ["evaluations"]
+
+
+def test_workbook_is_valid_and_reloadable(tmp_path):
+    path = tmp_path / "valid.xlsx"
+    framework = EvaluationFramework(
+        evaluators=[TaskCoverageEvaluator(CountingScriptedJudge())],
+        output="excel",
+        excel_path=str(path),
+    )
+    framework.evaluate(CASE)
+    workbook = openpyxl.load_workbook(path)  # raises if corrupt
+    summary = workbook["evaluations"]
+    assert summary.freeze_panes == "A2"  # header row frozen
+    assert summary.auto_filter.ref is not None  # filter applied
+    assert summary["A1"].font.bold is True  # bold header
 
 
 class _RecordingWriter:
@@ -198,7 +384,9 @@ def test_log_custom_evaluation_to_excel(tmp_path):
     assert row["metric"] == "company_policy"
     assert row["annotator_kind"] == "CODE"
     assert row["case_id"] == "gt-001"
-    assert json.loads(row["details_json"])["rule_version"] == "v3"
+    # Unknown metric: no structured sheet, but details survive in raw JSON.
+    assert _sheet_names(path) == ["evaluations"]
+    assert json.loads(row["raw_details_json"])["rule_version"] == "v3"
 
 
 def test_log_evaluation_human_kind(tmp_path):

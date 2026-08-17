@@ -345,10 +345,23 @@ code changes needed:
 Local development needs no API key. Verify the live path with
 `python -m scripts.phoenix_annotation_check` against a running local Phoenix.
 
-The Excel `evaluations` sheet columns: `run_name, dataset_name, case_id,
-trace_id, metric, score, label, explanation, annotator_kind, details_json,
-timestamp`. Nested evaluator `details` are stored as JSON in `details_json`, so
-arbitrary custom metrics need no dynamic columns.
+The Excel workbook has a human-readable summary plus structured per-metric detail
+sheets, so results are inspectable without reading JSON:
+
+| Sheet | One row per | Key columns |
+| ----- | ----------- | ----------- |
+| `evaluations` | case + metric | `run_name, dataset_name, case_id, trace_id, metric, score, label, explanation, annotator_kind, timestamp, raw_details_json` |
+| `source_coverage_items` | extracted source item | `item_id, source_item, meaningfully_present, fully_present, status, item_score, reason` |
+| `task_coverage_items` | task-relevant requirement | `item_id, requirement, meaningfully_present, fully_present, status, item_score, reason` |
+| `instruction_adherence_items` | instruction | `instruction_id, instruction, status, item_score, reason` |
+
+Detail sheets are created only when a metric with a registered item layout is
+written; each item row also carries the `run_name / dataset_name / case_id /
+trace_id / metric` identity columns. Faithfulness and arbitrary custom metrics
+have no item list, so they appear only in `evaluations`; their full `details`
+remain available in the trailing `raw_details_json` column (lossless export).
+Scores are stored as numeric cells; header rows are bold, frozen, and
+auto-filtered.
 
 If evaluation succeeds but a writer fails, a `PersistenceError` is raised with the
 computed results attached (`err.results`) — results are never lost and evaluation

@@ -373,6 +373,24 @@ framework = EvaluationFramework(
 Use `output="both"` with the same `excel_path` to publish the one computed result
 set to Phoenix and Excel. Evaluators are not run twice.
 
+The workbook has a summary sheet plus structured per-metric detail sheets so
+results are readable without inspecting JSON:
+
+| Sheet | One row per | Columns |
+|---|---|---|
+| `evaluations` | case + metric | `run_name`, `dataset_name`, `case_id`, `trace_id`, `metric`, `score`, `label`, `explanation`, `annotator_kind`, `timestamp`, `raw_details_json` |
+| `source_coverage_items` | extracted source item | identity cols + `item_id`, `source_item`, `meaningfully_present`, `fully_present`, `status`, `item_score`, `reason` |
+| `task_coverage_items` | task-relevant requirement | identity cols + `item_id`, `requirement`, `meaningfully_present`, `fully_present`, `status`, `item_score`, `reason` |
+| `instruction_adherence_items` | instruction | identity cols + `instruction_id`, `instruction`, `status`, `item_score`, `reason` |
+
+The identity columns (`run_name`, `dataset_name`, `case_id`, `trace_id`,
+`metric`) are repeated on every detail row so you can filter or pivot a single
+sheet. Detail sheets appear only when a metric with a registered item layout is
+written. Faithfulness and custom code metrics have no item list, so they show up
+only in `evaluations`; their full `details` are preserved in the trailing
+`raw_details_json` column. Numeric scores are stored as numbers, and header rows
+are bold, frozen, and auto-filtered.
+
 ## 14. Custom Evaluation Logging
 
 Custom results use the framework's configured output writers:

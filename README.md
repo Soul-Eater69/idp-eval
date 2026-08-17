@@ -138,6 +138,9 @@ meaningful instructions. Neither case is treated as a perfect or failing score.
 
 ## Install
 
+See the [setup and usage guide](docs/SETUP_AND_USAGE.md) for configuration,
+metric examples, tracing, and result output options.
+
 ```bash
 pip install -e ".[dev]"
 ```

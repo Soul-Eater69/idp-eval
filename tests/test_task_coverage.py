@@ -73,6 +73,19 @@ def test_task_details_use_requirement_and_total_requirements():
     assert "task-relevant requirements" in result.explanation
 
 
+def test_task_coverage_labels():
+    complete = ScriptedJudge(_extract("a"), _classify(("r1", True, True)))
+    assert TaskCoverageEvaluator(llm=complete).evaluate(CASE).label == "complete"
+
+    incomplete = ScriptedJudge(
+        _extract("a", "b"), _classify(("r1", True, True), ("r2", False, False))
+    )
+    assert TaskCoverageEvaluator(llm=incomplete).evaluate(CASE).label == "incomplete"
+
+    missing = ScriptedJudge(_extract("a"), _classify(("r1", False, False)))
+    assert TaskCoverageEvaluator(llm=missing).evaluate(CASE).label == "missing"
+
+
 def test_task_empty_extraction_is_not_applicable():
     judge = ScriptedJudge(_extract())
     result = TaskCoverageEvaluator(llm=judge).evaluate(CASE)

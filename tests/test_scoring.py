@@ -5,9 +5,10 @@ import pytest
 from idp_eval.scoring import (
     calculate_coverage,
     calculate_instruction_adherence,
+    coverage_label,
     coverage_status_from_binary,
     coverage_status_score,
-    score_to_label,
+    instruction_adherence_label,
 )
 
 
@@ -120,7 +121,15 @@ def test_instruction_adherence_unknown_status_raises(status):
         calculate_instruction_adherence([{"status": status}])
 
 
-def test_score_to_label():
-    assert score_to_label(0.9) == "high"
-    assert score_to_label(0.5) == "medium"
-    assert score_to_label(0.1) == "low"
+def test_coverage_label():
+    assert coverage_label(1.0) == "complete"
+    assert coverage_label(0.5) == "incomplete"
+    assert coverage_label(0.01) == "incomplete"
+    assert coverage_label(0.0) == "missing"
+
+
+def test_instruction_adherence_label():
+    assert instruction_adherence_label(1.0) == "fully_followed"
+    assert instruction_adherence_label(2 / 3) == "violations_present"
+    assert instruction_adherence_label(0.5) == "violations_present"
+    assert instruction_adherence_label(0.0) == "violated"

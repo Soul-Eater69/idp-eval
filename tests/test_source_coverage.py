@@ -77,6 +77,7 @@ def test_covered_partial_missing_scoring():
     )
     result = _run(judge)
     assert result.score == (1.0 + 0.5 + 0.0) / 3
+    assert result.label == "incomplete"
     statuses = [i["status"] for i in result.details["items"]]
     assert statuses == ["covered", "partial", "missing"]
     assert result.details["total_items"] == 3
@@ -84,6 +85,14 @@ def test_covered_partial_missing_scoring():
     # Items use the neutral "source_item" field, not "requirement".
     assert "source_item" in result.details["items"][0]
     assert "requirement" not in result.details["items"][0]
+
+
+def test_labels_are_descriptive_of_the_fraction():
+    complete = ScriptedJudge(_extract("a"), _classify(("s1", True, True)))
+    assert _run(complete).label == "complete"
+
+    missing = ScriptedJudge(_extract("a"), _classify(("s1", False, False)))
+    assert _run(missing).label == "missing"
 
 
 def test_empty_extraction_is_not_applicable_and_skips_stage_two():

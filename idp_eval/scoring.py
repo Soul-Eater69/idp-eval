@@ -132,19 +132,40 @@ def calculate_instruction_adherence(instructions: list[dict]) -> float:
     return total / len(instructions)
 
 
-def score_to_label(score: float, high: float = 0.66, low: float = 0.33) -> str:
-    """Buckets a ``[0, 1]`` score into ``high`` / ``medium`` / ``low``.
+def coverage_label(score: float) -> str:
+    """Descriptive coverage label derived directly from the covered fraction.
 
-    Args:
-        score: Score to bucket.
-        high: Inclusive lower bound for the ``"high"`` bucket.
-        low: Inclusive lower bound for the ``"medium"`` bucket.
+    The label restates what the score already means — the boundaries are the
+    only two defensible ones (everything vs. nothing covered), not arbitrary
+    thresholds:
 
-    Returns:
-        One of ``"high"``, ``"medium"``, or ``"low"``.
+        1.0            -> "complete"    (every item represented)
+        0 < score < 1  -> "incomplete"  (some items missing/partial)
+        0.0            -> "missing"     (nothing represented)
+
+    Not-applicable results (no score) are labeled ``"not_applicable"`` by the
+    evaluator and never reach this function.
     """
-    if score >= high:
-        return "high"
-    if score >= low:
-        return "medium"
-    return "low"
+    if score >= 1.0:
+        return "complete"
+    if score <= 0.0:
+        return "missing"
+    return "incomplete"
+
+
+def instruction_adherence_label(score: float) -> str:
+    """Descriptive adherence label derived from the fraction of instructions
+    followed.
+
+        1.0            -> "fully_followed"
+        0 < score < 1  -> "violations_present"  (at least one violated)
+        0.0            -> "violated"
+
+    Unlike a generic high/medium/low bucket, this never calls a result with an
+    explicit violation "high": any violation yields ``"violations_present"``.
+    """
+    if score >= 1.0:
+        return "fully_followed"
+    if score <= 0.0:
+        return "violated"
+    return "violations_present"

@@ -78,7 +78,7 @@ def test_all_followed_uses_two_calls_and_returns_audit_details():
     assert isinstance(result, EvaluationResult)
     assert result.metric == "instruction_adherence"
     assert result.score == 1.0
-    assert result.label == "high"
+    assert result.label == "fully_followed"
     assert result.details == {
         "instruction_count": 2,
         "followed_count": 2,
@@ -110,6 +110,8 @@ def test_mixed_binary_score_is_fraction_followed():
     )
     result = InstructionAdherenceEvaluator(judge).evaluate(CASE)
     assert result.score == pytest.approx(2 / 3)
+    # 2/3 followed with one violation is "violations_present", never "high".
+    assert result.label == "violations_present"
     assert result.details["followed_count"] == 2
     assert result.details["violated_count"] == 1
 
@@ -119,7 +121,7 @@ def test_all_violated_scores_zero():
         _judge(["Return JSON.", "Respond in Spanish."], ["violated", "violated"])
     ).evaluate(CASE)
     assert result.score == 0.0
-    assert result.label == "low"
+    assert result.label == "violated"
 
 
 @pytest.mark.parametrize("instructions", [None, "", "   \n\t"])

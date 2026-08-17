@@ -19,9 +19,9 @@ from idp_eval.prompts.coverage_classify import (
 )
 from idp_eval.scoring import (
     calculate_coverage,
+    coverage_label,
     coverage_status_from_binary,
     coverage_status_score,
-    score_to_label,
 )
 
 
@@ -112,7 +112,7 @@ class _TwoStageCoverageEvaluator(Evaluator):
         return EvaluationResult(
             metric=self.name,
             score=score,
-            label=score_to_label(score),
+            label=coverage_label(score),
             explanation=explanation,
             details={
                 self._total_key: len(items),

@@ -312,6 +312,20 @@ for result in results.values():
     print(result.details)
 ```
 
+`score` is the quantitative result (`[0, 1]`, higher is better). `label` is a
+short qualitative interpretation **derived from the score**, and is
+metric-specific rather than a generic high/medium/low bucket:
+
+| Metric | `score == 1.0` | `0 < score < 1` | `score == 0.0` | not applicable |
+|---|---|---|---|---|
+| `source_coverage`, `task_coverage` | `complete` | `incomplete` | `missing` | `not_applicable` |
+| `instruction_adherence` | `fully_followed` | `violations_present` | `violated` | `not_applicable` |
+| `faithfulness` | provided by Phoenix (e.g. `faithful` / `unfaithful`) — not derived here |
+
+A partial instruction-adherence result (any violation) is therefore
+`violations_present`, never a misleading `high`. Not-applicable results carry
+`score=None` and `label="not_applicable"`.
+
 ## 12. Phoenix Logging
 
 Enable tracing before creating evaluations, select Phoenix output on the

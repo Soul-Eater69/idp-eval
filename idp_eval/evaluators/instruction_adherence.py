@@ -25,7 +25,10 @@ from idp_eval.prompts.instruction_adherence_extract import (
     INSTRUCTION_ADHERENCE_EXTRACT_SCHEMA,
     render_instruction_adherence_extract_prompt,
 )
-from idp_eval.scoring import calculate_instruction_adherence, score_to_label
+from idp_eval.scoring import (
+    calculate_instruction_adherence,
+    instruction_adherence_label,
+)
 
 
 def _normalize_instruction(text: str) -> str:
@@ -84,7 +87,7 @@ class InstructionAdherenceEvaluator(Evaluator):
         return EvaluationResult(
             metric=self.name,
             score=score,
-            label=score_to_label(score),
+            label=instruction_adherence_label(score),
             explanation=(
                 f"{followed_count} of {len(items)} instructions were followed; "
                 f"{violated_count} were violated."

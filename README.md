@@ -38,6 +38,22 @@ mechanics and `covered`/`partial`/`missing` = `1.0`/`0.5`/`0.0` scoring; they
 differ only in what Stage 1 extracts (whole source vs. task-relevant source). See
 `docs/SETUP_AND_USAGE.md` §7.
 
+### Scores vs. labels
+
+`score` is the quantitative result (a `[0, 1]` fraction, higher is better);
+`label` is a short qualitative restatement of that score. Labels are
+**metric-specific and derived from the score** — never bucketed with arbitrary
+thresholds:
+
+| Metric | `score == 1.0` | `0 < score < 1` | `score == 0.0` | not applicable |
+| ------ | -------------- | --------------- | -------------- | -------------- |
+| `source_coverage` / `task_coverage` | `complete` | `incomplete` | `missing` | `not_applicable` |
+| `instruction_adherence` | `fully_followed` | `violations_present` | `violated` | `not_applicable` |
+| `faithfulness` | Phoenix-provided label (e.g. `faithful` / `unfaithful`) — unchanged |
+
+So instruction adherence with one violation (e.g. 2/3 followed) is
+`violations_present`, never a misleading `high`.
+
 ### Faithfulness vs. hallucination
 
 There is deliberately **no separate `hallucination` metric**.

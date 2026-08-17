@@ -22,6 +22,8 @@ tracing = ["opentelemetry-api>=1.20", "opentelemetry-sdk>=1.20"]
 # Native Phoenix span-annotation output (output="phoenix"). Verified against
 # arize-phoenix-client 3.2.0.
 phoenix = ["arize-phoenix-client>=3"]
+# Direct-OpenAI judge used only by manual benchmark scripts.
+benchmark = ["openai>=1"]
 dev = [
     "pytest>=7",
     "pyyaml>=6",
@@ -29,6 +31,7 @@ dev = [
     "opentelemetry-api>=1.20",
     "opentelemetry-sdk>=1.20",
     "arize-phoenix-client>=3",
+    "openai>=1",
 ]
 
 [tool.setuptools.packages.find]

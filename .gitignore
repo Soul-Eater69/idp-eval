@@ -20,3 +20,9 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+
+# Benchmark artifacts (generated)
+benchmark_results/
+
+# Secrets / local env
+.env

@@ -8,8 +8,6 @@ from idp_eval import (
     EvaluationFramework,
     InstructionAdherenceEvaluator,
 )
-from idp_eval.models import EvaluationResult, Evaluator
-
 opentelemetry = pytest.importorskip("opentelemetry")
 from opentelemetry import trace  # noqa: E402
 from opentelemetry.sdk.trace import TracerProvider  # noqa: E402

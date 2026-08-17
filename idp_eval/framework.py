@@ -72,8 +72,6 @@ class EvaluationFramework:
                 )
             self._evaluators[evaluator.name] = evaluator
 
-        self._output = output
-        self._excel_path = excel_path
         self._writers = build_writers(output, excel_path)
 
     @staticmethod

@@ -9,13 +9,14 @@ v1 metrics:
     coverage: how much task-relevant context reached the output? (detects
         omissions). Higher is better.
     instruction_adherence: does the output obey the explicit instructions in
-        input? Higher is better.
+        ``instructions``? Higher is better.
 
 Which ``EvaluationCase`` fields each metric reads:
     faithfulness: input (task) + context + output, passed to Phoenix.
     coverage: input (task, used to scope relevant context) + context + output.
-    instruction_adherence: instructions + context + output. It reads the
-        dedicated ``instructions`` field, never ``input``.
+    instruction_adherence: instructions + output. It reads only the dedicated
+        ``instructions`` field as its instruction source, never ``input`` or
+        ``context``.
 """
 
 from idp_eval.evaluators import (

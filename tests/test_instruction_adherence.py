@@ -1,4 +1,4 @@
-"""Instruction-adherence evaluator tests using a fake judge (no real LLM)."""
+"""Offline tests for two-stage binary instruction adherence."""
 
 import copy
 
@@ -10,299 +10,339 @@ from idp_eval import (
     InstructionAdherenceEvaluator,
 )
 from idp_eval.models import EvaluationResult
-from idp_eval.prompts.instruction_adherence import (
-    INSTRUCTION_ADHERENCE_PROMPT,
-    INSTRUCTION_ADHERENCE_SCHEMA,
-    render_instruction_adherence_prompt,
+from idp_eval.prompts.instruction_adherence_classify import (
+    INSTRUCTION_ADHERENCE_CLASSIFY_PROMPT,
+    INSTRUCTION_ADHERENCE_CLASSIFY_SCHEMA,
+    render_instruction_adherence_classify_prompt,
 )
-from idp_eval.scoring import calculate_instruction_adherence
+from idp_eval.prompts.instruction_adherence_extract import (
+    INSTRUCTION_ADHERENCE_EXTRACT_PROMPT,
+    INSTRUCTION_ADHERENCE_EXTRACT_SCHEMA,
+    render_instruction_adherence_extract_prompt,
+)
 
 
-class FakeJudge:
-    """Judge stub returning a canned structured response."""
+class ScriptedJudge:
+    """Returns queued structured responses or exceptions without network calls."""
 
-    def __init__(self, response: dict):
-        self.response = response
+    def __init__(self, *responses):
+        self._responses = list(responses)
         self.calls: list[dict] = []
 
     def generate_object(self, prompt, schema: dict) -> dict:
         self.calls.append({"prompt": prompt, "schema": schema})
-        return self.response
+        response = self._responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
-def _judge(*statuses: str) -> FakeJudge:
-    return FakeJudge(
-        {
-            "instructions": [
-                {"instruction": f"instr {i}", "status": s, "reason": "r"}
-                for i, s in enumerate(statuses)
-            ]
-        }
-    )
+def _extraction(*instructions: str) -> dict:
+    return {
+        "instructions": [
+            {"instruction": instruction} for instruction in instructions
+        ]
+    }
+
+
+def _classification(*statuses: str) -> dict:
+    return {
+        "answers": [
+            {"id": f"I{index}", "status": status, "reason": "reason"}
+            for index, status in enumerate(statuses, start=1)
+        ]
+    }
+
+
+def _judge(instructions: list[str], statuses: list[str]) -> ScriptedJudge:
+    return ScriptedJudge(_extraction(*instructions), _classification(*statuses))
 
 
 CASE = EvaluationCase(
-    input="Summarize the invoice features.",
-    instructions="Use exactly 3 bullet points.\nDo not mention customer names.",
-    context="",
-    output="- a\n- b\n- c",
+    input="UNIQUE TASK INPUT THAT MUST NOT REACH THIS METRIC",
+    instructions=(
+        "Return JSON. Include exactly 3 recommendations. Do not mention pricing."
+    ),
+    context="UNIQUE CONTEXT THAT MUST NOT REACH THIS METRIC",
+    output='{"recommendations": ["a", "b", "c"]}',
 )
 
 
-# --- scoring / status behavior ----------------------------------------------
-
-
-def test_all_followed():
-    result = InstructionAdherenceEvaluator(llm=_judge("followed", "followed")).evaluate(
-        CASE
+def test_all_followed_uses_two_calls_and_returns_audit_details():
+    judge = _judge(
+        ["Return JSON.", "Include exactly 3 recommendations."],
+        ["followed", "followed"],
     )
+    result = InstructionAdherenceEvaluator(judge).evaluate(CASE)
+
+    assert isinstance(result, EvaluationResult)
     assert result.metric == "instruction_adherence"
     assert result.score == 1.0
     assert result.label == "high"
+    assert result.details == {
+        "instruction_count": 2,
+        "followed_count": 2,
+        "violated_count": 0,
+        "instructions": [
+            {
+                "id": "I1",
+                "instruction": "Return JSON.",
+                "status": "followed",
+                "score": 1.0,
+                "reason": "reason",
+            },
+            {
+                "id": "I2",
+                "instruction": "Include exactly 3 recommendations.",
+                "status": "followed",
+                "score": 1.0,
+                "reason": "reason",
+            },
+        ],
+    }
+    assert len(judge.calls) == 2
 
 
-def test_one_violated():
-    result = InstructionAdherenceEvaluator(
-        llm=_judge("followed", "followed", "followed", "violated")
-    ).evaluate(CASE)
-    assert result.score == 0.75
-    assert result.details["violated_instructions"] == ["instr 3"]
-
-
-def test_partial():
-    result = InstructionAdherenceEvaluator(llm=_judge("partial")).evaluate(CASE)
-    assert result.score == 0.5
-    assert result.details["partial_instructions"] == ["instr 0"]
-
-
-def test_mixed():
-    result = InstructionAdherenceEvaluator(
-        llm=_judge("followed", "followed", "partial", "violated")
-    ).evaluate(CASE)
-    assert result.score == 0.625
-
-
-def test_returns_evaluation_result():
-    result = InstructionAdherenceEvaluator(llm=_judge("followed")).evaluate(CASE)
-    assert isinstance(result, EvaluationResult)
-
-
-# --- empty / not-applicable behavior ----------------------------------------
-
-
-def test_no_instructions_blank_is_not_applicable():
-    judge = _judge("followed")  # would score 1.0 if it were ever called
-    case = EvaluationCase(
-        input="Some task.", instructions="   ", context="", output="whatever"
+def test_mixed_binary_score_is_fraction_followed():
+    judge = _judge(
+        ["Return JSON.", "Include exactly 3 items.", "Do not mention pricing."],
+        ["followed", "followed", "violated"],
     )
-    result = InstructionAdherenceEvaluator(llm=judge).evaluate(case)
+    result = InstructionAdherenceEvaluator(judge).evaluate(CASE)
+    assert result.score == pytest.approx(2 / 3)
+    assert result.details["followed_count"] == 2
+    assert result.details["violated_count"] == 1
+
+
+def test_all_violated_scores_zero():
+    result = InstructionAdherenceEvaluator(
+        _judge(["Return JSON.", "Respond in Spanish."], ["violated", "violated"])
+    ).evaluate(CASE)
+    assert result.score == 0.0
+    assert result.label == "low"
+
+
+@pytest.mark.parametrize("instructions", [None, "", "   \n\t"])
+def test_no_instructions_is_not_applicable_without_judge_call(instructions):
+    judge = ScriptedJudge(AssertionError("judge must not be called"))
+    case = EvaluationCase(
+        input="Return exactly 3 bullet points.",
+        instructions=instructions,
+        context="context",
+        output="- one",
+    )
+    result = InstructionAdherenceEvaluator(judge).evaluate(case)
     assert result.score is None
     assert result.label == "not_applicable"
-    # The judge must not be consulted when there are no instructions.
+    assert result.details == {
+        "instruction_count": 0,
+        "followed_count": 0,
+        "violated_count": 0,
+        "instructions": [],
+    }
     assert judge.calls == []
 
 
-def test_missing_instructions_field_is_not_applicable():
-    # instructions defaults to None; input must NOT be used as a fallback.
-    judge = _judge("followed")
-    case = EvaluationCase(
-        input="Use exactly 3 bullet points.", context="", output="- a"
-    )
-    result = InstructionAdherenceEvaluator(llm=judge).evaluate(case)
-    assert result.score is None
-    assert result.label == "not_applicable"
-    assert judge.calls == []
-
-
-def test_judge_finds_no_instructions_is_not_applicable():
-    judge = FakeJudge({"instructions": []})
-    result = InstructionAdherenceEvaluator(llm=judge).evaluate(CASE)
+def test_empty_extraction_is_not_applicable_and_skips_classification():
+    judge = ScriptedJudge(_extraction())
+    result = InstructionAdherenceEvaluator(judge).evaluate(CASE)
     assert result.score is None
     assert result.label == "not_applicable"
     assert result.explanation == "No meaningful instructions were found."
+    assert len(judge.calls) == 1
 
 
-def test_not_applicable_excluded_from_denominator():
-    # 2 applicable (followed, violated) -> 0.5; the not_applicable one is ignored.
-    result = InstructionAdherenceEvaluator(
-        llm=_judge("followed", "violated", "not_applicable")
-    ).evaluate(CASE)
-    assert result.score == 0.5
-    assert result.details["not_applicable_instructions"] == ["instr 2"]
-
-
-def test_mixed_with_not_applicable():
-    # followed, followed, partial over 3 applicable = 2.5/3; one not_applicable.
-    result = InstructionAdherenceEvaluator(
-        llm=_judge("followed", "followed", "partial", "not_applicable")
-    ).evaluate(CASE)
-    assert result.score == 2.5 / 3
-
-
-def test_all_not_applicable_is_metric_not_applicable():
-    judge = _judge("not_applicable", "not_applicable")
-    result = InstructionAdherenceEvaluator(llm=judge).evaluate(CASE)
-    assert result.score is None
-    assert result.label == "not_applicable"
-    assert result.explanation == (
-        "All supplied instructions were not applicable to this case."
+def test_compound_instruction_can_split_into_independent_items():
+    judge = _judge(
+        ["Return JSON.", "Do not mention internal IDs."],
+        ["followed", "violated"],
     )
-    # The full instruction list is still surfaced for debugging.
-    assert len(result.details["instructions"]) == 2
-
-
-# --- instruction kinds ------------------------------------------------------
-
-
-def test_negative_instruction_violated():
-    judge = FakeJudge(
-        {
-            "instructions": [
-                {
-                    "instruction": "Do not mention customer names.",
-                    "status": "violated",
-                    "reason": "Output names 'Acme Corp'.",
-                }
-            ]
-        }
+    case = EvaluationCase(
+        input="ignored",
+        instructions="Return JSON and do not mention internal IDs.",
+        context="ignored",
+        output='{"internal_id": 7}',
     )
-    result = InstructionAdherenceEvaluator(llm=judge).evaluate(CASE)
-    assert result.score == 0.0
-    assert result.details["violated_instructions"] == ["Do not mention customer names."]
-
-
-def test_formatting_count_instruction_followed():
-    judge = FakeJudge(
-        {
-            "instructions": [
-                {
-                    "instruction": "Use exactly 3 bullet points.",
-                    "status": "followed",
-                    "reason": "Exactly three bullets present.",
-                }
-            ]
-        }
-    )
-    result = InstructionAdherenceEvaluator(llm=judge).evaluate(CASE)
-    assert result.score == 1.0
-
-
-def test_semantic_instruction_partial():
-    judge = FakeJudge(
-        {
-            "instructions": [
-                {
-                    "instruction": "Use a professional tone.",
-                    "status": "partial",
-                    "reason": "Mostly professional but one casual aside.",
-                }
-            ]
-        }
-    )
-    result = InstructionAdherenceEvaluator(llm=judge).evaluate(CASE)
+    result = InstructionAdherenceEvaluator(judge).evaluate(case)
+    assert [item["id"] for item in result.details["instructions"]] == ["I1", "I2"]
     assert result.score == 0.5
 
 
-def test_conditional_instruction_condition_applies():
-    # The condition depends on context; verify context reaches the judge prompt
-    # so it can decide whether the instruction applies. Here it applies.
-    case = EvaluationCase(
-        input="Draft an account summary.",
-        instructions="If the account is inactive, include a warning.",
-        context="Account status: inactive.",
-        output="Warning: this account is inactive.",
+def test_material_qualifier_is_preserved_in_fixed_classification_set():
+    judge = _judge(["Provide exactly 5 items."], ["violated"])
+    InstructionAdherenceEvaluator(judge).evaluate(CASE)
+    classify_user = judge.calls[1]["prompt"][1]["content"]
+    assert "Provide exactly 5 items." in classify_user
+    assert "exactly 5" in classify_user
+
+
+def test_normalized_exact_duplicates_keep_first_and_receive_one_id():
+    judge = ScriptedJudge(
+        _extraction(
+            "Return JSON.",
+            "  return   json.  ",
+            "RETURN JSON.",
+        ),
+        _classification("followed"),
     )
-    judge = FakeJudge(
+    result = InstructionAdherenceEvaluator(judge).evaluate(CASE)
+    assert result.details["instruction_count"] == 1
+    assert result.details["instructions"][0]["instruction"] == "Return JSON."
+    assert '"id": "I1"' in judge.calls[1]["prompt"][1]["content"]
+
+
+def test_reordered_classifications_are_reconstructed_in_extraction_order():
+    judge = ScriptedJudge(
+        _extraction("First.", "Second."),
         {
-            "instructions": [
-                {
-                    "instruction": "If the account is inactive, include a warning.",
-                    "status": "followed",
-                    "reason": "Account is inactive and a warning is present.",
-                }
+            "answers": [
+                {"id": "I2", "status": "violated", "reason": "second"},
+                {"id": "I1", "status": "followed", "reason": "first"},
             ]
-        }
+        },
     )
-    result = InstructionAdherenceEvaluator(llm=judge).evaluate(case)
-    assert result.score == 1.0
-    user_content = judge.calls[0]["prompt"][1]["content"]
-    assert "Account status: inactive." in user_content
+    result = InstructionAdherenceEvaluator(judge).evaluate(CASE)
+    assert [item["id"] for item in result.details["instructions"]] == ["I1", "I2"]
 
 
-def test_conditional_instruction_condition_does_not_apply():
-    # Condition is false (account active) -> the single instruction is
-    # not_applicable, so the metric has nothing applicable to score.
-    case = EvaluationCase(
-        input="Draft an account summary.",
-        instructions="If the account is inactive, include a warning.",
-        context="Account status: active.",
-        output="Your account summary is ready.",
+@pytest.mark.parametrize(
+    ("answers", "message"),
+    [
+        (
+            [{"id": "I1", "status": "followed", "reason": "r"}],
+            "Missing classification",
+        ),
+        (
+            [
+                {"id": "I1", "status": "followed", "reason": "r"},
+                {"id": "I1", "status": "violated", "reason": "r"},
+            ],
+            "Duplicate instruction id",
+        ),
+        (
+            [
+                {"id": "I1", "status": "followed", "reason": "r"},
+                {"id": "I9", "status": "violated", "reason": "r"},
+            ],
+            "Unknown instruction id",
+        ),
+    ],
+)
+def test_stage_two_requires_exact_instruction_ids(answers, message):
+    judge = ScriptedJudge(_extraction("First.", "Second."), {"answers": answers})
+    with pytest.raises(ValueError, match=message):
+        InstructionAdherenceEvaluator(judge).evaluate(CASE)
+
+
+@pytest.mark.parametrize("status", ["partial", "sometimes", "not_applicable"])
+def test_non_binary_status_fails_clearly(status):
+    judge = ScriptedJudge(
+        _extraction("Return JSON."),
+        {"answers": [{"id": "I1", "status": status, "reason": "r"}]},
     )
-    judge = FakeJudge(
-        {
-            "instructions": [
-                {
-                    "instruction": "If the account is inactive, include a warning.",
-                    "status": "not_applicable",
-                    "reason": "The account is active, so the condition does not apply.",
-                }
-            ]
-        }
+    with pytest.raises(ValueError, match="Unknown instruction-adherence status"):
+        InstructionAdherenceEvaluator(judge).evaluate(CASE)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        None,
+        {},
+        {"instructions": "not a list"},
+        {"instructions": ["bad"]},
+        _extraction(""),
+    ],
+)
+def test_malformed_extraction_fails_clearly(response):
+    with pytest.raises(ValueError):
+        InstructionAdherenceEvaluator(ScriptedJudge(response)).evaluate(CASE)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [None, {}, {"answers": "not a list"}, {"answers": ["bad"]}],
+)
+def test_malformed_classification_fails_clearly(response):
+    judge = ScriptedJudge(_extraction("Return JSON."), response)
+    with pytest.raises(ValueError):
+        InstructionAdherenceEvaluator(judge).evaluate(CASE)
+
+
+@pytest.mark.parametrize("failure_stage", ["extract", "classify"])
+def test_judge_failure_propagates(failure_stage):
+    error = RuntimeError("judge unavailable")
+    judge = (
+        ScriptedJudge(error)
+        if failure_stage == "extract"
+        else ScriptedJudge(_extraction("Return JSON."), error)
     )
-    result = InstructionAdherenceEvaluator(llm=judge).evaluate(case)
-    assert result.score is None
-    assert result.label == "not_applicable"
+    with pytest.raises(RuntimeError, match="judge unavailable"):
+        InstructionAdherenceEvaluator(judge).evaluate(CASE)
 
 
-# --- prompt / schema structure ----------------------------------------------
+def test_extraction_prompt_contains_only_instruction_case_data():
+    judge = _judge(["Return JSON."], ["followed"])
+    InstructionAdherenceEvaluator(judge).evaluate(CASE)
+    user = judge.calls[0]["prompt"][1]["content"]
+    assert CASE.instructions in user
+    assert CASE.input not in user
+    assert CASE.context not in user
+    assert CASE.output not in user
 
 
-def test_schema_requires_reason_and_allows_not_applicable():
-    item = INSTRUCTION_ADHERENCE_SCHEMA["properties"]["instructions"]["items"]
-    assert item["required"] == ["instruction", "status", "reason"]
-    assert item["properties"]["status"]["enum"] == [
+def test_classification_prompt_contains_only_fixed_instructions_and_output():
+    judge = _judge(["Return JSON."], ["followed"])
+    InstructionAdherenceEvaluator(judge).evaluate(CASE)
+    user = judge.calls[1]["prompt"][1]["content"]
+    assert '"instruction": "Return JSON."' in user
+    assert CASE.output in user
+    assert CASE.input not in user
+    assert CASE.context not in user
+
+
+def test_prompt_schemas_are_minimal_and_binary():
+    extract_item = INSTRUCTION_ADHERENCE_EXTRACT_SCHEMA["properties"][
+        "instructions"
+    ]["items"]
+    classify_item = INSTRUCTION_ADHERENCE_CLASSIFY_SCHEMA["properties"]["answers"][
+        "items"
+    ]
+    assert extract_item["required"] == ["instruction"]
+    assert classify_item["required"] == ["id", "status", "reason"]
+    assert classify_item["properties"]["status"]["enum"] == [
         "followed",
-        "partial",
         "violated",
-        "not_applicable",
     ]
 
 
-def test_scoring_helper_raises_without_applicable():
-    with pytest.raises(ValueError):
-        calculate_instruction_adherence([{"status": "not_applicable"}])
+def test_extraction_rubric_documents_split_qualifiers_and_generic_scope():
+    system = INSTRUCTION_ADHERENCE_EXTRACT_PROMPT[0]["content"]
+    lowered = system.lower()
+    normalized = " ".join(lowered.split())
+    assert "independently be followed or violated" in lowered
+    assert "exact counts" in lowered
+    assert "do not invent unstated instructions" in normalized
+    assert all(word not in lowered for word in ("jira", "theme", "epic"))
 
 
-# --- prompt structure -------------------------------------------------------
+def test_prompt_renderers_do_not_mutate_global_templates():
+    extract_before = copy.deepcopy(INSTRUCTION_ADHERENCE_EXTRACT_PROMPT)
+    classify_before = copy.deepcopy(INSTRUCTION_ADHERENCE_CLASSIFY_PROMPT)
+    render_instruction_adherence_extract_prompt("Return JSON.")
+    render_instruction_adherence_classify_prompt("[]", "output")
+    assert INSTRUCTION_ADHERENCE_EXTRACT_PROMPT == extract_before
+    assert INSTRUCTION_ADHERENCE_CLASSIFY_PROMPT == classify_before
+    assert "{instructions}" in INSTRUCTION_ADHERENCE_EXTRACT_PROMPT[1]["content"]
 
 
-def test_prompt_is_message_list_and_scoped():
-    judge = _judge("followed")
-    InstructionAdherenceEvaluator(llm=judge).evaluate(CASE)
-    prompt = judge.calls[0]["prompt"]
-    assert [m["role"] for m in prompt] == ["system", "user"]
-    system = prompt[0]["content"]
-    assert "Instruction Adherence measures" in system
-    user = prompt[1]["content"]
-    assert "[INSTRUCTIONS]" in user and CASE.instructions in user
-    assert "[OUTPUT]" in user and CASE.output in user
-    # The task input must NOT leak into the instruction-adherence prompt.
-    assert CASE.input not in user
-
-
-def test_render_does_not_mutate_global_template():
-    before = copy.deepcopy(INSTRUCTION_ADHERENCE_PROMPT)
-    render_instruction_adherence_prompt(instructions="a", context="b", output="c")
-    assert INSTRUCTION_ADHERENCE_PROMPT == before
-    assert "{instructions}" in INSTRUCTION_ADHERENCE_PROMPT[1]["content"]
-
-
-# --- framework integration --------------------------------------------------
-
-
-def test_framework_runs_only_instruction_adherence():
+def test_framework_usage_is_unchanged():
     framework = EvaluationFramework(
-        evaluators=[InstructionAdherenceEvaluator(llm=_judge("followed"))]
+        evaluators=[
+            InstructionAdherenceEvaluator(
+                _judge(["Return JSON."], ["followed"])
+            )
+        ]
     )
     results = framework.evaluate(CASE, metrics=["instruction_adherence"])
     assert set(results) == {"instruction_adherence"}

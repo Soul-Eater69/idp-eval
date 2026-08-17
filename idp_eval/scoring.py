@@ -1,8 +1,9 @@
 """Deterministic scoring functions.
 
-The judge LLM classifies semantics (covered / partial / missing, followed /
-partial / violated). Python turns those classifications into numbers. Never ask
-the LLM to produce the final score directly.
+The judge LLM classifies semantics (covered / partial / missing for coverage,
+followed / violated for instruction adherence). Python turns those
+classifications into numbers. Never ask the LLM to produce the final score
+directly.
 """
 
 from __future__ import annotations
@@ -14,11 +15,9 @@ COVERAGE_VALUES = {
     "missing": 0.0,
 }
 
-# Semantic weights for instruction adherence. ``not_applicable`` is deliberately
-# absent: those instructions are excluded from scoring, not weighted.
+# Binary weights for instruction adherence.
 INSTRUCTION_ADHERENCE_VALUES = {
     "followed": 1.0,
-    "partial": 0.5,
     "violated": 0.0,
 }
 
@@ -103,35 +102,34 @@ def calculate_coverage(items: list[dict]) -> float:
 
 
 def calculate_instruction_adherence(instructions: list[dict]) -> float:
-    """Calculates the instruction-adherence score.
-
-    Instructions classified ``not_applicable`` are excluded before scoring: they
-    are neither a success nor a failure, so they must not affect the denominator.
+    """Calculates the binary instruction-adherence score.
 
     Args:
-        instructions: Instructions classified with a ``"status"`` of
-            ``followed``, ``partial``, ``violated``, or ``not_applicable``.
+        instructions: Instructions classified as ``followed`` or ``violated``.
 
     Returns:
-        Score between ``0`` and ``1`` equal to the mean of the applicable
-        instructions' status values. Higher is better.
+        Score between ``0`` and ``1`` equal to the fraction followed.
 
     Raises:
-        ValueError: If no applicable instruction remains after excluding
-            ``not_applicable`` ones. The evaluator is responsible for handling
-            that case as not-applicable before calling this function.
+        ValueError: If the list is empty or a status is not recognized.
     """
-    applicable = [
-        i for i in instructions if i["status"] != "not_applicable"
-    ]
-    if not applicable:
+    if not instructions:
         raise ValueError(
-            "At least one applicable instruction is required to calculate "
-            "instruction adherence."
+            "At least one instruction is required to calculate instruction "
+            "adherence."
         )
 
-    total = sum(INSTRUCTION_ADHERENCE_VALUES[i["status"]] for i in applicable)
-    return total / len(applicable)
+    try:
+        total = sum(
+            INSTRUCTION_ADHERENCE_VALUES[item["status"]]
+            for item in instructions
+        )
+    except KeyError as exc:
+        status = exc.args[0]
+        raise ValueError(
+            f"Unknown instruction-adherence status: {status!r}"
+        ) from None
+    return total / len(instructions)
 
 
 def score_to_label(score: float, high: float = 0.66, low: float = 0.33) -> str:

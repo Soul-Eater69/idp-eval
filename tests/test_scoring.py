@@ -94,10 +94,9 @@ def test_instruction_adherence_mixed():
     instructions = [
         {"status": "followed"},
         {"status": "followed"},
-        {"status": "partial"},
         {"status": "violated"},
     ]
-    assert calculate_instruction_adherence(instructions) == 0.625
+    assert calculate_instruction_adherence(instructions) == 2 / 3
 
 
 def test_instruction_adherence_all_followed():
@@ -108,6 +107,17 @@ def test_instruction_adherence_all_followed():
 def test_instruction_adherence_all_violated():
     instructions = [{"status": "violated"}, {"status": "violated"}]
     assert calculate_instruction_adherence(instructions) == 0.0
+
+
+def test_instruction_adherence_empty_raises():
+    with pytest.raises(ValueError, match="At least one instruction"):
+        calculate_instruction_adherence([])
+
+
+@pytest.mark.parametrize("status", ["partial", "not_applicable", "sometimes"])
+def test_instruction_adherence_unknown_status_raises(status):
+    with pytest.raises(ValueError, match="Unknown instruction-adherence status"):
+        calculate_instruction_adherence([{"status": status}])
 
 
 def test_score_to_label():

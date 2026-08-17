@@ -91,7 +91,10 @@ def test_empty_extraction_only_extract_span(spans):
 
 def test_multiple_metrics_same_trace(spans):
     instr_judge = ScriptedJudge(
-        {"instructions": [{"instruction": "x", "status": "followed", "reason": "r"}]}
+        {"instructions": [{"instruction": "Be concise."}]},
+        {"answers": [
+            {"id": "I1", "status": "followed", "reason": "r"}
+        ]},
     )
     framework = EvaluationFramework(
         evaluators=[
@@ -112,7 +115,29 @@ def test_multiple_metrics_same_trace(spans):
     names = [s.name for s in finished]
     assert "coverage.extract" in names
     assert "coverage.classify" in names
-    assert "instruction_adherence.evaluate" in names
+    assert "instruction_adherence.extract" in names
+    assert "instruction_adherence.classify" in names
+    root = next(s for s in finished if s.name == "idp_eval.evaluate")
+    for span in finished:
+        if span.name.startswith("instruction_adherence."):
+            assert span.parent.span_id == root.context.span_id
+
+
+def test_empty_instruction_extraction_only_creates_extract_span(spans):
+    framework = EvaluationFramework(
+        evaluators=[
+            InstructionAdherenceEvaluator(
+                ScriptedJudge({"instructions": []})
+            )
+        ]
+    )
+    case = EvaluationCase(
+        case_id="c", input="t", context="c", output="o", instructions="noise"
+    )
+    framework.evaluate(case)
+    names = _names(spans)
+    assert "instruction_adherence.extract" in names
+    assert "instruction_adherence.classify" not in names
 
 
 def test_not_applicable_instruction_makes_no_judge_span(spans):
@@ -122,7 +147,8 @@ def test_not_applicable_instruction_makes_no_judge_span(spans):
     # No instructions -> not_applicable -> no LLM call -> no judge span.
     case = EvaluationCase(case_id="c", input="t", context="c", output="o")
     framework.evaluate(case)
-    assert "instruction_adherence.evaluate" not in _names(spans)
+    assert "instruction_adherence.extract" not in _names(spans)
+    assert "instruction_adherence.classify" not in _names(spans)
 
 
 def test_two_cases_two_traces(spans):
@@ -224,7 +250,10 @@ def test_native_annotations_target_root_span(spans, monkeypatch):
 
 def test_native_annotations_batched_for_multiple_metrics(spans, monkeypatch):
     instr_judge = ScriptedJudge(
-        {"instructions": [{"instruction": "x", "status": "followed", "reason": "r"}]}
+        {"instructions": [{"instruction": "Be concise."}]},
+        {"answers": [
+            {"id": "I1", "status": "followed", "reason": "r"}
+        ]},
     )
     framework, fake = _phoenix_framework(
         [CoverageEvaluator(_coverage_judge()), InstructionAdherenceEvaluator(instr_judge)],

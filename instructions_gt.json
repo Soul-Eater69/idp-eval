@@ -1,0 +1,366 @@
+[
+  {
+    "case_id": "instr_001",
+    "category": "all_followed_simple",
+    "description": "Simple HITL instructions; all are followed.",
+    "instructions": [
+      "Keep the response under 40 words.",
+      "Use exactly 3 bullet points.",
+      "Do not mention pricing."
+    ],
+    "output": "- Fast setup\n- Easy integration\n- Reliable support",
+    "gold_instructions": [
+      {
+        "id": "I1",
+        "instruction": "Keep the response under 40 words.",
+        "status": "followed"
+      },
+      {
+        "id": "I2",
+        "instruction": "Use exactly 3 bullet points.",
+        "status": "followed"
+      },
+      {
+        "id": "I3",
+        "instruction": "Do not mention pricing.",
+        "status": "followed"
+      }
+    ],
+    "gold_score": 1.0,
+    "gold_percentage": 100.0,
+    "dataset_name": "instruction-adherence-gt-v1"
+  },
+  {
+    "case_id": "instr_002",
+    "category": "word_limit_violated",
+    "description": "Word limit is violated while the other instructions are followed.",
+    "instructions": [
+      "Keep the response under 20 words.",
+      "Use one paragraph.",
+      "Mention reliability."
+    ],
+    "output": "This solution is reliable, easy to maintain, straightforward to integrate, and suitable for teams that need predictable operational behavior over time.",
+    "gold_instructions": [
+      {
+        "id": "I1",
+        "instruction": "Keep the response under 20 words.",
+        "status": "violated"
+      },
+      {
+        "id": "I2",
+        "instruction": "Use one paragraph.",
+        "status": "followed"
+      },
+      {
+        "id": "I3",
+        "instruction": "Mention reliability.",
+        "status": "followed"
+      }
+    ],
+    "gold_score": 0.666667,
+    "gold_percentage": 66.67,
+    "dataset_name": "instruction-adherence-gt-v1"
+  },
+  {
+    "case_id": "instr_003",
+    "category": "json_only",
+    "description": "Strict output-format instruction.",
+    "instructions": [
+      "Return JSON only.",
+      "Include keys named name and status.",
+      "Set status to active."
+    ],
+    "output": "{\"name\":\"Alpha\",\"status\":\"active\"}",
+    "gold_instructions": [
+      {
+        "id": "I1",
+        "instruction": "Return JSON only.",
+        "status": "followed"
+      },
+      {
+        "id": "I2",
+        "instruction": "Include keys named name and status.",
+        "status": "followed"
+      },
+      {
+        "id": "I3",
+        "instruction": "Set status to active.",
+        "status": "followed"
+      }
+    ],
+    "gold_score": 1.0,
+    "gold_percentage": 100.0,
+    "dataset_name": "instruction-adherence-gt-v1"
+  },
+  {
+    "case_id": "instr_004",
+    "category": "required_phrase_missing",
+    "description": "Required phrase is omitted.",
+    "instructions": [
+      "Include the exact phrase 'ready for review'.",
+      "Keep the response to one sentence."
+    ],
+    "output": "The document is complete and can now be checked by the team.",
+    "gold_instructions": [
+      {
+        "id": "I1",
+        "instruction": "Include the exact phrase 'ready for review'.",
+        "status": "violated"
+      },
+      {
+        "id": "I2",
+        "instruction": "Keep the response to one sentence.",
+        "status": "followed"
+      }
+    ],
+    "gold_score": 0.5,
+    "gold_percentage": 50.0,
+    "dataset_name": "instruction-adherence-gt-v1"
+  },
+  {
+    "case_id": "instr_005",
+    "category": "prohibition_violated",
+    "description": "Negative instruction is violated.",
+    "instructions": [
+      "Do not mention competitors.",
+      "Describe the product in two short sentences."
+    ],
+    "output": "The product is fast and easy to deploy. It is simpler than CompetitorX for small teams.",
+    "gold_instructions": [
+      {
+        "id": "I1",
+        "instruction": "Do not mention competitors.",
+        "status": "violated"
+      },
+      {
+        "id": "I2",
+        "instruction": "Describe the product in two short sentences.",
+        "status": "followed"
+      }
+    ],
+    "gold_score": 0.5,
+    "gold_percentage": 50.0,
+    "dataset_name": "instruction-adherence-gt-v1"
+  },
+  {
+    "case_id": "instr_006",
+    "category": "language_constraint",
+    "description": "Language instruction is followed.",
+    "instructions": [
+      "Write the response in Spanish.",
+      "Keep it under 30 words."
+    ],
+    "output": "La solución es rápida, confiable y fácil de integrar. También reduce el trabajo manual del equipo.",
+    "gold_instructions": [
+      {
+        "id": "I1",
+        "instruction": "Write the response in Spanish.",
+        "status": "followed"
+      },
+      {
+        "id": "I2",
+        "instruction": "Keep it under 30 words.",
+        "status": "followed"
+      }
+    ],
+    "gold_score": 1.0,
+    "gold_percentage": 100.0,
+    "dataset_name": "instruction-adherence-gt-v1"
+  },
+  {
+    "case_id": "instr_007",
+    "category": "ordering_constraint",
+    "description": "Required section order is violated.",
+    "instructions": [
+      "Start with a one-line summary.",
+      "Then list risks.",
+      "End with recommendations."
+    ],
+    "output": "Risks:\n- Delayed rollout\n\nSummary: The migration is feasible.\n\nRecommendations:\n- Run a pilot first.",
+    "gold_instructions": [
+      {
+        "id": "I1",
+        "instruction": "Start with a one-line summary.",
+        "status": "violated"
+      },
+      {
+        "id": "I2",
+        "instruction": "Then list risks.",
+        "status": "violated"
+      },
+      {
+        "id": "I3",
+        "instruction": "End with recommendations.",
+        "status": "followed"
+      }
+    ],
+    "gold_score": 0.333333,
+    "gold_percentage": 33.33,
+    "dataset_name": "instruction-adherence-gt-v1"
+  },
+  {
+    "case_id": "instr_008",
+    "category": "compound_instruction_split",
+    "description": "One sentence contains multiple independently checkable instructions.",
+    "instructions": [
+      "Use exactly 3 bullets, keep each bullet under 8 words, and do not use emojis."
+    ],
+    "output": "- Fast setup\n- Clear documentation\n- Reliable support",
+    "gold_instructions": [
+      {
+        "id": "I1",
+        "instruction": "Use exactly 3 bullets.",
+        "status": "followed"
+      },
+      {
+        "id": "I2",
+        "instruction": "Keep each bullet under 8 words.",
+        "status": "followed"
+      },
+      {
+        "id": "I3",
+        "instruction": "Do not use emojis.",
+        "status": "followed"
+      }
+    ],
+    "gold_score": 1.0,
+    "gold_percentage": 100.0,
+    "dataset_name": "instruction-adherence-gt-v1"
+  },
+  {
+    "case_id": "instr_009",
+    "category": "mixed_followed_violated",
+    "description": "Several independent instructions with mixed adherence.",
+    "instructions": [
+      "Give exactly 2 recommendations.",
+      "Mention cost.",
+      "Do not mention implementation time.",
+      "Use numbered items."
+    ],
+    "output": "1. Choose the lower-cost option.\n2. Start with a pilot that can be implemented in two weeks.",
+    "gold_instructions": [
+      {
+        "id": "I1",
+        "instruction": "Give exactly 2 recommendations.",
+        "status": "followed"
+      },
+      {
+        "id": "I2",
+        "instruction": "Mention cost.",
+        "status": "followed"
+      },
+      {
+        "id": "I3",
+        "instruction": "Do not mention implementation time.",
+        "status": "violated"
+      },
+      {
+        "id": "I4",
+        "instruction": "Use numbered items.",
+        "status": "followed"
+      }
+    ],
+    "gold_score": 0.75,
+    "gold_percentage": 75.0,
+    "dataset_name": "instruction-adherence-gt-v1"
+  },
+  {
+    "case_id": "instr_010",
+    "category": "all_violated",
+    "description": "Every instruction is violated.",
+    "instructions": [
+      "Respond in French.",
+      "Use exactly 2 bullet points.",
+      "Do not mention security."
+    ],
+    "output": "Security is important for this solution. It should also be easy to deploy and maintain.",
+    "gold_instructions": [
+      {
+        "id": "I1",
+        "instruction": "Respond in French.",
+        "status": "violated"
+      },
+      {
+        "id": "I2",
+        "instruction": "Use exactly 2 bullet points.",
+        "status": "violated"
+      },
+      {
+        "id": "I3",
+        "instruction": "Do not mention security.",
+        "status": "violated"
+      }
+    ],
+    "gold_score": 0.0,
+    "gold_percentage": 0.0,
+    "dataset_name": "instruction-adherence-gt-v1"
+  },
+  {
+    "case_id": "instr_011",
+    "category": "format_and_content",
+    "description": "Combination of formatting and semantic requirements.",
+    "instructions": [
+      "Use a heading named 'Decision'.",
+      "State that the proposal is approved.",
+      "Include exactly one reason.",
+      "Do not include a closing sentence."
+    ],
+    "output": "Decision\nApproved because the projected savings exceed the implementation cost.",
+    "gold_instructions": [
+      {
+        "id": "I1",
+        "instruction": "Use a heading named 'Decision'.",
+        "status": "followed"
+      },
+      {
+        "id": "I2",
+        "instruction": "State that the proposal is approved.",
+        "status": "followed"
+      },
+      {
+        "id": "I3",
+        "instruction": "Include exactly one reason.",
+        "status": "followed"
+      },
+      {
+        "id": "I4",
+        "instruction": "Do not include a closing sentence.",
+        "status": "followed"
+      }
+    ],
+    "gold_score": 1.0,
+    "gold_percentage": 100.0,
+    "dataset_name": "instruction-adherence-gt-v1"
+  },
+  {
+    "case_id": "instr_012",
+    "category": "at_most_limit",
+    "description": "Qualifier-sensitive at-most constraint.",
+    "instructions": [
+      "Provide at most 3 recommendations.",
+      "Each recommendation must begin with a verb.",
+      "Do not repeat the same recommendation."
+    ],
+    "output": "1. Automate manual checks.\n2. Simplify the approval flow.\n3. Monitor failure rates.\n4. Document escalation rules.",
+    "gold_instructions": [
+      {
+        "id": "I1",
+        "instruction": "Provide at most 3 recommendations.",
+        "status": "violated"
+      },
+      {
+        "id": "I2",
+        "instruction": "Each recommendation must begin with a verb.",
+        "status": "followed"
+      },
+      {
+        "id": "I3",
+        "instruction": "Do not repeat the same recommendation.",
+        "status": "followed"
+      }
+    ],
+    "gold_score": 0.666667,
+    "gold_percentage": 66.67,
+    "dataset_name": "instruction-adherence-gt-v1"
+  }
+]

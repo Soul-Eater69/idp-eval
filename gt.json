@@ -1,0 +1,1515 @@
+[
+  {
+    "case_id": "THEME-001_EPIC-A",
+    "theme_id": "THEME-001",
+    "epic_id": "EPIC-A",
+    "category": "high_coverage",
+    "description": "Broad epic intentionally covering nearly all onboarding requirements.",
+    "input": "Generate one Jira Epic from the provided Theme.\nThe Epic should preserve the task-relevant business needs, desired outcomes,\nconstraints, measurable targets, operational requirements, and important user\nexperience expectations from the Theme. Return Title, Description, and Success Criteria.\nDo not invent implementation technologies unless they are explicitly required by the Theme.",
+    "context": "Theme ID: THEME-001\nTheme Name: Digital Customer Onboarding Modernization\n\nTheme Summary:\nThe organization wants to modernize the retail customer onboarding journey for new deposit-account customers. The current process is fragmented across web forms, call-center follow-up, and manual back-office verification. Customers frequently abandon registration when identity verification fails or when they cannot tell what step remains. Operations teams also spend significant time manually reviewing standard applications that could be handled automatically.\n\nBusiness Need:\nThe target experience should let an eligible customer begin and complete onboarding digitally without contacting support. Identity verification should be automated for standard-risk applicants, while exceptions should be routed for manual review. Customers should be able to save progress and resume later without losing previously entered information. The journey should clearly show current status, remaining steps, and whether additional information is required.\n\nOperational Expectations:\nManual verification effort should be reduced by 40%. Average end-to-end onboarding time for standard applications should be reduced by 25%. The number of abandoned applications should be reduced by at least 20% relative to the current baseline. When an application requires manual review, the customer should receive a clear status rather than seeing a generic error.\n\nCustomer Communication:\nCustomers should receive confirmation when an application is submitted successfully. If additional documentation is required, they should be told what is missing and how to provide it. When onboarding completes, the customer should receive a completion notification. Status information should be available in near real time.\n\nConstraints:\nThe existing enterprise identity provider must remain in place. Existing KYC/AML policy rules must continue to apply. No additional mandatory phone call should be introduced into the standard onboarding path. Sensitive identity data must not be exposed in user-visible status messages.\n\nMeasures of Success:\n- Reduce standard onboarding time by 25%.\n- Reduce manual verification effort by 40%.\n- Reduce abandoned applications by at least 20%.\n- Preserve the current identity provider and compliance policy controls.\n- Improve transparency by showing meaningful onboarding status and next steps.",
+    "output": "Title: Modernize Digital Customer Onboarding\n\nDescription:\nCreate a unified digital onboarding journey that allows eligible customers to complete standard account onboarding without contacting support. The experience will automate identity verification for standard-risk applicants, retain the existing enterprise identity provider and KYC/AML controls, and route verification exceptions to manual review. Customers can save an incomplete application and resume later without re-entering completed information. The journey will provide meaningful near-real-time status, remaining steps, and clear requests for additional documentation without exposing sensitive identity information.\n\nSuccess Criteria:\n- Standard application onboarding time is reduced by 25%.\n- Manual verification effort is reduced by 40%.\n- Abandoned applications are reduced by at least 20%.\n- Standard-risk identity verification is automated and exceptions are routed to manual review.\n- Customers can save and resume onboarding without losing previously entered data.\n- Customers can see meaningful status, remaining steps, and required actions.\n- Customers receive confirmation after submission, notification when documentation is required, and notification when onboarding completes.\n- The existing identity provider and current KYC/AML controls remain in use.\n- No mandatory phone call is introduced into the standard onboarding path.\n- Sensitive identity details are not exposed in customer-facing status messages.",
+    "gold_requirements": [
+      {
+        "id": "R1",
+        "parent_id": "R1",
+        "requirement": "Allow eligible customers to complete standard onboarding digitally without contacting support.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R2",
+        "parent_id": "R2",
+        "requirement": "Automate identity verification for standard-risk applicants.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R3",
+        "parent_id": "R3",
+        "requirement": "Route verification exceptions to manual review.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R4",
+        "parent_id": "R4",
+        "requirement": "Allow customers to save progress and resume later without losing entered data.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R5.1",
+        "parent_id": "R5",
+        "requirement": "Show meaningful near-real-time onboarding status.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R5.2",
+        "parent_id": "R5",
+        "requirement": "Show the remaining onboarding steps.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R5.3",
+        "parent_id": "R5",
+        "requirement": "Show the required actions.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R6",
+        "parent_id": "R6",
+        "requirement": "Reduce manual verification effort by 40%.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R7",
+        "parent_id": "R7",
+        "requirement": "Reduce standard onboarding time by 25%.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R8",
+        "parent_id": "R8",
+        "requirement": "Reduce abandoned applications by at least 20%.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R9.1",
+        "parent_id": "R9",
+        "requirement": "Send a submission confirmation notification.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R9.2",
+        "parent_id": "R9",
+        "requirement": "Send a missing-document notification.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R9.3",
+        "parent_id": "R9",
+        "requirement": "Send a completion notification.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R10",
+        "parent_id": "R10",
+        "requirement": "Retain the existing enterprise identity provider.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R11",
+        "parent_id": "R11",
+        "requirement": "Preserve existing KYC/AML policy controls.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R12",
+        "parent_id": "R12",
+        "requirement": "Do not introduce an additional mandatory phone call.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R13",
+        "parent_id": "R13",
+        "requirement": "Do not expose sensitive identity data in user-visible status messages.",
+        "status": "covered",
+        "weight": 1.0
+      }
+    ],
+    "gold_score": 1.0,
+    "gold_percentage": 100.0,
+    "dataset_name": "theme-epic-coverage-realistic-v1",
+    "trace_metadata": {
+      "case_id": "THEME-001_EPIC-A",
+      "theme_id": "THEME-001",
+      "epic_id": "EPIC-A",
+      "dataset_name": "theme-epic-coverage-realistic-v1"
+    }
+  },
+  {
+    "case_id": "THEME-001_EPIC-B",
+    "theme_id": "THEME-001",
+    "epic_id": "EPIC-B",
+    "category": "partial_qualifier_loss",
+    "description": "Onboarding epic with material omissions and softened targets.",
+    "input": "Generate one Jira Epic from the provided Theme.\nThe Epic should preserve the task-relevant business needs, desired outcomes,\nconstraints, measurable targets, operational requirements, and important user\nexperience expectations from the Theme. Return Title, Description, and Success Criteria.\nDo not invent implementation technologies unless they are explicitly required by the Theme.",
+    "context": "Theme ID: THEME-001\nTheme Name: Digital Customer Onboarding Modernization\n\nTheme Summary:\nThe organization wants to modernize the retail customer onboarding journey for new deposit-account customers. The current process is fragmented across web forms, call-center follow-up, and manual back-office verification. Customers frequently abandon registration when identity verification fails or when they cannot tell what step remains. Operations teams also spend significant time manually reviewing standard applications that could be handled automatically.\n\nBusiness Need:\nThe target experience should let an eligible customer begin and complete onboarding digitally without contacting support. Identity verification should be automated for standard-risk applicants, while exceptions should be routed for manual review. Customers should be able to save progress and resume later without losing previously entered information. The journey should clearly show current status, remaining steps, and whether additional information is required.\n\nOperational Expectations:\nManual verification effort should be reduced by 40%. Average end-to-end onboarding time for standard applications should be reduced by 25%. The number of abandoned applications should be reduced by at least 20% relative to the current baseline. When an application requires manual review, the customer should receive a clear status rather than seeing a generic error.\n\nCustomer Communication:\nCustomers should receive confirmation when an application is submitted successfully. If additional documentation is required, they should be told what is missing and how to provide it. When onboarding completes, the customer should receive a completion notification. Status information should be available in near real time.\n\nConstraints:\nThe existing enterprise identity provider must remain in place. Existing KYC/AML policy rules must continue to apply. No additional mandatory phone call should be introduced into the standard onboarding path. Sensitive identity data must not be exposed in user-visible status messages.\n\nMeasures of Success:\n- Reduce standard onboarding time by 25%.\n- Reduce manual verification effort by 40%.\n- Reduce abandoned applications by at least 20%.\n- Preserve the current identity provider and compliance policy controls.\n- Improve transparency by showing meaningful onboarding status and next steps.",
+    "output": "Title: Improve Customer Onboarding Visibility\n\nDescription:\nImprove the digital onboarding experience by giving customers better status information and reducing the amount of manual verification work. Standard identity checks should be automated where practical. Customers should be able to return to an incomplete application and continue the process.\n\nSuccess Criteria:\n- Customers can see whether onboarding is in progress, blocked, or completed.\n- Customers can resume incomplete applications.\n- Identity verification is automated for common cases.\n- Manual verification effort is reduced.\n- Customers are informed when additional documents are required.\n- Existing compliance checks remain in place.",
+    "gold_requirements": [
+      {
+        "id": "R1",
+        "parent_id": "R1",
+        "requirement": "Allow eligible customers to complete standard onboarding digitally without contacting support.",
+        "status": "partial",
+        "weight": 1.0
+      },
+      {
+        "id": "R2",
+        "parent_id": "R2",
+        "requirement": "Automate identity verification for standard-risk applicants.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R3",
+        "parent_id": "R3",
+        "requirement": "Route verification exceptions to manual review.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R4",
+        "parent_id": "R4",
+        "requirement": "Allow customers to save progress and resume later without losing entered data.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R5.1",
+        "parent_id": "R5",
+        "requirement": "Show meaningful near-real-time onboarding status.",
+        "status": "partial",
+        "weight": 0.333333
+      },
+      {
+        "id": "R5.2",
+        "parent_id": "R5",
+        "requirement": "Show the remaining onboarding steps.",
+        "status": "partial",
+        "weight": 0.333333
+      },
+      {
+        "id": "R5.3",
+        "parent_id": "R5",
+        "requirement": "Show the required actions.",
+        "status": "partial",
+        "weight": 0.333333
+      },
+      {
+        "id": "R6",
+        "parent_id": "R6",
+        "requirement": "Reduce manual verification effort by 40%.",
+        "status": "partial",
+        "weight": 1.0
+      },
+      {
+        "id": "R7",
+        "parent_id": "R7",
+        "requirement": "Reduce standard onboarding time by 25%.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R8",
+        "parent_id": "R8",
+        "requirement": "Reduce abandoned applications by at least 20%.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R9.1",
+        "parent_id": "R9",
+        "requirement": "Send a submission confirmation notification.",
+        "status": "partial",
+        "weight": 0.333333
+      },
+      {
+        "id": "R9.2",
+        "parent_id": "R9",
+        "requirement": "Send a missing-document notification.",
+        "status": "partial",
+        "weight": 0.333333
+      },
+      {
+        "id": "R9.3",
+        "parent_id": "R9",
+        "requirement": "Send a completion notification.",
+        "status": "partial",
+        "weight": 0.333333
+      },
+      {
+        "id": "R10",
+        "parent_id": "R10",
+        "requirement": "Retain the existing enterprise identity provider.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R11",
+        "parent_id": "R11",
+        "requirement": "Preserve existing KYC/AML policy controls.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R12",
+        "parent_id": "R12",
+        "requirement": "Do not introduce an additional mandatory phone call.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R13",
+        "parent_id": "R13",
+        "requirement": "Do not expose sensitive identity data in user-visible status messages.",
+        "status": "missing",
+        "weight": 1.0
+      }
+    ],
+    "gold_score": 0.384615,
+    "gold_percentage": 38.4615,
+    "dataset_name": "theme-epic-coverage-realistic-v1",
+    "trace_metadata": {
+      "case_id": "THEME-001_EPIC-B",
+      "theme_id": "THEME-001",
+      "epic_id": "EPIC-B",
+      "dataset_name": "theme-epic-coverage-realistic-v1"
+    }
+  },
+  {
+    "case_id": "THEME-002_EPIC-A",
+    "theme_id": "THEME-002",
+    "epic_id": "EPIC-A",
+    "category": "high_coverage",
+    "description": "Claims triage epic covering risk routing, SLAs, reviewer workflow and audit controls.",
+    "input": "Generate one Jira Epic from the provided Theme.\nThe Epic should preserve the task-relevant business needs, desired outcomes,\nconstraints, measurable targets, operational requirements, and important user\nexperience expectations from the Theme. Return Title, Description, and Success Criteria.\nDo not invent implementation technologies unless they are explicitly required by the Theme.",
+    "context": "Theme ID: THEME-002\nTheme Name: Insurance Claims Triage and Review Acceleration\n\nTheme Summary:\nClaims operations teams are struggling with long review cycles, inconsistent triage, and excessive manual work for low-risk claims. The objective is to improve the speed of claim handling without weakening fraud controls or reducing the quality of review.\n\nBusiness Need:\nIncoming claims should be categorized by risk and complexity using available claim attributes. Low-risk claims should be routed into a fast-track process, while high-risk or suspicious claims should be escalated for senior review. Reviewers need clear visibility into why a claim was escalated, what information is missing, and what action is required next.\n\nOperational Expectations:\nAverage claims review time should be reduced by 30%. At least 90% of eligible low-risk claims should receive a decision within 2 business days. Manual rework caused by incomplete or misrouted claims should remain below 5%. High-risk claims should not be automatically approved.\n\nCustomer Experience:\nCustomers should be informed when a claim is received, when more information is required, and when a decision is made. Notifications must use plain language and must not expose internal fraud-scoring logic.\n\nReviewer Experience:\nReviewers should see a prioritized work queue with the claim risk category, aging information, missing documents, and escalation reason. They should be able to add notes and reassign a claim when necessary.\n\nConstraints:\nExisting policy administration and fraud systems remain systems of record. The new workflow may orchestrate work but must not bypass mandatory controls. All claim decisions and reviewer actions must remain auditable.\n\nMeasures of Success:\n- Reduce average review time by 30%.\n- Resolve 90% of eligible low-risk claims within 2 business days.\n- Keep manual rework below 5%.\n- Ensure high-risk claims require human review.\n- Preserve end-to-end auditability.",
+    "output": "Title: Accelerate Claims Triage and Review\n\nDescription:\nIntroduce a consistent claims triage and review workflow that categorizes incoming claims by risk and complexity, fast-tracks eligible low-risk claims, and ensures suspicious or high-risk claims are reviewed by a senior reviewer. Reviewers will have a prioritized work queue showing risk category, aging, missing information, and escalation reason. The workflow will preserve existing policy and fraud systems as systems of record and maintain a complete audit trail.\n\nSuccess Criteria:\n- Average claims review time is reduced by 30%.\n- At least 90% of eligible low-risk claims receive a decision within 2 business days.\n- Manual rework remains below 5%.\n- High-risk claims cannot be automatically approved and require human review.\n- Reviewers can see risk category, aging, missing documents, and escalation reasons.\n- Reviewers can add notes and reassign claims.\n- Customers are notified when claims are received, when more information is required, and when a decision is made.\n- Customer messages do not expose internal fraud-scoring logic.\n- Claim decisions and reviewer actions remain auditable.",
+    "gold_requirements": [
+      {
+        "id": "R1",
+        "parent_id": "R1",
+        "requirement": "Categorize incoming claims by risk and complexity.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R2",
+        "parent_id": "R2",
+        "requirement": "Fast-track eligible low-risk claims.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R3",
+        "parent_id": "R3",
+        "requirement": "Escalate high-risk or suspicious claims for senior review.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R4",
+        "parent_id": "R4",
+        "requirement": "Reduce average claims review time by 30%.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R5",
+        "parent_id": "R5",
+        "requirement": "Resolve 90% of eligible low-risk claims within 2 business days.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R6",
+        "parent_id": "R6",
+        "requirement": "Keep manual rework below 5%.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R7",
+        "parent_id": "R7",
+        "requirement": "Do not automatically approve high-risk claims.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R8.1",
+        "parent_id": "R8",
+        "requirement": "Provide reviewer visibility into claim risk.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R8.2",
+        "parent_id": "R8",
+        "requirement": "Provide reviewer visibility into claim aging.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R8.3",
+        "parent_id": "R8",
+        "requirement": "Provide reviewer visibility into missing information.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R8.4",
+        "parent_id": "R8",
+        "requirement": "Provide reviewer visibility into escalation reason.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R9.1",
+        "parent_id": "R9",
+        "requirement": "Allow reviewers to add notes to a claim.",
+        "status": "covered",
+        "weight": 0.5
+      },
+      {
+        "id": "R9.2",
+        "parent_id": "R9",
+        "requirement": "Allow reviewers to reassign a claim.",
+        "status": "covered",
+        "weight": 0.5
+      },
+      {
+        "id": "R10.1",
+        "parent_id": "R10",
+        "requirement": "Notify customers at claim receipt.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R10.2",
+        "parent_id": "R10",
+        "requirement": "Notify customers at information request.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R10.3",
+        "parent_id": "R10",
+        "requirement": "Notify customers at decision.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R11",
+        "parent_id": "R11",
+        "requirement": "Do not expose internal fraud-scoring logic to customers.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R12",
+        "parent_id": "R12",
+        "requirement": "Preserve policy administration and fraud systems as systems of record.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R13",
+        "parent_id": "R13",
+        "requirement": "Maintain auditability of decisions and reviewer actions.",
+        "status": "covered",
+        "weight": 1.0
+      }
+    ],
+    "gold_score": 1.0,
+    "gold_percentage": 100.0,
+    "dataset_name": "theme-epic-coverage-realistic-v1",
+    "trace_metadata": {
+      "case_id": "THEME-002_EPIC-A",
+      "theme_id": "THEME-002",
+      "epic_id": "EPIC-A",
+      "dataset_name": "theme-epic-coverage-realistic-v1"
+    }
+  },
+  {
+    "case_id": "THEME-002_EPIC-B",
+    "theme_id": "THEME-002",
+    "epic_id": "EPIC-B",
+    "category": "partial_coverage",
+    "description": "Claims epic focused on reviewer workflow but missing customer and control requirements.",
+    "input": "Generate one Jira Epic from the provided Theme.\nThe Epic should preserve the task-relevant business needs, desired outcomes,\nconstraints, measurable targets, operational requirements, and important user\nexperience expectations from the Theme. Return Title, Description, and Success Criteria.\nDo not invent implementation technologies unless they are explicitly required by the Theme.",
+    "context": "Theme ID: THEME-002\nTheme Name: Insurance Claims Triage and Review Acceleration\n\nTheme Summary:\nClaims operations teams are struggling with long review cycles, inconsistent triage, and excessive manual work for low-risk claims. The objective is to improve the speed of claim handling without weakening fraud controls or reducing the quality of review.\n\nBusiness Need:\nIncoming claims should be categorized by risk and complexity using available claim attributes. Low-risk claims should be routed into a fast-track process, while high-risk or suspicious claims should be escalated for senior review. Reviewers need clear visibility into why a claim was escalated, what information is missing, and what action is required next.\n\nOperational Expectations:\nAverage claims review time should be reduced by 30%. At least 90% of eligible low-risk claims should receive a decision within 2 business days. Manual rework caused by incomplete or misrouted claims should remain below 5%. High-risk claims should not be automatically approved.\n\nCustomer Experience:\nCustomers should be informed when a claim is received, when more information is required, and when a decision is made. Notifications must use plain language and must not expose internal fraud-scoring logic.\n\nReviewer Experience:\nReviewers should see a prioritized work queue with the claim risk category, aging information, missing documents, and escalation reason. They should be able to add notes and reassign a claim when necessary.\n\nConstraints:\nExisting policy administration and fraud systems remain systems of record. The new workflow may orchestrate work but must not bypass mandatory controls. All claim decisions and reviewer actions must remain auditable.\n\nMeasures of Success:\n- Reduce average review time by 30%.\n- Resolve 90% of eligible low-risk claims within 2 business days.\n- Keep manual rework below 5%.\n- Ensure high-risk claims require human review.\n- Preserve end-to-end auditability.",
+    "output": "Title: Claims Reviewer Work Queue\n\nDescription:\nCreate a prioritized work queue that helps claims reviewers focus on the most important claims first. Claims should display risk level, age, missing documentation, and a reason when the case requires escalation.\n\nSuccess Criteria:\n- Reviewers can prioritize work using claim risk and aging.\n- Missing documents and escalation reasons are visible.\n- Reviewers can add case notes and reassign work.\n- Low-risk claims are processed faster.\n- Average review time is reduced by 30%.",
+    "gold_requirements": [
+      {
+        "id": "R1",
+        "parent_id": "R1",
+        "requirement": "Categorize incoming claims by risk and complexity.",
+        "status": "partial",
+        "weight": 1.0
+      },
+      {
+        "id": "R2",
+        "parent_id": "R2",
+        "requirement": "Fast-track eligible low-risk claims.",
+        "status": "partial",
+        "weight": 1.0
+      },
+      {
+        "id": "R3",
+        "parent_id": "R3",
+        "requirement": "Escalate high-risk or suspicious claims for senior review.",
+        "status": "partial",
+        "weight": 1.0
+      },
+      {
+        "id": "R4",
+        "parent_id": "R4",
+        "requirement": "Reduce average claims review time by 30%.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R5",
+        "parent_id": "R5",
+        "requirement": "Resolve 90% of eligible low-risk claims within 2 business days.",
+        "status": "partial",
+        "weight": 1.0
+      },
+      {
+        "id": "R6",
+        "parent_id": "R6",
+        "requirement": "Keep manual rework below 5%.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R7",
+        "parent_id": "R7",
+        "requirement": "Do not automatically approve high-risk claims.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R8.1",
+        "parent_id": "R8",
+        "requirement": "Provide reviewer visibility into claim risk.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R8.2",
+        "parent_id": "R8",
+        "requirement": "Provide reviewer visibility into claim aging.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R8.3",
+        "parent_id": "R8",
+        "requirement": "Provide reviewer visibility into missing information.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R8.4",
+        "parent_id": "R8",
+        "requirement": "Provide reviewer visibility into escalation reason.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R9.1",
+        "parent_id": "R9",
+        "requirement": "Allow reviewers to add notes to a claim.",
+        "status": "covered",
+        "weight": 0.5
+      },
+      {
+        "id": "R9.2",
+        "parent_id": "R9",
+        "requirement": "Allow reviewers to reassign a claim.",
+        "status": "covered",
+        "weight": 0.5
+      },
+      {
+        "id": "R10.1",
+        "parent_id": "R10",
+        "requirement": "Notify customers at claim receipt.",
+        "status": "missing",
+        "weight": 0.333333
+      },
+      {
+        "id": "R10.2",
+        "parent_id": "R10",
+        "requirement": "Notify customers at information request.",
+        "status": "missing",
+        "weight": 0.333333
+      },
+      {
+        "id": "R10.3",
+        "parent_id": "R10",
+        "requirement": "Notify customers at decision.",
+        "status": "missing",
+        "weight": 0.333333
+      },
+      {
+        "id": "R11",
+        "parent_id": "R11",
+        "requirement": "Do not expose internal fraud-scoring logic to customers.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R12",
+        "parent_id": "R12",
+        "requirement": "Preserve policy administration and fraud systems as systems of record.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R13",
+        "parent_id": "R13",
+        "requirement": "Maintain auditability of decisions and reviewer actions.",
+        "status": "missing",
+        "weight": 1.0
+      }
+    ],
+    "gold_score": 0.384615,
+    "gold_percentage": 38.4615,
+    "dataset_name": "theme-epic-coverage-realistic-v1",
+    "trace_metadata": {
+      "case_id": "THEME-002_EPIC-B",
+      "theme_id": "THEME-002",
+      "epic_id": "EPIC-B",
+      "dataset_name": "theme-epic-coverage-realistic-v1"
+    }
+  },
+  {
+    "case_id": "THEME-003_EPIC-A",
+    "theme_id": "THEME-003",
+    "epic_id": "EPIC-A",
+    "category": "high_coverage",
+    "description": "Supplier onboarding epic with operational and compliance requirements.",
+    "input": "Generate one Jira Epic from the provided Theme.\nThe Epic should preserve the task-relevant business needs, desired outcomes,\nconstraints, measurable targets, operational requirements, and important user\nexperience expectations from the Theme. Return Title, Description, and Success Criteria.\nDo not invent implementation technologies unless they are explicitly required by the Theme.",
+    "context": "Theme ID: THEME-003\nTheme Name: Supplier Onboarding and Compliance Standardization\n\nTheme Summary:\nSupplier onboarding differs across procurement teams and regions, resulting in inconsistent data quality, long cycle times, and repeated support requests. The organization needs a standardized supplier onboarding experience that improves speed while retaining compliance controls.\n\nBusiness Need:\nSuppliers should enter company, tax, banking, and contact information through a single guided experience. Tax and banking information should be validated before activation. Suppliers should be able to save a partially completed onboarding request and return later. Procurement users should be able to see the supplier's onboarding status and any blocking issues.\n\nCompliance Expectations:\nRequired sanctions, tax, and banking validations must complete before a supplier can become active. Failed validations should be routed for review rather than silently rejected. The system should retain evidence of validation results and approval activity.\n\nOperational Expectations:\nAverage supplier onboarding time should be reduced by 35%. Onboarding-related support tickets should be reduced by 25%. Duplicate supplier records should be reduced by checking for existing suppliers before creating a new record.\n\nCommunication:\nSuppliers should receive confirmation when onboarding is submitted, notification when additional information is required, and notification when onboarding is approved or rejected. Rejection messages should provide a clear reason where policy permits.\n\nConstraints:\nThe existing ERP remains the system of record for active suppliers. No supplier should be activated if mandatory compliance checks are incomplete. Procurement teams must use the common workflow rather than region-specific spreadsheets.\n\nMeasures of Success:\n- Reduce supplier onboarding time by 35%.\n- Reduce onboarding support tickets by 25%.\n- Validate tax and banking details before activation.\n- Prevent duplicate supplier creation where an existing supplier is detected.\n- Preserve compliance review and evidence.",
+    "output": "Title: Standardize Supplier Onboarding\n\nDescription:\nProvide suppliers with a single guided onboarding journey for company, tax, banking, and contact information. The workflow will validate tax and banking data before activation, check for existing suppliers to reduce duplicates, route failed validations for review, and retain evidence of validation and approval activity. Suppliers can save progress and resume later, while procurement users can see onboarding status and blocking issues. The ERP remains the system of record for active suppliers.\n\nSuccess Criteria:\n- Supplier onboarding time is reduced by 35%.\n- Onboarding-related support tickets are reduced by 25%.\n- Tax and banking information is validated before supplier activation.\n- Mandatory sanctions and compliance checks complete before activation.\n- Failed validations are routed for review.\n- Duplicate suppliers are detected before a new supplier is created.\n- Suppliers can save and resume incomplete onboarding.\n- Procurement users can view status and blocking issues.\n- Suppliers receive submission, additional-information, approval, and rejection notifications.\n- Validation evidence and approval history are retained.\n- Active supplier records continue to be mastered in the existing ERP.",
+    "gold_requirements": [
+      {
+        "id": "R1.1",
+        "parent_id": "R1",
+        "requirement": "Collect company information through a single guided experience.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R1.2",
+        "parent_id": "R1",
+        "requirement": "Collect tax information through a single guided experience.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R1.3",
+        "parent_id": "R1",
+        "requirement": "Collect banking information through a single guided experience.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R1.4",
+        "parent_id": "R1",
+        "requirement": "Collect contact information through a single guided experience.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R2.1",
+        "parent_id": "R2",
+        "requirement": "Validate tax information before activation.",
+        "status": "covered",
+        "weight": 0.5
+      },
+      {
+        "id": "R2.2",
+        "parent_id": "R2",
+        "requirement": "Validate banking information before activation.",
+        "status": "covered",
+        "weight": 0.5
+      },
+      {
+        "id": "R3",
+        "parent_id": "R3",
+        "requirement": "Allow suppliers to save and resume onboarding.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R4",
+        "parent_id": "R4",
+        "requirement": "Provide procurement users status and blocking-issue visibility.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R5.1",
+        "parent_id": "R5",
+        "requirement": "Complete sanctions validation before activation.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R5.2",
+        "parent_id": "R5",
+        "requirement": "Complete tax validation before activation.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R5.3",
+        "parent_id": "R5",
+        "requirement": "Complete banking validation before activation.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R6",
+        "parent_id": "R6",
+        "requirement": "Route failed validations for review.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R7",
+        "parent_id": "R7",
+        "requirement": "Retain evidence of validation and approval activity.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R8",
+        "parent_id": "R8",
+        "requirement": "Reduce supplier onboarding time by 35%.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R9",
+        "parent_id": "R9",
+        "requirement": "Reduce onboarding-related support tickets by 25%.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R10",
+        "parent_id": "R10",
+        "requirement": "Prevent duplicate supplier creation where an existing supplier is detected.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R11.1",
+        "parent_id": "R11",
+        "requirement": "Notify suppliers on submission.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R11.2",
+        "parent_id": "R11",
+        "requirement": "Notify suppliers on information requests.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R11.3",
+        "parent_id": "R11",
+        "requirement": "Notify suppliers on approval.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R11.4",
+        "parent_id": "R11",
+        "requirement": "Notify suppliers on rejection.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R12",
+        "parent_id": "R12",
+        "requirement": "Keep existing ERP as system of record for active suppliers.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R13",
+        "parent_id": "R13",
+        "requirement": "Do not activate suppliers when mandatory compliance checks are incomplete.",
+        "status": "covered",
+        "weight": 1.0
+      }
+    ],
+    "gold_score": 1.0,
+    "gold_percentage": 100.0,
+    "dataset_name": "theme-epic-coverage-realistic-v1",
+    "trace_metadata": {
+      "case_id": "THEME-003_EPIC-A",
+      "theme_id": "THEME-003",
+      "epic_id": "EPIC-A",
+      "dataset_name": "theme-epic-coverage-realistic-v1"
+    }
+  },
+  {
+    "case_id": "THEME-003_EPIC-B",
+    "theme_id": "THEME-003",
+    "epic_id": "EPIC-B",
+    "category": "constraint_omission",
+    "description": "Supplier epic covers UX but weakens compliance and operational targets.",
+    "input": "Generate one Jira Epic from the provided Theme.\nThe Epic should preserve the task-relevant business needs, desired outcomes,\nconstraints, measurable targets, operational requirements, and important user\nexperience expectations from the Theme. Return Title, Description, and Success Criteria.\nDo not invent implementation technologies unless they are explicitly required by the Theme.",
+    "context": "Theme ID: THEME-003\nTheme Name: Supplier Onboarding and Compliance Standardization\n\nTheme Summary:\nSupplier onboarding differs across procurement teams and regions, resulting in inconsistent data quality, long cycle times, and repeated support requests. The organization needs a standardized supplier onboarding experience that improves speed while retaining compliance controls.\n\nBusiness Need:\nSuppliers should enter company, tax, banking, and contact information through a single guided experience. Tax and banking information should be validated before activation. Suppliers should be able to save a partially completed onboarding request and return later. Procurement users should be able to see the supplier's onboarding status and any blocking issues.\n\nCompliance Expectations:\nRequired sanctions, tax, and banking validations must complete before a supplier can become active. Failed validations should be routed for review rather than silently rejected. The system should retain evidence of validation results and approval activity.\n\nOperational Expectations:\nAverage supplier onboarding time should be reduced by 35%. Onboarding-related support tickets should be reduced by 25%. Duplicate supplier records should be reduced by checking for existing suppliers before creating a new record.\n\nCommunication:\nSuppliers should receive confirmation when onboarding is submitted, notification when additional information is required, and notification when onboarding is approved or rejected. Rejection messages should provide a clear reason where policy permits.\n\nConstraints:\nThe existing ERP remains the system of record for active suppliers. No supplier should be activated if mandatory compliance checks are incomplete. Procurement teams must use the common workflow rather than region-specific spreadsheets.\n\nMeasures of Success:\n- Reduce supplier onboarding time by 35%.\n- Reduce onboarding support tickets by 25%.\n- Validate tax and banking details before activation.\n- Prevent duplicate supplier creation where an existing supplier is detected.\n- Preserve compliance review and evidence.",
+    "output": "Title: Supplier Self-Service Onboarding\n\nDescription:\nGive suppliers a guided self-service process to enter company and payment information. Suppliers can save progress and return later, and procurement users can view onboarding progress.\n\nSuccess Criteria:\n- Suppliers can enter company, tax, banking, and contact details.\n- Suppliers can save and resume onboarding.\n- Procurement teams can see onboarding status.\n- Suppliers receive confirmation after submission.\n- Tax information is validated.",
+    "gold_requirements": [
+      {
+        "id": "R1.1",
+        "parent_id": "R1",
+        "requirement": "Collect company information through a single guided experience.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R1.2",
+        "parent_id": "R1",
+        "requirement": "Collect tax information through a single guided experience.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R1.3",
+        "parent_id": "R1",
+        "requirement": "Collect banking information through a single guided experience.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R1.4",
+        "parent_id": "R1",
+        "requirement": "Collect contact information through a single guided experience.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R2.1",
+        "parent_id": "R2",
+        "requirement": "Validate tax information before activation.",
+        "status": "partial",
+        "weight": 0.5
+      },
+      {
+        "id": "R2.2",
+        "parent_id": "R2",
+        "requirement": "Validate banking information before activation.",
+        "status": "partial",
+        "weight": 0.5
+      },
+      {
+        "id": "R3",
+        "parent_id": "R3",
+        "requirement": "Allow suppliers to save and resume onboarding.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R4",
+        "parent_id": "R4",
+        "requirement": "Provide procurement users status and blocking-issue visibility.",
+        "status": "partial",
+        "weight": 1.0
+      },
+      {
+        "id": "R5.1",
+        "parent_id": "R5",
+        "requirement": "Complete sanctions validation before activation.",
+        "status": "missing",
+        "weight": 0.333333
+      },
+      {
+        "id": "R5.2",
+        "parent_id": "R5",
+        "requirement": "Complete tax validation before activation.",
+        "status": "missing",
+        "weight": 0.333333
+      },
+      {
+        "id": "R5.3",
+        "parent_id": "R5",
+        "requirement": "Complete banking validation before activation.",
+        "status": "missing",
+        "weight": 0.333333
+      },
+      {
+        "id": "R6",
+        "parent_id": "R6",
+        "requirement": "Route failed validations for review.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R7",
+        "parent_id": "R7",
+        "requirement": "Retain evidence of validation and approval activity.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R8",
+        "parent_id": "R8",
+        "requirement": "Reduce supplier onboarding time by 35%.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R9",
+        "parent_id": "R9",
+        "requirement": "Reduce onboarding-related support tickets by 25%.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R10",
+        "parent_id": "R10",
+        "requirement": "Prevent duplicate supplier creation where an existing supplier is detected.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R11.1",
+        "parent_id": "R11",
+        "requirement": "Notify suppliers on submission.",
+        "status": "partial",
+        "weight": 0.25
+      },
+      {
+        "id": "R11.2",
+        "parent_id": "R11",
+        "requirement": "Notify suppliers on information requests.",
+        "status": "partial",
+        "weight": 0.25
+      },
+      {
+        "id": "R11.3",
+        "parent_id": "R11",
+        "requirement": "Notify suppliers on approval.",
+        "status": "partial",
+        "weight": 0.25
+      },
+      {
+        "id": "R11.4",
+        "parent_id": "R11",
+        "requirement": "Notify suppliers on rejection.",
+        "status": "partial",
+        "weight": 0.25
+      },
+      {
+        "id": "R12",
+        "parent_id": "R12",
+        "requirement": "Keep existing ERP as system of record for active suppliers.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R13",
+        "parent_id": "R13",
+        "requirement": "Do not activate suppliers when mandatory compliance checks are incomplete.",
+        "status": "missing",
+        "weight": 1.0
+      }
+    ],
+    "gold_score": 0.269231,
+    "gold_percentage": 26.9231,
+    "dataset_name": "theme-epic-coverage-realistic-v1",
+    "trace_metadata": {
+      "case_id": "THEME-003_EPIC-B",
+      "theme_id": "THEME-003",
+      "epic_id": "EPIC-B",
+      "dataset_name": "theme-epic-coverage-realistic-v1"
+    }
+  },
+  {
+    "case_id": "THEME-004_EPIC-A",
+    "theme_id": "THEME-004",
+    "epic_id": "EPIC-A",
+    "category": "high_coverage",
+    "description": "Access request epic covers UX, SLAs, privileged approvals, and auditability.",
+    "input": "Generate one Jira Epic from the provided Theme.\nThe Epic should preserve the task-relevant business needs, desired outcomes,\nconstraints, measurable targets, operational requirements, and important user\nexperience expectations from the Theme. Return Title, Description, and Success Criteria.\nDo not invent implementation technologies unless they are explicitly required by the Theme.",
+    "context": "Theme ID: THEME-004\nTheme Name: Employee Access Request Experience\n\nTheme Summary:\nEmployees currently request application access through email, chat, and separate ticket forms. Approval paths are inconsistent, requesters lack status visibility, and fulfillment teams receive incomplete information.\n\nBusiness Need:\nEmployees should request application access through a self-service experience. The request should capture the application, access role, business justification, and requested duration when temporary access is needed. Standard requests should be routed to the employee's manager for approval and then to the appropriate fulfillment process.\n\nUser Experience:\nEmployees should be able to see current request status, pending approver, and completed steps. They should be notified when a request is approved, rejected, canceled, or requires more information. Rejection messages should include a reason.\n\nOperational Expectations:\nStandard access requests should be completed within 1 business day after all required approvals are received. Duplicate requests for the same user/application/role combination should be prevented. Fulfillment teams should receive complete request details and approval evidence.\n\nSecurity and Governance:\nPrivileged roles require an additional security approval. Temporary access should include an expiration date. Existing identity-governance policies must remain authoritative. The workflow must record approval and fulfillment activity for audit.\n\nConstraints:\nThe solution must not automatically grant privileged access without required security approval. Existing directory and identity-governance platforms remain systems of record.\n\nMeasures of Success:\n- Standard access completion within 1 business day after approval.\n- Improved employee visibility into status and pending actions.\n- Reduced duplicate and incomplete requests.\n- Preserved approval and audit controls.",
+    "output": "Title: Self-Service Employee Access Requests\n\nDescription:\nCreate a self-service application-access request experience that captures application, access role, business justification, and duration for temporary access. Standard requests route to the employee's manager and then to fulfillment. Privileged access also requires security approval. Employees can see status, pending approver, and completed steps, and receive notifications for decisions or requests for more information.\n\nSuccess Criteria:\n- Standard access requests are completed within 1 business day after all required approvals are received.\n- Employees can request access through a self-service experience.\n- Requests capture application, role, justification, and temporary-access duration where relevant.\n- Standard requests route to the employee's manager for approval.\n- Privileged roles require additional security approval and are never auto-granted.\n- Temporary access includes an expiration date.\n- Duplicate user/application/role requests are prevented.\n- Employees can see status, pending approver, and completed steps.\n- Employees are notified when requests are approved, rejected, canceled, or need more information.\n- Rejection notifications include a reason.\n- Fulfillment receives complete request details and approval evidence.\n- Existing identity-governance controls remain authoritative and approval/fulfillment actions are auditable.",
+    "gold_requirements": [
+      {
+        "id": "R1",
+        "parent_id": "R1",
+        "requirement": "Provide self-service application access requests.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R2.1",
+        "parent_id": "R2",
+        "requirement": "Capture the application for temporary access.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R2.2",
+        "parent_id": "R2",
+        "requirement": "Capture the role for temporary access.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R2.3",
+        "parent_id": "R2",
+        "requirement": "Capture the business justification for temporary access.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R2.4",
+        "parent_id": "R2",
+        "requirement": "Capture the duration for temporary access.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R3",
+        "parent_id": "R3",
+        "requirement": "Route standard requests to the employee's manager for approval.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R4.1",
+        "parent_id": "R4",
+        "requirement": "Show request status.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R4.2",
+        "parent_id": "R4",
+        "requirement": "Show the pending approver.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R4.3",
+        "parent_id": "R4",
+        "requirement": "Show completed steps.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R5.1",
+        "parent_id": "R5",
+        "requirement": "Notify on approval.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R5.2",
+        "parent_id": "R5",
+        "requirement": "Notify on rejection.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R5.3",
+        "parent_id": "R5",
+        "requirement": "Notify on cancellation.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R5.4",
+        "parent_id": "R5",
+        "requirement": "Notify on information requests.",
+        "status": "covered",
+        "weight": 0.25
+      },
+      {
+        "id": "R6",
+        "parent_id": "R6",
+        "requirement": "Include rejection reason.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R7",
+        "parent_id": "R7",
+        "requirement": "Complete standard requests within 1 business day after approvals.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R8",
+        "parent_id": "R8",
+        "requirement": "Prevent duplicate user/application/role requests.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R9",
+        "parent_id": "R9",
+        "requirement": "Require additional security approval for privileged roles.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R10",
+        "parent_id": "R10",
+        "requirement": "Temporary access includes an expiration date.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R11",
+        "parent_id": "R11",
+        "requirement": "Preserve identity-governance authority.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R12",
+        "parent_id": "R12",
+        "requirement": "Record approval and fulfillment activity for audit.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R13",
+        "parent_id": "R13",
+        "requirement": "Do not auto-grant privileged access without required approval.",
+        "status": "covered",
+        "weight": 1.0
+      }
+    ],
+    "gold_score": 1.0,
+    "gold_percentage": 100.0,
+    "dataset_name": "theme-epic-coverage-realistic-v1",
+    "trace_metadata": {
+      "case_id": "THEME-004_EPIC-A",
+      "theme_id": "THEME-004",
+      "epic_id": "EPIC-A",
+      "dataset_name": "theme-epic-coverage-realistic-v1"
+    }
+  },
+  {
+    "case_id": "THEME-004_EPIC-B",
+    "theme_id": "THEME-004",
+    "epic_id": "EPIC-B",
+    "category": "ambiguous_partial",
+    "description": "Access epic preserves general workflow but drops specific approver and governance qualifiers.",
+    "input": "Generate one Jira Epic from the provided Theme.\nThe Epic should preserve the task-relevant business needs, desired outcomes,\nconstraints, measurable targets, operational requirements, and important user\nexperience expectations from the Theme. Return Title, Description, and Success Criteria.\nDo not invent implementation technologies unless they are explicitly required by the Theme.",
+    "context": "Theme ID: THEME-004\nTheme Name: Employee Access Request Experience\n\nTheme Summary:\nEmployees currently request application access through email, chat, and separate ticket forms. Approval paths are inconsistent, requesters lack status visibility, and fulfillment teams receive incomplete information.\n\nBusiness Need:\nEmployees should request application access through a self-service experience. The request should capture the application, access role, business justification, and requested duration when temporary access is needed. Standard requests should be routed to the employee's manager for approval and then to the appropriate fulfillment process.\n\nUser Experience:\nEmployees should be able to see current request status, pending approver, and completed steps. They should be notified when a request is approved, rejected, canceled, or requires more information. Rejection messages should include a reason.\n\nOperational Expectations:\nStandard access requests should be completed within 1 business day after all required approvals are received. Duplicate requests for the same user/application/role combination should be prevented. Fulfillment teams should receive complete request details and approval evidence.\n\nSecurity and Governance:\nPrivileged roles require an additional security approval. Temporary access should include an expiration date. Existing identity-governance policies must remain authoritative. The workflow must record approval and fulfillment activity for audit.\n\nConstraints:\nThe solution must not automatically grant privileged access without required security approval. Existing directory and identity-governance platforms remain systems of record.\n\nMeasures of Success:\n- Standard access completion within 1 business day after approval.\n- Improved employee visibility into status and pending actions.\n- Reduced duplicate and incomplete requests.\n- Preserved approval and audit controls.",
+    "output": "Title: Improve Access Request Workflow\n\nDescription:\nProvide a central online experience for requesting application access. Requests should be routed for approval and employees should be able to track progress.\n\nSuccess Criteria:\n- Employees can submit application access requests online.\n- Requests include the requested application and access role.\n- Requests are routed for approval.\n- Employees can see request progress.\n- Employees are notified when a decision is made.\n- Access requests are completed quickly.",
+    "gold_requirements": [
+      {
+        "id": "R1",
+        "parent_id": "R1",
+        "requirement": "Provide self-service application access requests.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R2.1",
+        "parent_id": "R2",
+        "requirement": "Capture the application for temporary access.",
+        "status": "partial",
+        "weight": 0.25
+      },
+      {
+        "id": "R2.2",
+        "parent_id": "R2",
+        "requirement": "Capture the role for temporary access.",
+        "status": "partial",
+        "weight": 0.25
+      },
+      {
+        "id": "R2.3",
+        "parent_id": "R2",
+        "requirement": "Capture the business justification for temporary access.",
+        "status": "partial",
+        "weight": 0.25
+      },
+      {
+        "id": "R2.4",
+        "parent_id": "R2",
+        "requirement": "Capture the duration for temporary access.",
+        "status": "partial",
+        "weight": 0.25
+      },
+      {
+        "id": "R3",
+        "parent_id": "R3",
+        "requirement": "Route standard requests to the employee's manager for approval.",
+        "status": "partial",
+        "weight": 1.0
+      },
+      {
+        "id": "R4.1",
+        "parent_id": "R4",
+        "requirement": "Show request status.",
+        "status": "partial",
+        "weight": 0.333333
+      },
+      {
+        "id": "R4.2",
+        "parent_id": "R4",
+        "requirement": "Show the pending approver.",
+        "status": "partial",
+        "weight": 0.333333
+      },
+      {
+        "id": "R4.3",
+        "parent_id": "R4",
+        "requirement": "Show completed steps.",
+        "status": "partial",
+        "weight": 0.333333
+      },
+      {
+        "id": "R5.1",
+        "parent_id": "R5",
+        "requirement": "Notify on approval.",
+        "status": "partial",
+        "weight": 0.25
+      },
+      {
+        "id": "R5.2",
+        "parent_id": "R5",
+        "requirement": "Notify on rejection.",
+        "status": "partial",
+        "weight": 0.25
+      },
+      {
+        "id": "R5.3",
+        "parent_id": "R5",
+        "requirement": "Notify on cancellation.",
+        "status": "partial",
+        "weight": 0.25
+      },
+      {
+        "id": "R5.4",
+        "parent_id": "R5",
+        "requirement": "Notify on information requests.",
+        "status": "partial",
+        "weight": 0.25
+      },
+      {
+        "id": "R6",
+        "parent_id": "R6",
+        "requirement": "Include rejection reason.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R7",
+        "parent_id": "R7",
+        "requirement": "Complete standard requests within 1 business day after approvals.",
+        "status": "partial",
+        "weight": 1.0
+      },
+      {
+        "id": "R8",
+        "parent_id": "R8",
+        "requirement": "Prevent duplicate user/application/role requests.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R9",
+        "parent_id": "R9",
+        "requirement": "Require additional security approval for privileged roles.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R10",
+        "parent_id": "R10",
+        "requirement": "Temporary access includes an expiration date.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R11",
+        "parent_id": "R11",
+        "requirement": "Preserve identity-governance authority.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R12",
+        "parent_id": "R12",
+        "requirement": "Record approval and fulfillment activity for audit.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R13",
+        "parent_id": "R13",
+        "requirement": "Do not auto-grant privileged access without required approval.",
+        "status": "missing",
+        "weight": 1.0
+      }
+    ],
+    "gold_score": 0.269231,
+    "gold_percentage": 26.9231,
+    "dataset_name": "theme-epic-coverage-realistic-v1",
+    "trace_metadata": {
+      "case_id": "THEME-004_EPIC-B",
+      "theme_id": "THEME-004",
+      "epic_id": "EPIC-B",
+      "dataset_name": "theme-epic-coverage-realistic-v1"
+    }
+  },
+  {
+    "case_id": "THEME-005_EPIC-A",
+    "theme_id": "THEME-005",
+    "epic_id": "EPIC-A",
+    "category": "high_coverage_with_unsupported_addition",
+    "description": "Payment recovery epic covers Theme but adds an unsupported implementation technology.",
+    "input": "Generate one Jira Epic from the provided Theme.\nThe Epic should preserve the task-relevant business needs, desired outcomes,\nconstraints, measurable targets, operational requirements, and important user\nexperience expectations from the Theme. Return Title, Description, and Success Criteria.\nDo not invent implementation technologies unless they are explicitly required by the Theme.",
+    "context": "Theme ID: THEME-005\nTheme Name: Payment Failure Recovery and Checkout Resilience\n\nTheme Summary:\nCustomers frequently abandon checkout after a payment failure because error messages are unclear and retries require restarting portions of the checkout flow. Support teams also receive avoidable contacts about failed transactions.\n\nBusiness Need:\nWhen a payment fails, the customer should receive a clear, actionable failure message when the payment provider supplies an explainable reason. The customer should be able to retry payment without re-entering unaffected checkout data. Where supported, the customer should be able to choose an alternate payment method without restarting checkout.\n\nOperational Expectations:\nPayment failure rate should be reduced by 20%. Successful checkout completion after an initial payment failure should increase by 15%. Payment-related support contacts should be reduced by 25%.\n\nCustomer Communication:\nThe customer should know whether a retry is safe, whether the prior attempt may still be processing, and when a retry succeeds. The experience must avoid implying that a charge failed when the transaction status is uncertain.\n\nRisk and Compliance:\nExisting fraud and payment-provider controls must remain in effect. The application must not bypass risk declines. Sensitive card data must not be written to logs or user-visible error details.\n\nConstraints:\nThe existing payment gateway remains in place for the first release. The solution must support web and mobile checkout experiences.\n\nMeasures of Success:\n- Reduce payment failure rate by 20%.\n- Increase successful checkout completion after an initial failure by 15%.\n- Reduce payment-related support contacts by 25%.\n- Preserve fraud controls and secure handling of payment data.",
+    "output": "Title: Improve Payment Failure Recovery\n\nDescription:\nImprove checkout resilience by giving customers clear and actionable payment failure messages when explainable reasons are available, preserving unaffected checkout data, and allowing customers to retry or select an alternate payment method without restarting checkout. The experience will clearly distinguish a confirmed failure from a transaction whose status is still uncertain. Existing fraud controls and the current payment gateway will remain in place. The team will use a Redis-backed retry-state service to maintain recovery context.\n\nSuccess Criteria:\n- Payment failure rate is reduced by 20%.\n- Successful checkout completion after an initial failure increases by 15%.\n- Payment-related support contacts are reduced by 25%.\n- Customers receive actionable failure messages when the provider supplies an explainable reason.\n- Customers can retry without re-entering unaffected checkout information.\n- Customers can choose an alternate supported payment method without restarting checkout.\n- Customers are told when a prior attempt may still be processing and when a retry succeeds.\n- Risk declines are not bypassed.\n- Sensitive card data is not written to logs or user-visible error details.\n- The existing payment gateway remains in place for the first release.\n- The experience works on web and mobile.",
+    "gold_requirements": [
+      {
+        "id": "R1",
+        "parent_id": "R1",
+        "requirement": "Provide clear actionable failure messages when explainable reasons are available.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R2",
+        "parent_id": "R2",
+        "requirement": "Allow retry without re-entering unaffected checkout data.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R3",
+        "parent_id": "R3",
+        "requirement": "Allow alternate payment method without restarting checkout where supported.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R4",
+        "parent_id": "R4",
+        "requirement": "Reduce payment failure rate by 20%.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R5",
+        "parent_id": "R5",
+        "requirement": "Increase successful checkout completion after an initial failure by 15%.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R6",
+        "parent_id": "R6",
+        "requirement": "Reduce payment-related support contacts by 25%.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R7.1",
+        "parent_id": "R7",
+        "requirement": "Explain whether a retry is safe.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R7.2",
+        "parent_id": "R7",
+        "requirement": "Explain whether a prior attempt may still be processing.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R7.3",
+        "parent_id": "R7",
+        "requirement": "Explain when a retry succeeds.",
+        "status": "covered",
+        "weight": 0.333333
+      },
+      {
+        "id": "R8",
+        "parent_id": "R8",
+        "requirement": "Do not bypass existing fraud and payment-provider controls.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R9",
+        "parent_id": "R9",
+        "requirement": "Do not expose sensitive card data in logs or user-visible details.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R10",
+        "parent_id": "R10",
+        "requirement": "Keep the existing payment gateway for the first release.",
+        "status": "covered",
+        "weight": 1.0
+      },
+      {
+        "id": "R11.1",
+        "parent_id": "R11",
+        "requirement": "Support web checkout experiences.",
+        "status": "covered",
+        "weight": 0.5
+      },
+      {
+        "id": "R11.2",
+        "parent_id": "R11",
+        "requirement": "Support mobile checkout experiences.",
+        "status": "covered",
+        "weight": 0.5
+      }
+    ],
+    "coverage_note": "Unsupported Redis implementation should not reduce coverage; it belongs to faithfulness evaluation.",
+    "gold_score": 1.0,
+    "gold_percentage": 100.0,
+    "dataset_name": "theme-epic-coverage-realistic-v1",
+    "trace_metadata": {
+      "case_id": "THEME-005_EPIC-A",
+      "theme_id": "THEME-005",
+      "epic_id": "EPIC-A",
+      "dataset_name": "theme-epic-coverage-realistic-v1"
+    }
+  },
+  {
+    "case_id": "THEME-005_EPIC-B",
+    "theme_id": "THEME-005",
+    "epic_id": "EPIC-B",
+    "category": "near_zero_coverage",
+    "description": "Related checkout epic that barely addresses the actual payment-recovery Theme.",
+    "input": "Generate one Jira Epic from the provided Theme.\nThe Epic should preserve the task-relevant business needs, desired outcomes,\nconstraints, measurable targets, operational requirements, and important user\nexperience expectations from the Theme. Return Title, Description, and Success Criteria.\nDo not invent implementation technologies unless they are explicitly required by the Theme.",
+    "context": "Theme ID: THEME-005\nTheme Name: Payment Failure Recovery and Checkout Resilience\n\nTheme Summary:\nCustomers frequently abandon checkout after a payment failure because error messages are unclear and retries require restarting portions of the checkout flow. Support teams also receive avoidable contacts about failed transactions.\n\nBusiness Need:\nWhen a payment fails, the customer should receive a clear, actionable failure message when the payment provider supplies an explainable reason. The customer should be able to retry payment without re-entering unaffected checkout data. Where supported, the customer should be able to choose an alternate payment method without restarting checkout.\n\nOperational Expectations:\nPayment failure rate should be reduced by 20%. Successful checkout completion after an initial payment failure should increase by 15%. Payment-related support contacts should be reduced by 25%.\n\nCustomer Communication:\nThe customer should know whether a retry is safe, whether the prior attempt may still be processing, and when a retry succeeds. The experience must avoid implying that a charge failed when the transaction status is uncertain.\n\nRisk and Compliance:\nExisting fraud and payment-provider controls must remain in effect. The application must not bypass risk declines. Sensitive card data must not be written to logs or user-visible error details.\n\nConstraints:\nThe existing payment gateway remains in place for the first release. The solution must support web and mobile checkout experiences.\n\nMeasures of Success:\n- Reduce payment failure rate by 20%.\n- Increase successful checkout completion after an initial failure by 15%.\n- Reduce payment-related support contacts by 25%.\n- Preserve fraud controls and secure handling of payment data.",
+    "output": "Title: Premium Checkout Upsell\n\nDescription:\nImprove checkout conversion by presenting customers with premium membership options and promotional benefits before they place an order.\n\nSuccess Criteria:\n- Show personalized premium membership recommendations.\n- Display promotional savings for eligible customers.\n- Measure membership conversion from checkout.\n- Support A/B testing of promotional messages.\n- Allow customers to dismiss the offer and continue checkout.",
+    "gold_requirements": [
+      {
+        "id": "R1",
+        "parent_id": "R1",
+        "requirement": "Provide clear actionable failure messages when explainable reasons are available.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R2",
+        "parent_id": "R2",
+        "requirement": "Allow retry without re-entering unaffected checkout data.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R3",
+        "parent_id": "R3",
+        "requirement": "Allow alternate payment method without restarting checkout where supported.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R4",
+        "parent_id": "R4",
+        "requirement": "Reduce payment failure rate by 20%.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R5",
+        "parent_id": "R5",
+        "requirement": "Increase successful checkout completion after an initial failure by 15%.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R6",
+        "parent_id": "R6",
+        "requirement": "Reduce payment-related support contacts by 25%.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R7.1",
+        "parent_id": "R7",
+        "requirement": "Explain whether a retry is safe.",
+        "status": "missing",
+        "weight": 0.333333
+      },
+      {
+        "id": "R7.2",
+        "parent_id": "R7",
+        "requirement": "Explain whether a prior attempt may still be processing.",
+        "status": "missing",
+        "weight": 0.333333
+      },
+      {
+        "id": "R7.3",
+        "parent_id": "R7",
+        "requirement": "Explain when a retry succeeds.",
+        "status": "missing",
+        "weight": 0.333333
+      },
+      {
+        "id": "R8",
+        "parent_id": "R8",
+        "requirement": "Do not bypass existing fraud and payment-provider controls.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R9",
+        "parent_id": "R9",
+        "requirement": "Do not expose sensitive card data in logs or user-visible details.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R10",
+        "parent_id": "R10",
+        "requirement": "Keep the existing payment gateway for the first release.",
+        "status": "missing",
+        "weight": 1.0
+      },
+      {
+        "id": "R11.1",
+        "parent_id": "R11",
+        "requirement": "Support web checkout experiences.",
+        "status": "partial",
+        "weight": 0.5
+      },
+      {
+        "id": "R11.2",
+        "parent_id": "R11",
+        "requirement": "Support mobile checkout experiences.",
+        "status": "partial",
+        "weight": 0.5
+      }
+    ],
+    "gold_score": 0.045455,
+    "gold_percentage": 4.5455,
+    "dataset_name": "theme-epic-coverage-realistic-v1",
+    "trace_metadata": {
+      "case_id": "THEME-005_EPIC-B",
+      "theme_id": "THEME-005",
+      "epic_id": "EPIC-B",
+      "dataset_name": "theme-epic-coverage-realistic-v1"
+    }
+  }
+]

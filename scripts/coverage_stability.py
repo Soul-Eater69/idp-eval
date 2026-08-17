@@ -166,9 +166,9 @@ def main() -> None:
     args = parser.parse_args()
 
     # Imported here so importing this module (for unit tests) needs no judge.
-    from idp_eval import CoverageEvaluator, create_judge
+    from idp_eval import TaskCoverageEvaluator, create_judge
 
-    evaluator = CoverageEvaluator(llm=create_judge())
+    evaluator = TaskCoverageEvaluator(llm=create_judge())
     case = _sample_case()
 
     records: list[RunRecord] = []

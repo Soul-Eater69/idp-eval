@@ -39,7 +39,7 @@ HOST = os.environ.get("PHOENIX_HOST", "http://127.0.0.1:6006").rstrip("/")
 class _FakeCoverage(Evaluator):
     """No-cost evaluator standing in for a real metric."""
 
-    name = "coverage"
+    name = "task_coverage"
     annotator_kind = "LLM"
 
     def __init__(self, llm=None):
@@ -161,11 +161,11 @@ def main() -> None:
 
     client = Client()
 
-    # Stage 3: read back the library-written coverage annotation.
-    coverage = _poll_annotation(client, root_span_id, "coverage")
+    # Stage 3: read back the library-written task_coverage annotation.
+    coverage = _poll_annotation(client, root_span_id, "task_coverage")
     if coverage is None:
-        _fail("coverage annotation read-back", "coverage annotation not found")
-    print("Native annotation write: success (coverage, via output='phoenix')")
+        _fail("task_coverage annotation read-back", "annotation not found")
+    print("Native annotation write: success (task_coverage, via output='phoenix')")
 
     # Stage 4: independent write + read-back to exercise the write API directly.
     check = _make_check_annotation(root_span_id)

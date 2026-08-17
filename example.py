@@ -5,11 +5,12 @@ startup, build the framework once, then evaluate cases.
 """
 
 from idp_eval import (
-    CoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
+    SourceCoverageEvaluator,
+    TaskCoverageEvaluator,
     create_judge,
     register_tracing,
 )
@@ -36,13 +37,15 @@ def main() -> None:
     framework = EvaluationFramework(
         evaluators=[
             FaithfulnessEvaluator,
-            CoverageEvaluator,
+            SourceCoverageEvaluator,
+            TaskCoverageEvaluator,
             InstructionAdherenceEvaluator,
         ],
         judge=judge,
     )
 
-    # 4. Faithfulness/coverage: input is the task used to scope the context.
+    # 4. Faithfulness/task_coverage: input is the task used to scope the context.
+    #    source_coverage ignores the task and covers the whole context.
     case = EvaluationCase(
         input="Generate a feature summary from the provided source.",
         context=(
@@ -54,7 +57,12 @@ def main() -> None:
             "Invoices show the total amount due."
         ),
     )
-    _print(framework.evaluate(case, metrics=["faithfulness", "coverage"]))
+    _print(
+        framework.evaluate(
+            case,
+            metrics=["faithfulness", "source_coverage", "task_coverage"],
+        )
+    )
 
     # 5. Instruction adherence: the explicit instructions go in `instructions`.
     instruction_case = EvaluationCase(

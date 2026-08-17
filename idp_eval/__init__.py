@@ -6,23 +6,28 @@ generated AI output using a generic ``input`` / ``context`` / ``output`` triple.
 v1 metrics:
     faithfulness: is the output grounded in the context? (detects hallucinated /
         unsupported additions). Higher is better.
-    coverage: how much task-relevant context reached the output? (detects
-        omissions). Higher is better.
+    source_coverage: how much of the whole source (context) reached the output?
+        (detects omissions, task-agnostic). Higher is better.
+    task_coverage: how much of the task-relevant source reached the output?
+        (detects omissions, scoped by the task). Higher is better.
     instruction_adherence: does the output obey the explicit instructions in
         ``instructions``? Higher is better.
 
 Which ``EvaluationCase`` fields each metric reads:
     faithfulness: input (task) + context + output, passed to Phoenix.
-    coverage: input (task, used to scope relevant context) + context + output.
+    source_coverage: context + output (``input`` is ignored).
+    task_coverage: input (task, used to scope relevant context) + context +
+        output.
     instruction_adherence: instructions + output. It reads only the dedicated
         ``instructions`` field as its instruction source, never ``input`` or
         ``context``.
 """
 
 from idp_eval.evaluators import (
-    CoverageEvaluator,
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
+    SourceCoverageEvaluator,
+    TaskCoverageEvaluator,
 )
 from idp_eval.framework import EvaluationFramework
 from idp_eval.judge import JudgeConfig, create_judge
@@ -43,7 +48,8 @@ __all__ = [
     "Evaluator",
     "EvaluationFramework",
     "FaithfulnessEvaluator",
-    "CoverageEvaluator",
+    "TaskCoverageEvaluator",
+    "SourceCoverageEvaluator",
     "InstructionAdherenceEvaluator",
     "JudgeConfig",
     "create_judge",

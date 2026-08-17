@@ -1,4 +1,4 @@
-"""Development benchmark for the production two-stage CoverageEvaluator.
+"""Development benchmark for the production two-stage TaskCoverageEvaluator.
 
 The script measures extraction stability, fixed-requirement classification
 stability, and optional end-to-end score stability. It uses a direct OpenAI judge
@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from idp_eval.evaluators.coverage import CoverageEvaluator
+from idp_eval.evaluators.coverage import TaskCoverageEvaluator
 from idp_eval.scoring import calculate_coverage
 from scripts.coverage_benchmark_utils import (
     exact_set_summary,
@@ -123,7 +123,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     if args.trace:
         register_tracing(project_name=args.project_name)
     judge, model = _build_openai_judge()
-    evaluator = CoverageEvaluator(judge)
+    evaluator = TaskCoverageEvaluator(judge)
     framework = EvaluationFramework(
         evaluators=[evaluator], output="phoenix" if args.trace else None
     )
@@ -187,7 +187,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                         eval_case,
                         run_name=f"coverage-run-{run_number:02d}",
                         dataset_name=args.dataset_name,
-                    )["coverage"]
+                    )["task_coverage"]
                     successful_calls += 2 if result.details["total_requirements"] else 1
                     if result.score is not None:
                         end_to_end_scores.append(result.score)

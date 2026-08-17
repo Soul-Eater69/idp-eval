@@ -22,14 +22,21 @@ meaning. `instruction_adherence` reads `instructions` and never falls back to
 | Metric                  | Question                                      | Direction               | Better |
 | ----------------------- | --------------------------------------------- | ----------------------- | ------ |
 | `faithfulness`          | Is the output grounded in the context?        | `output -> context`     | higher |
-| `coverage`              | How much relevant context reached the output? | `context -> output`     | higher |
+| `source_coverage`       | How much of the **whole source** reached the output? | `context -> output` | higher |
+| `task_coverage`         | How much of the **task-relevant** source reached the output? | `input + context -> output` | higher |
 | `instruction_adherence` | Did the output obey the supplied explicit instructions? | `instructions -> output` | higher |
 
-Three complementary questions:
+Complementary questions:
 
 - **Faithfulness** — did the output **ADD** unsupported information?
-- **Coverage** — did the output **OMIT** important task-relevant source information?
+- **Source coverage** — did the output **OMIT** important information from the whole source?
+- **Task coverage** — did the output **OMIT** source information relevant to the task?
 - **Instruction Adherence** — did the output **OBEY** the supplied explicit instructions?
+
+`source_coverage` and `task_coverage` share the same two-stage extract→classify
+mechanics and `covered`/`partial`/`missing` = `1.0`/`0.5`/`0.0` scoring; they
+differ only in what Stage 1 extracts (whole source vs. task-relevant source). See
+`docs/SETUP_AND_USAGE.md` §7.
 
 ### Faithfulness vs. hallucination
 
@@ -149,11 +156,12 @@ pip install -e ".[dev]"
 
 ```python
 from idp_eval import (
-    CoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
+    SourceCoverageEvaluator,
+    TaskCoverageEvaluator,
     create_judge,
     register_tracing,
 )
@@ -164,7 +172,8 @@ judge = create_judge()                       # configure the judge once
 framework = EvaluationFramework(
     evaluators=[
         FaithfulnessEvaluator,
-        CoverageEvaluator,
+        SourceCoverageEvaluator,
+        TaskCoverageEvaluator,
         InstructionAdherenceEvaluator,
     ],
     judge=judge,
@@ -175,12 +184,13 @@ results = framework.evaluate(EvaluationCase(
     context=source_context,
     output=generated_output,
 ))
-# results["coverage"].score -> 0.75
+# results["task_coverage"].score -> 0.75
 ```
 
 You pass evaluator **classes** plus one shared `judge`; the framework constructs
 each with `cls(llm=judge)`. (Passing already-constructed instances still works.)
-Run a subset with `framework.evaluate(case, metrics=["faithfulness", "coverage"])`.
+Run a subset with
+`framework.evaluate(case, metrics=["faithfulness", "task_coverage"])`.
 
 For instruction adherence, put the instruction text in the `instructions` field:
 
@@ -259,26 +269,28 @@ named child span. Nothing else is traced (no app/RAG/agent/tool spans yet).
 
 | Metric                  | Spans per case                                    |
 | ----------------------- | ------------------------------------------------- |
-| `coverage`              | `coverage.extract` + `coverage.classify` (2)      |
-| `coverage` (no reqs)    | `coverage.extract` only (1 — Stage 2 skipped)     |
+| `source_coverage`       | `source_coverage.extract` + `.classify` (2)       |
+| `source_coverage` (no items) | `source_coverage.extract` only (1 — Stage 2 skipped) |
+| `task_coverage`         | `task_coverage.extract` + `.classify` (2)         |
+| `task_coverage` (no reqs)    | `task_coverage.extract` only (1 — Stage 2 skipped) |
 | `faithfulness`          | `faithfulness.evaluate` (1)                        |
 | `instruction_adherence` | `instruction_adherence.extract` + `.classify` (2) |
 | `instruction_adherence` (no instructions) | no judge spans (0) |
 | `instruction_adherence` (empty extraction) | `.extract` only (1) |
 
-Running all three on one case:
+Running faithfulness + task coverage + instruction adherence on one case:
 
 ```
 Trace gt-001 (idp_eval.evaluate)
-├── coverage.extract
-├── coverage.classify
+├── task_coverage.extract
+├── task_coverage.classify
 ├── faithfulness.evaluate
 ├── instruction_adherence.extract
 └── instruction_adherence.classify
 ```
 
-**15 GT rows with coverage only → 15 traces and ~30 judge spans** (2 per case;
-1 for any case with no extracted requirements). Each case is its own trace; a
+**15 GT rows with task coverage only → 15 traces and ~30 judge spans** (2 per
+case; 1 for any case with no extracted requirements). Each case is its own trace; a
 `run_name` / `dataset_name` only *groups* them via span attributes
 (`idp_eval.run_name`, `idp_eval.dataset_name`, `idp_eval.case_id`), never a batch
 root span.
@@ -295,7 +307,7 @@ destination(s):
 
 ```python
 framework = EvaluationFramework(
-    evaluators=[FaithfulnessEvaluator, CoverageEvaluator],
+    evaluators=[FaithfulnessEvaluator, TaskCoverageEvaluator],
     judge=judge,
     output="both",                    # "phoenix" | "excel" | "both" | None
     excel_path="evaluation_results.xlsx",

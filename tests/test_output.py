@@ -5,7 +5,7 @@ import json
 import pytest
 
 from idp_eval import (
-    CoverageEvaluator,
+    TaskCoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
     EvaluationResult,
@@ -102,7 +102,7 @@ def test_record_from_result_validates_kind():
 def test_excel_only_writes_expected_columns(tmp_path):
     path = tmp_path / "evals.xlsx"
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(CountingScriptedJudge())],
+        evaluators=[TaskCoverageEvaluator(CountingScriptedJudge())],
         output="excel",
         excel_path=str(path),
     )
@@ -118,7 +118,7 @@ def test_excel_only_writes_expected_columns(tmp_path):
     assert row["run_name"] == "benchmark-v1"
     assert row["dataset_name"] == "theme-epic-gt"
     assert row["case_id"] == "gt-001"
-    assert row["metric"] == "coverage"
+    assert row["metric"] == "task_coverage"
     assert row["score"] == 0.5
     assert row["annotator_kind"] == "LLM"
     # Nested details land in a single JSON column.
@@ -138,7 +138,7 @@ def test_multiple_writers_evaluate_once(tmp_path):
     # Two writers must not cause the evaluators to run twice.
     judge = CountingScriptedJudge()
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(judge)],
+        evaluators=[TaskCoverageEvaluator(judge)],
         output="excel",
         excel_path=str(tmp_path / "e.xlsx"),
     )
@@ -153,7 +153,7 @@ def test_multiple_writers_evaluate_once(tmp_path):
 def test_no_output_writes_no_file(tmp_path):
     path = tmp_path / "should_not_exist.xlsx"
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(CountingScriptedJudge())]
+        evaluators=[TaskCoverageEvaluator(CountingScriptedJudge())]
     )
     framework.evaluate(CASE)
     assert not path.exists()
@@ -162,7 +162,7 @@ def test_no_output_writes_no_file(tmp_path):
 def test_batch_writes_one_row_per_case_metric(tmp_path):
     path = tmp_path / "batch.xlsx"
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(CountingScriptedJudge())],
+        evaluators=[TaskCoverageEvaluator(CountingScriptedJudge())],
         output="excel",
         excel_path=str(path),
     )
@@ -230,7 +230,7 @@ class _FailingWriter:
 
 def test_persistence_error_preserves_results():
     judge = CountingScriptedJudge()
-    framework = EvaluationFramework(evaluators=[CoverageEvaluator(judge)])
+    framework = EvaluationFramework(evaluators=[TaskCoverageEvaluator(judge)])
     framework._writers = [_FailingWriter()]  # inject a failing sink
 
     with pytest.raises(PersistenceError) as exc:
@@ -238,7 +238,7 @@ def test_persistence_error_preserves_results():
 
     # Results computed once and preserved on the exception; no re-evaluation.
     assert judge.calls == 2
-    assert exc.value.results["coverage"].score == 0.5
+    assert exc.value.results["task_coverage"].score == 0.5
 
 
 # --- native Phoenix annotation mapping (offline, fake client) ---------------
@@ -253,7 +253,7 @@ class _FakeClient:
         self.batches.append(span_annotations)
 
 
-def _record(metric="coverage", score=0.625, label="partial", kind="LLM",
+def _record(metric="task_coverage", score=0.625, label="partial", kind="LLM",
             span_id="0123456789abcdef", details=None):
     return EvaluationRecord.from_result(
         EvaluationResult(metric, score, label, "why", details),
@@ -271,7 +271,7 @@ def test_phoenix_annotation_mapping(monkeypatch):
     PhoenixEvaluationWriter(client=client).write([_record(details={"k": "v"})])
 
     annotation = client.batches[0][0]
-    assert annotation["name"] == "coverage"
+    assert annotation["name"] == "task_coverage"
     assert annotation["span_id"] == "0123456789abcdef"
     assert annotation["annotator_kind"] == "LLM"
     assert annotation["result"] == {
@@ -309,7 +309,7 @@ def test_phoenix_annotations_batched(monkeypatch):
     monkeypatch.setattr(output, "_make_span_annotation", lambda payload: payload)
     client = _FakeClient()
     records = [
-        _record(metric="coverage"),
+        _record(metric="task_coverage"),
         _record(metric="faithfulness", score=1.0, label="faithful"),
     ]
     PhoenixEvaluationWriter(client=client).write(records)
@@ -419,7 +419,7 @@ def test_payload_builds_real_span_annotation_data():
 
     record = _record(details={"total_requirements": 4})
     annotation = _make_span_annotation(PhoenixEvaluationWriter._payload(record))
-    assert annotation["name"] == "coverage"
+    assert annotation["name"] == "task_coverage"
     assert annotation["span_id"] == "0123456789abcdef"
     assert annotation["annotator_kind"] == "LLM"
     assert annotation["result"] == {

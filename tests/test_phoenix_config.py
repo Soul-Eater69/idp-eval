@@ -108,7 +108,7 @@ def test_writer_injected_client_wins(monkeypatch):
 
 def test_api_key_never_in_payload():
     record = EvaluationRecord.from_result(
-        EvaluationResult("coverage", 0.5, "partial", "why", {"k": "v"}),
+        EvaluationResult("task_coverage", 0.5, "partial", "why", {"k": "v"}),
         annotator_kind="LLM",
         span_id="abc",
     )

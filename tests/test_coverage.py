@@ -1,8 +1,8 @@
-"""Two-stage coverage evaluator tests using a scripted fake judge (no real LLM)."""
+"""Two-stage coverage mechanics tested via TaskCoverageEvaluator (no real LLM)."""
 
 import pytest
 
-from idp_eval import CoverageEvaluator, EvaluationCase
+from idp_eval import EvaluationCase, TaskCoverageEvaluator
 from idp_eval.models import EvaluationResult
 
 
@@ -47,7 +47,7 @@ CASE = EvaluationCase(
 
 
 def _run(judge) -> EvaluationResult:
-    return CoverageEvaluator(llm=judge).evaluate(CASE)
+    return TaskCoverageEvaluator(llm=judge).evaluate(CASE)
 
 
 # --- aggregation & binary-to-status logic -----------------------------------

@@ -134,11 +134,12 @@ When tracing is registered, each `framework.evaluate(...)` call creates one root
 
 ```python
 from idp_eval import (
-    CoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
+    SourceCoverageEvaluator,
+    TaskCoverageEvaluator,
     create_judge,
 )
 
@@ -147,7 +148,8 @@ judge = create_judge()
 framework = EvaluationFramework(
     evaluators=[
         FaithfulnessEvaluator,
-        CoverageEvaluator,
+        SourceCoverageEvaluator,
+        TaskCoverageEvaluator,
         InstructionAdherenceEvaluator,
     ],
     judge=judge,
@@ -200,24 +202,63 @@ instruction `followed` or `violated`. Python calculates `followed / total`.
 
 ## 7. Coverage Example
 
-Coverage measures how completely the output represents task-relevant information
-from the context.
+Coverage measures how completely the output represents important information from
+the context. There are two explicit variants:
+
+| Evaluator                | Metric name       | Scope                                                            |
+| ------------------------ | ----------------- | --------------------------------------------------------------- |
+| `SourceCoverageEvaluator`| `source_coverage` | The **whole source** (context) defines what should be covered.  |
+| `TaskCoverageEvaluator`  | `task_coverage`   | Only the source information **relevant to the task** (`input`). |
+
+Both share the same two-stage mechanics (extract items, then classify each
+against the output; Python derives `covered`/`partial`/`missing` = `1.0/0.5/0.0`
+and averages). They differ only in what Stage 1 extracts. Coverage focuses on
+omissions — unsupported additions are evaluated separately by faithfulness.
+
+### Task coverage — `input` scopes which parts of the context are relevant
 
 ```python
 case = EvaluationCase(
     input="Summarize the product's supported deployment options.",
     context=(
         "The product supports cloud and on-premises deployment. "
-        "On-premises deployments require version 4.2 or later."
+        "On-premises deployments require version 4.2 or later. "
+        "Billing is invoiced monthly."   # irrelevant to the task
     ),
     output="The product supports cloud and on-premises deployment.",
 )
 
-coverage = framework.evaluate(case, metrics=["coverage"])["coverage"]
+framework = EvaluationFramework(
+    evaluators=[TaskCoverageEvaluator],
+    judge=judge,
+)
+result = framework.evaluate(case)["task_coverage"]
 ```
 
-Coverage focuses on omissions. Unsupported additions are evaluated separately by
-faithfulness.
+Only deployment (task-relevant) information becomes coverage items; the billing
+sentence is ignored.
+
+### Source coverage — the whole context defines what should be covered
+
+```python
+case = EvaluationCase(
+    input="",                 # ignored by source coverage
+    context=document,
+    output=summary,
+)
+
+framework = EvaluationFramework(
+    evaluators=[SourceCoverageEvaluator],
+    judge=judge,
+)
+result = framework.evaluate(case)["source_coverage"]
+```
+
+Stage 1 receives only the context (no task, instructions, or output), so every
+important item in the source is expected to be represented. Typical uses:
+summarization, document compression, and generic source-to-output transforms.
+Details use `source_item` / `total_items`; task coverage details use `requirement`
+/ `total_requirements`. The score means the same for both.
 
 ## 8. Faithfulness Example
 
@@ -322,7 +363,7 @@ python -m pip install -e ".[excel]"
 
 ```python
 framework = EvaluationFramework(
-    evaluators=[CoverageEvaluator],
+    evaluators=[TaskCoverageEvaluator],
     judge=judge,
     output="excel",
     excel_path="evaluation_results.xlsx",
@@ -369,9 +410,9 @@ This also reuses the same configured judge and output writers.
 
 ```python
 from idp_eval import (
-    CoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
+    TaskCoverageEvaluator,
     create_judge,
     register_tracing,
 )
@@ -379,7 +420,7 @@ from idp_eval import (
 register_tracing(project_name="my-eval-project")
 judge = create_judge()
 framework = EvaluationFramework(
-    evaluators=[CoverageEvaluator],
+    evaluators=[TaskCoverageEvaluator],
     judge=judge,
 )
 
@@ -400,7 +441,8 @@ for result in results.values():
 | Metric | Fields used by the metric |
 |---|---|
 | `faithfulness` | `input`, `context`, `output` |
-| `coverage` | `input`, `context`, `output` |
+| `source_coverage` | `context`, `output` (`input` is ignored) |
+| `task_coverage` | `input`, `context`, `output` |
 | `instruction_adherence` | `instructions`, `output` |
 
 Although instruction adherence does not read `input` or `context`, callers must
@@ -412,8 +454,9 @@ appropriate when running only that metric.
 - Missing or blank instructions produce an instruction-adherence result with
   `score=None` and `label="not_applicable"` without calling the judge.
 - An empty instruction extraction is also not applicable and skips Stage 2.
-- Coverage is not applicable when extraction identifies no task-relevant
-  requirements; classification is skipped.
+- Coverage (`source_coverage` and `task_coverage`) is not applicable when Stage 1
+  extraction identifies no items; classification is skipped and the result is
+  `score=None`, `label="not_applicable"`.
 - Unknown requested metric names raise `KeyError`.
 - Missing judge configuration raises `ValueError` listing missing field names,
   without exposing secret values.

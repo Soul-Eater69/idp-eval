@@ -3,7 +3,7 @@
 import pytest
 
 from idp_eval import (
-    CoverageEvaluator,
+    TaskCoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
     InstructionAdherenceEvaluator,
@@ -58,33 +58,33 @@ def _names(spans):
 
 
 def test_one_case_one_trace_with_two_coverage_spans(spans):
-    framework = EvaluationFramework(evaluators=[CoverageEvaluator(_coverage_judge())])
+    framework = EvaluationFramework(evaluators=[TaskCoverageEvaluator(_coverage_judge())])
     framework.evaluate(CASE)
 
     finished = spans.get_finished_spans()
     names = [s.name for s in finished]
     assert "idp_eval.evaluate" in names
-    assert "coverage.extract" in names
-    assert "coverage.classify" in names
+    assert "task_coverage.extract" in names
+    assert "task_coverage.classify" in names
 
     root = next(s for s in finished if s.name == "idp_eval.evaluate")
     trace_ids = {s.context.trace_id for s in finished}
     assert len(trace_ids) == 1  # all spans share one trace
     # Child stage spans are parented to the root case span.
     for s in finished:
-        if s.name.startswith("coverage."):
+        if s.name.startswith("task_coverage."):
             assert s.parent.span_id == root.context.span_id
     assert root.attributes["idp_eval.case_id"] == "gt-001"
 
 
 def test_empty_extraction_only_extract_span(spans):
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(_coverage_judge(empty=True))]
+        evaluators=[TaskCoverageEvaluator(_coverage_judge(empty=True))]
     )
     framework.evaluate(CASE)
     names = _names(spans)
-    assert "coverage.extract" in names
-    assert "coverage.classify" not in names  # Stage 2 skipped -> no fake span
+    assert "task_coverage.extract" in names
+    assert "task_coverage.classify" not in names  # Stage 2 skipped -> no fake span
 
 
 def test_multiple_metrics_same_trace(spans):
@@ -96,7 +96,7 @@ def test_multiple_metrics_same_trace(spans):
     )
     framework = EvaluationFramework(
         evaluators=[
-            CoverageEvaluator(_coverage_judge()),
+            TaskCoverageEvaluator(_coverage_judge()),
             InstructionAdherenceEvaluator(instr_judge),
         ]
     )
@@ -111,8 +111,8 @@ def test_multiple_metrics_same_trace(spans):
         next(s for s in finished if s.name == "idp_eval.evaluate").context.trace_id
     }
     names = [s.name for s in finished]
-    assert "coverage.extract" in names
-    assert "coverage.classify" in names
+    assert "task_coverage.extract" in names
+    assert "task_coverage.classify" in names
     assert "instruction_adherence.extract" in names
     assert "instruction_adherence.classify" in names
     root = next(s for s in finished if s.name == "idp_eval.evaluate")
@@ -151,11 +151,11 @@ def test_not_applicable_instruction_makes_no_judge_span(spans):
 
 def test_two_cases_two_traces(spans):
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(_coverage_judge())]
+        evaluators=[TaskCoverageEvaluator(_coverage_judge())]
     )
     framework.evaluate(EvaluationCase(case_id="gt-001", input="t", context="c", output="o"))
     framework2 = EvaluationFramework(
-        evaluators=[CoverageEvaluator(_coverage_judge())]
+        evaluators=[TaskCoverageEvaluator(_coverage_judge())]
     )
     framework2.evaluate(EvaluationCase(case_id="gt-002", input="t", context="c", output="o"))
 
@@ -171,17 +171,43 @@ def test_fifteen_cases_fifteen_traces_thirty_judge_spans(spans):
     # One framework, fresh scripted judge per case (each judge answers 2 calls).
     for case in cases:
         EvaluationFramework(
-            evaluators=[CoverageEvaluator(_coverage_judge())]
+            evaluators=[TaskCoverageEvaluator(_coverage_judge())]
         ).evaluate(case)
 
     finished = spans.get_finished_spans()
     roots = [s for s in finished if s.name == "idp_eval.evaluate"]
-    extract = [s for s in finished if s.name == "coverage.extract"]
-    classify = [s for s in finished if s.name == "coverage.classify"]
+    extract = [s for s in finished if s.name == "task_coverage.extract"]
+    classify = [s for s in finished if s.name == "task_coverage.classify"]
     assert len(roots) == 15
     assert len({s.context.trace_id for s in roots}) == 15
     assert len(extract) == 15
     assert len(classify) == 15  # 15 x 2 = 30 judge spans total
+
+
+def test_task_coverage_stage_span_names(spans):
+    judge = ScriptedJudge(
+        {"requirements": [{"requirement": "a"}]},
+        {"requirements": [
+            {"id": "r1", "meaningfully_present": True, "fully_present": True, "reason": "r"}
+        ]},
+    )
+    EvaluationFramework(evaluators=[TaskCoverageEvaluator(judge)]).evaluate(CASE)
+    names = _names(spans)
+    assert "task_coverage.extract" in names and "task_coverage.classify" in names
+
+
+def test_source_coverage_stage_span_names(spans):
+    from idp_eval import SourceCoverageEvaluator
+
+    judge = ScriptedJudge(
+        {"source_items": [{"source_item": "a"}]},
+        {"requirements": [
+            {"id": "s1", "meaningfully_present": True, "fully_present": True, "reason": "r"}
+        ]},
+    )
+    EvaluationFramework(evaluators=[SourceCoverageEvaluator(judge)]).evaluate(CASE)
+    names = _names(spans)
+    assert "source_coverage.extract" in names and "source_coverage.classify" in names
 
 
 def test_supplemental_result_attributes_on_root_span(spans):
@@ -189,7 +215,7 @@ def test_supplemental_result_attributes_on_root_span(spans):
     # active, independent of output mode (they are supplemental to native
     # Phoenix annotations).
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(_coverage_judge())]
+        evaluators=[TaskCoverageEvaluator(_coverage_judge())]
     )
     framework.evaluate(CASE, run_name="benchmark-v1", dataset_name="theme-epic-gt")
 
@@ -198,8 +224,8 @@ def test_supplemental_result_attributes_on_root_span(spans):
     )
     assert root.attributes["idp_eval.run_name"] == "benchmark-v1"
     assert root.attributes["idp_eval.dataset_name"] == "theme-epic-gt"
-    assert root.attributes["idp_eval.eval.coverage.score"] == 0.5
-    assert root.attributes["idp_eval.eval.coverage.annotator_kind"] == "LLM"
+    assert root.attributes["idp_eval.eval.task_coverage.score"] == 0.5
+    assert root.attributes["idp_eval.eval.task_coverage.annotator_kind"] == "LLM"
 
 
 class FakePhoenixClient:
@@ -229,7 +255,7 @@ def _phoenix_framework(evaluators, monkeypatch):
 
 def test_native_annotations_target_root_span(spans, monkeypatch):
     framework, fake = _phoenix_framework(
-        [CoverageEvaluator(_coverage_judge())], monkeypatch
+        [TaskCoverageEvaluator(_coverage_judge())], monkeypatch
     )
     framework.evaluate(CASE)
 
@@ -240,7 +266,7 @@ def test_native_annotations_target_root_span(spans, monkeypatch):
     # One batched call with one annotation targeting the root span.
     assert len(fake.batches) == 1
     annotation = fake.batches[0][0]
-    assert annotation["name"] == "coverage"
+    assert annotation["name"] == "task_coverage"
     assert annotation["span_id"] == root_span_id
     assert annotation["annotator_kind"] == "LLM"
     assert annotation["result"]["score"] == 0.5
@@ -254,7 +280,7 @@ def test_native_annotations_batched_for_multiple_metrics(spans, monkeypatch):
         ]},
     )
     framework, fake = _phoenix_framework(
-        [CoverageEvaluator(_coverage_judge()), InstructionAdherenceEvaluator(instr_judge)],
+        [TaskCoverageEvaluator(_coverage_judge()), InstructionAdherenceEvaluator(instr_judge)],
         monkeypatch,
     )
     case = EvaluationCase(
@@ -265,7 +291,7 @@ def test_native_annotations_batched_for_multiple_metrics(spans, monkeypatch):
     # Both metrics in a single batched annotation call.
     assert len(fake.batches) == 1
     names = {a["name"] for a in fake.batches[0]}
-    assert names == {"coverage", "instruction_adherence"}
+    assert names == {"task_coverage", "instruction_adherence"}
 
 
 def test_custom_code_evaluation_native_annotation(spans, monkeypatch):

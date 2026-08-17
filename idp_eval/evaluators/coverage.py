@@ -1,4 +1,4 @@
-"""Coverage evaluator (two-stage, QAG-style).
+"""Coverage evaluator (two-stage binary requirement evaluation).
 
 Coverage measures how completely the generated output represents the
 task-relevant information in the supplied context. It runs two isolated judge

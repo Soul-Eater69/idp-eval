@@ -22,8 +22,8 @@ meaning. `instruction_adherence` reads `instructions` and never falls back to
 | Metric                  | Question                                      | Direction               | Better |
 | ----------------------- | --------------------------------------------- | ----------------------- | ------ |
 | `faithfulness`          | Is the output grounded in the context?        | `output -> context`     | higher |
-| `source_coverage`       | How much of the **whole source** reached the output? | `context -> output` | higher |
-| `task_coverage`         | How much of the **task-relevant** source reached the output? | `input + context -> output` | higher |
+| `source_coverage`       | One-call whole-source coverage: how much important source information appears in the output? | `context + output` | higher |
+| `task_coverage`         | Task-scoped two-stage coverage with an output-isolated denominator. | `input + context -> output` | higher |
 | `instruction_adherence` | Did the output obey the supplied explicit instructions? | `instructions -> output` | higher |
 | `relevance_at_{k}`      | What fraction of the top-K retrieved docs are relevant? (= Precision@K, binary) | `query -> retrieved docs` | higher |
 | `ndcg_at_{k}`           | How well are relevant docs ranked in the top K? (binary-relevance nDCG) | `query -> retrieved docs` | higher |
@@ -48,9 +48,10 @@ in Python — no extra LLM call). Both metrics **share one document-relevance pa
 path, and write a single shared `retrieval_documents` Excel sheet. See
 `docs/SETUP_AND_USAGE.md` §8a.
 
-`source_coverage` and `task_coverage` share the same two-stage extract→classify
-mechanics and `covered`/`partial`/`missing` = `1.0`/`0.5`/`0.0` scoring; they
-differ only in what Stage 1 extracts (whole source vs. task-relevant source). See
+`source_coverage` uses one itemized judge call for lower latency;
+`task_coverage` uses output-isolated extraction followed by classification for a
+fixed, task-scoped denominator. Both map `covered`/`partial`/`missing` to
+`1.0`/`0.5`/`0.0` and calculate the final score in Python. See
 `docs/SETUP_AND_USAGE.md` §7.
 
 ### Scores vs. labels
@@ -83,9 +84,8 @@ whether the output **adds unsupported information**.
 
 ### Coverage
 
-Coverage measures how completely the generated output represents the
-task-relevant information in the supplied context. It is a **two-stage** metric —
-**two judge calls** per case:
+Task coverage measures how completely the generated output represents the
+task-relevant information in the supplied context. It is a **two-stage** metric:
 
 ```
 Stage 1 (extraction):     input + context        → atomic requirements   (no output)
@@ -124,10 +124,15 @@ Coverage measures completeness (omissions). Unsupported *additions* are **not**
 penalized here — that is faithfulness's job; coverage never does hallucination
 detection.
 
-**Cost:** coverage uses **two judge calls total** per case (extraction +
-batched classification), never one call per requirement. This is intentional — it
+**Cost:** task coverage uses an extraction call plus one or more batched
+classification calls (never one call per requirement). This is intentional — it
 isolates the requirement denominator from the output and improves auditability and
 stability.
+
+Source coverage uses a separate one-call prompt receiving `context + output`. In
+that one response the judge identifies materially important source items and
+classifies them with the same binary rubric; Python still derives statuses and
+scores. This lowers latency, but the source denominator is not output-isolated.
 
 **Known limitation (v1):** deduplication is normalized-exact only, so semantic
 near-duplicates may remain distinct. See
@@ -277,11 +282,18 @@ metric-defined `not_applicable`, not an error.
 
 ### Coverage performance
 
-Both coverage evaluators stay two-stage, with unchanged scoring semantics, but are
-tuned for latency and to reduce the risk of a request exceeding the gateway
-timeout (a mitigation, not a guarantee):
+Coverage keeps unchanged scoring semantics while using two operational designs:
 
-- **Compact by default** — Stage 2 returns only booleans per item and
+- **Source coverage** uses one compact itemized judge call per case. It includes
+  the full context and output, so very large inputs can still approach the
+  gateway timeout; one call reduces sequential overhead but is not a latency
+  guarantee.
+- **Task coverage** stays two-stage and uses compact classification plus adaptive
+  batching to reduce the risk of a request exceeding the gateway timeout (a
+  mitigation, not a guarantee).
+
+- **Compact by default** — the source one-call response and task Stage 2 return
+  only item text/ids and booleans;
   `result.explanation` is a deterministic Python summary; pass `verbose=True` for
   per-item judge reasons on partial/missing items (diagnostics only, identical
   score/label/statuses).
@@ -361,8 +373,7 @@ named child span. Nothing else is traced (no app/RAG/agent/tool spans yet).
 
 | Metric                  | Spans per case                                    |
 | ----------------------- | ------------------------------------------------- |
-| `source_coverage`       | `source_coverage.extract` + `.classify` (2)       |
-| `source_coverage` (no items) | `source_coverage.extract` only (1 — Stage 2 skipped) |
+| `source_coverage`       | `source_coverage.evaluate` (1)                    |
 | `task_coverage`         | `task_coverage.extract` + `.classify` (2)         |
 | `task_coverage` (no reqs)    | `task_coverage.extract` only (1 — Stage 2 skipped) |
 | `faithfulness`          | `faithfulness.evaluate` (1)                        |
@@ -443,7 +454,7 @@ sheets, so results are inspectable without reading JSON:
 | Sheet | One row per | Key columns |
 | ----- | ----------- | ----------- |
 | `evaluations` | case + metric | `run_name, dataset_name, case_id, trace_id, metric, score, label, explanation, annotator_kind, timestamp, raw_details_json` |
-| `source_coverage_items` | extracted source item | `item_id, source_item, meaningfully_present, fully_present, status, item_score, reason` |
+| `source_coverage_items` | one-call judged source item | `item_id, source_item, meaningfully_present, fully_present, status, item_score, reason` |
 | `task_coverage_items` | task-relevant requirement | `item_id, requirement, meaningfully_present, fully_present, status, item_score, reason` |
 | `instruction_adherence_items` | instruction | `instruction_id, instruction, status, item_score, reason` |
 

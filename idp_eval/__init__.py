@@ -6,8 +6,8 @@ generated AI output using a generic ``input`` / ``context`` / ``output`` triple.
 v1 metrics:
     faithfulness: is the output grounded in the context? (detects hallucinated /
         unsupported additions). Higher is better.
-    source_coverage: how much of the whole source (context) reached the output?
-        (detects omissions, task-agnostic). Higher is better.
+    source_coverage: one-call itemized judgment of how much of the whole source
+        reached the output (detects omissions, task-agnostic). Higher is better.
     task_coverage: how much of the task-relevant source reached the output?
         (detects omissions, scoped by the task). Higher is better.
     instruction_adherence: does the output obey the explicit instructions in

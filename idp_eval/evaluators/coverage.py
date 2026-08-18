@@ -6,12 +6,11 @@ source information *relevant to the requested task* is represented in the output
     STAGE 1 - extraction:  input + context          -> task-relevant items
     STAGE 2 - classification: items + output         -> two binary judgments/item
 
-It shares :class:`~idp_eval.evaluators.coverage_base._TwoStageCoverageEvaluator`
-with :class:`~idp_eval.evaluators.source_coverage.SourceCoverageEvaluator` for
-classification, id validation, scoring, and result shaping. Stage 1 never sees
-the output; Stage 2 cannot change the item set. Coverage answers "did the output
-OMIT important task-relevant information?" — faithfulness owns unsupported
-additions.
+It uses :class:`~idp_eval.evaluators.coverage_base._TwoStageCoverageEvaluator`
+for extraction, classification, id validation, scoring, batching, and result
+shaping. Stage 1 never sees the output; Stage 2 cannot change the item set.
+Coverage answers "did the output OMIT important task-relevant information?" —
+faithfulness owns unsupported additions.
 """
 
 from __future__ import annotations

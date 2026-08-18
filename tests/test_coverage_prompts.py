@@ -1,4 +1,4 @@
-"""Tests for the two-stage coverage prompts (no LLM needed)."""
+"""Tests for task and source coverage prompts (no LLM needed)."""
 
 import copy
 
@@ -15,6 +15,13 @@ from idp_eval.prompts.coverage_extract import (
     COVERAGE_EXTRACT_PROMPT_V1,
     COVERAGE_EXTRACT_SCHEMA,
     render_coverage_extract_prompt,
+)
+from idp_eval.prompts.source_coverage import (
+    SOURCE_COVERAGE_PROMPT,
+    SOURCE_COVERAGE_PROMPT_V1,
+    SOURCE_COVERAGE_SCHEMA_COMPACT,
+    SOURCE_COVERAGE_SCHEMA_VERBOSE,
+    render_source_coverage_prompt,
 )
 
 
@@ -143,3 +150,48 @@ def test_classify_compact_prompt_forbids_reason_verbose_requests_it():
         " ".join(compact.split())
     )
     assert "reason" in verbose and "one-sentence" in verbose
+
+
+# --- one-call source coverage ----------------------------------------------
+
+
+def test_source_prompt_is_one_call_context_plus_output():
+    assert SOURCE_COVERAGE_PROMPT is SOURCE_COVERAGE_PROMPT_V1
+    messages = render_source_coverage_prompt(
+        context="SOURCE_TEXT", output="OUTPUT_TEXT"
+    )
+    assert [message["role"] for message in messages] == ["system", "user"]
+    user = messages[1]["content"]
+    assert "[CONTEXT]\nSOURCE_TEXT" in user
+    assert "[OUTPUT]\nOUTPUT_TEXT" in user
+    assert "[INPUT]" not in user
+
+
+def test_source_prompt_preserves_items_and_forbids_numeric_score():
+    system = " ".join(SOURCE_COVERAGE_PROMPT[0]["content"].split())
+    assert "materially distinct" in system
+    assert "Consolidation is not summarization" in system
+    assert "independently satisfiable" in system
+    assert "Never invent source content" in system
+    assert "Do not return an aggregate score" in system
+    assert "maximum item count" in system
+
+
+def test_source_prompt_render_does_not_mutate_template():
+    before = copy.deepcopy(SOURCE_COVERAGE_PROMPT)
+    render_source_coverage_prompt(context="a", output="b")
+    assert SOURCE_COVERAGE_PROMPT == before
+
+
+def test_source_compact_and_verbose_schemas():
+    compact = SOURCE_COVERAGE_SCHEMA_COMPACT["properties"]["items"]["items"]
+    verbose = SOURCE_COVERAGE_SCHEMA_VERBOSE["properties"]["items"]["items"]
+    base = {"source_item", "meaningfully_present", "fully_present"}
+    assert set(compact["properties"]) == base
+    assert compact["required"] == [
+        "source_item",
+        "meaningfully_present",
+        "fully_present",
+    ]
+    assert set(verbose["properties"]) == base | {"reason"}
+    assert "reason" in verbose["required"]

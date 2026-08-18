@@ -1,7 +1,5 @@
 """evaluate_many / evaluate_groups orchestration and structured values (no LLM)."""
 
-import json
-
 import pytest
 
 from idp_eval import (
@@ -40,12 +38,15 @@ class ReusableSourceJudge:
 
     def generate_object(self, prompt, schema):
         self.calls += 1
-        if "source_items" in json.dumps(schema):
-            return {"source_items": [{"source_item": "item"}]}
-        return {"requirements": [
-            {"id": "s1", "meaningfully_present": True, "fully_present": True,
-             "reason": "r"}
-        ]}
+        return {
+            "items": [
+                {
+                    "source_item": "item",
+                    "meaningfully_present": True,
+                    "fully_present": True,
+                }
+            ]
+        }
 
 
 def _read(path, sheet="evaluations"):
@@ -78,11 +79,11 @@ def test_list_output_stays_one_case_and_is_rendered():
     # One case -> one result mapping (a dict, not a list of results).
     assert isinstance(result, dict)
     assert set(result) == {"source_coverage"}
-    # Exactly two judge calls: no fan-out of the list into multiple evaluations.
-    assert judge.calls == 2
-    # The list output was rendered as one structured bullet block for classify.
-    classify_user = judge.prompts[1][1]["content"]
-    assert "- Step 1\n- Step 2" in classify_user
+    # Exactly one judge call: no fan-out of the list into multiple evaluations.
+    assert judge.calls == 1
+    # The list output was rendered as one structured bullet block in that call.
+    user = judge.prompts[0][1]["content"]
+    assert "- Step 1\n- Step 2" in user
 
 
 # --- evaluate_many independence ---------------------------------------------

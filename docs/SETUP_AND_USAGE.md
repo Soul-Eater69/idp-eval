@@ -254,12 +254,13 @@ the context. There are two explicit variants:
 
 | Evaluator                | Metric name       | Scope                                                            |
 | ------------------------ | ----------------- | --------------------------------------------------------------- |
-| `SourceCoverageEvaluator`| `source_coverage` | The **whole source** (context) defines what should be covered.  |
-| `TaskCoverageEvaluator`  | `task_coverage`   | Only the source information **relevant to the task** (`input`). |
+| `SourceCoverageEvaluator`| `source_coverage` | One-call whole-source coverage for lower latency. |
+| `TaskCoverageEvaluator`  | `task_coverage`   | Task-scoped two-stage coverage with an output-isolated denominator. |
 
-Both share the same two-stage mechanics (extract items, then classify each
-against the output; Python derives `covered`/`partial`/`missing` = `1.0/0.5/0.0`
-and averages). They differ only in what Stage 1 extracts. Coverage focuses on
+Both use the same Python-derived `covered`/`partial`/`missing` =
+`1.0/0.5/0.0` scoring. Source coverage identifies and classifies important
+source items in one call; task coverage first extracts a fixed task-relevant
+denominator without seeing the output, then classifies it. Coverage focuses on
 omissions — unsupported additions are evaluated separately by faithfulness.
 
 ### Task coverage — `input` scopes which parts of the context are relevant
@@ -300,78 +301,53 @@ framework = EvaluationFramework(
 result = framework.evaluate(case)["source_coverage"]
 ```
 
-Stage 1 receives only the context (no task, instructions, or output), so every
-important item in the source is expected to be represented. Typical uses:
-summarization, document compression, and generic source-to-output transforms.
-Details use `source_item` / `total_items`; task coverage details use `requirement`
-/ `total_requirements`. The score means the same for both.
+The one-call judge receives `context + output`, identifies materially important
+source items, and classifies each with two booleans. Python derives item statuses
+and the final score. Typical uses are summarization, document compression, and
+generic source-to-output transforms.
+
+This is faster and always uses one judge call, including a not-applicable result.
+The tradeoff is that the output is visible while the judge identifies the source
+denominator. Use task coverage when task scoping and an output-isolated, fixed
+denominator are required. Details use `source_item` / `total_items`; task coverage
+details use `requirement` / `total_requirements`.
 
 ### 7a. Coverage performance and options
 
-Both coverage evaluators keep the validated two-stage design (output-isolated
-extraction, then fixed-denominator classification, then a deterministic Python
-mean of covered=1.0 / partial=0.5 / missing=0.0). Several options make it
-practical at scale without changing those semantics:
+- **Source coverage: one call.** The compact response contains source items and
+  two booleans per item. `verbose=True` requests concise reasons for
+  partial/missing items in that same call. The deterministic Python explanation
+  and score require no additional model request. Source details include
+  `final_item_count`, `judge_call_count=1`, `verbose`, `evaluate_ms`, and
+  `total_ms`.
 
-- **Semantic consolidation (Stage 1).** Extraction produces every materially
-  distinct, independently checkable item, with **no hard maximum** — a large
-  source is never truncated. Closely related statements that form one underlying
-  requirement (an obligation plus its qualifiers/limits/dependencies) are merged
-  into one item, while independently satisfiable obligations stay separate. This
-  keeps the denominator meaningful instead of fragmented.
+- **Source coverage tradeoff.** Its one request includes the full context and
+  output, so very large inputs may still approach a gateway timeout. One call
+  reduces sequential/model-output overhead; it does not guarantee a latency
+  bound. Because the output is visible during item identification, the
+  denominator is not output-isolated.
 
-- **Compact output by default (`verbose=False`).** Stage 2 returns only the two
-  booleans per item (no per-item prose). `result.explanation` is a **deterministic
-  Python summary**, not a judge rationale, and needs no extra LLM call — e.g. "All
-  8 source items are fully represented.", "None of the 6 source items are
-  represented.", or "10 of 15 source items are fully covered; 3 partial and 2
-  missing.".
+- **Task coverage: two stages.** Stage 1 extracts every materially distinct,
+  task-relevant item without the output. Stage 2 classifies that fixed set.
+  `verbose=False` keeps Stage 2 compact; `verbose=True` adds reasons without
+  changing the rubric or Python scoring.
 
-- **`verbose=True` diagnostics.** Opt in to item-level *semantic reasons from the
-  judge* for partial/missing items:
+- **Task Stage-2 batching.** A large task denominator is split into batches of
+  `classification_batch_size` (default 12). This operational request-size control
+  never truncates or reweights the denominator. It can increase total calls to
+  one extraction plus one classification call per batch, and mitigates rather
+  than eliminates timeout risk.
 
-  ```python
-  SourceCoverageEvaluator(verbose=True)   # or TaskCoverageEvaluator(verbose=True)
-  ```
-
-  Verbose changes **diagnostics only** — the extracted denominator, item ids, the
-  `meaningfully_present` / `fully_present` booleans, statuses, item scores, overall
-  score, and label are identical to `verbose=False`. In Excel, the `reason` column
-  is blank in compact mode and populated (partial/missing) in verbose mode.
-
-- **Adaptive Stage-2 batching.** A large denominator is split into batches of
-  `classification_batch_size` (**default 12**) so no single classification request
-  carries the whole denominator. `classification_batch_size` is an *operational
-  request-size control* — it is **not** the same as the denominator (the semantic
-  count of coverage items), and it never truncates or caps the denominator.
-  Batching reduces the risk of a classification request exceeding the gateway
-  timeout, but is a mitigation, not a guarantee (latency also depends on model
-  load and input/output length). Batches are merged by stable id; batch boundaries
-  have **no** effect on the score:
-
-  ```python
-  SourceCoverageEvaluator(classification_batch_size=12)  # must be a positive int
-  ```
-
-  Batching can *increase* total request count for large denominators — e.g. 27
-  items with `classification_batch_size=12` is 1 extraction + 3 classification
-  requests = 4 judge calls. That is intentional: smaller, parallelizable requests
-  over minimum call count.
-
-- **Diagnostics.** Scored `details` include `final_item_count`, `batch_count`,
-  `batch_size`, `judge_call_count` (`1 + batch_count`; `1` for an empty
-  extraction), `verbose`, `large_denominator` (a soft flag when items > 20; never
-  a cutoff, scoring rule, or failure), and `extract_ms` / `classify_ms` /
-  `total_ms`. The root `idp_eval.evaluate` span carries matching `coverage.*`
-  attributes; batched runs add `source_coverage.classify.batch` /
-  `task_coverage.classify.batch` child spans (with `coverage.batch_index`) under
-  the existing `*.classify` span.
+- **Task diagnostics.** Task details retain `final_item_count`, `batch_count`,
+  `batch_size`, `judge_call_count`, `large_denominator`, `extract_ms`,
+  `classify_ms`, and `total_ms`. Batched task runs add
+  `task_coverage.classify.batch` spans under `task_coverage.classify`.
 
 ### 7b. Async coverage evaluation
 
-Independent cases (and, within a case, independent Stage-2 batches) can run
-concurrently, bounded by a single global judge-concurrency limiter. Extraction
-and classification for one case stay dependent (extract then classify).
+Independent cases run concurrently under one global judge-concurrency limiter.
+Source coverage contributes one call per case. Task coverage keeps dependent
+extract-then-classify stages, while independent Stage-2 batches may overlap.
 
 ```python
 results = await framework.a_evaluate(case)                      # one case
@@ -649,7 +625,7 @@ results are readable without inspecting JSON:
 | Sheet | One row per | Columns |
 |---|---|---|
 | `evaluations` | case + metric | `run_name`, `dataset_name`, `case_id`, `trace_id`, `metric`, `score`, `label`, `explanation`, `annotator_kind`, `timestamp`, `raw_details_json` |
-| `source_coverage_items` | extracted source item | identity cols + `item_id`, `source_item`, `meaningfully_present`, `fully_present`, `status`, `item_score`, `reason` |
+| `source_coverage_items` | one-call judged source item | identity cols + `item_id`, `source_item`, `meaningfully_present`, `fully_present`, `status`, `item_score`, `reason` |
 | `task_coverage_items` | task-relevant requirement | identity cols + `item_id`, `requirement`, `meaningfully_present`, `fully_present`, `status`, `item_score`, `reason` |
 | `instruction_adherence_items` | instruction | identity cols + `instruction_id`, `instruction`, `status`, `item_score`, `reason` |
 | `retrieval_documents` | judged retrieved document | `run_name`, `dataset_name`, `case_id`, `trace_id`, `rank`, `document_id`, `relevance_score`, `relevance_label`, `explanation`, `retrieval_score` |
@@ -788,9 +764,10 @@ and `output`. Validation applies only to the metrics selected for the call (§9)
 - An empty instruction *extraction* (instructions supplied but nothing checkable
   found) is a metric-defined not-applicable: `score=None`,
   `label="not_applicable"`, Stage 2 skipped.
-- Coverage (`source_coverage` and `task_coverage`) is not applicable when Stage 1
-  extraction identifies no items; classification is skipped and the result is
-  `score=None`, `label="not_applicable"`.
+- Source coverage is not applicable when its one-call response identifies no
+  important items. Task coverage is not applicable when Stage 1 identifies no
+  task-relevant requirements; its classification stage is then skipped. Both
+  return `score=None`, `label="not_applicable"`.
 - Unknown requested metric names raise `KeyError`.
 - Missing judge configuration raises `ValueError` listing missing field names,
   without exposing secret values.

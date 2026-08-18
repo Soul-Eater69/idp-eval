@@ -37,6 +37,12 @@ def test_estimate_calls():
         "total": 24,
     }
     assert estimate_calls(3, 4, True)["total"] == 48
+    assert estimate_calls(3, 4, True, "source_coverage") == {
+        "extraction": 0,
+        "classification": 0,
+        "end_to_end": 12,
+        "total": 12,
+    }
 
 
 def test_status_agreement():

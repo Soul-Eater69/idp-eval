@@ -8,9 +8,8 @@ import json
 
 import pytest
 
-from idp_eval import EvaluationCase, SourceCoverageEvaluator, TaskCoverageEvaluator
+from idp_eval import EvaluationCase, TaskCoverageEvaluator
 
-SRC_CASE = EvaluationCase(context="Source document.", output="Generated output.")
 TASK_CASE = EvaluationCase(input="Task.", context="Context.", output="Output.")
 
 
@@ -40,9 +39,6 @@ class ScriptedBatchJudge:
         user = prompt[1]["content"]
         if "[REQUIREMENTS]" not in user:
             self.extract_calls += 1
-            props = schema["properties"]
-            if "source_items" in props:
-                return {"source_items": [{"source_item": t} for t in self.items]}
             return {"requirements": [{"requirement": t} for t in self.items]}
 
         self.classify_calls += 1
@@ -78,26 +74,26 @@ def _items_and_status(n, prefix, pattern=None):
     [(1, 15, 1), (15, 15, 1), (16, 15, 2), (31, 15, 3), (27, 12, 3)],
 )
 def test_batch_count(n, batch_size, expected_batches):
-    items, status = _items_and_status(n, "s")
+    items, status = _items_and_status(n, "r")
     judge = ScriptedBatchJudge(items, status)
-    result = SourceCoverageEvaluator(
+    result = TaskCoverageEvaluator(
         judge, classification_batch_size=batch_size
-    ).evaluate(SRC_CASE)
+    ).evaluate(TASK_CASE)
     assert judge.classify_calls == expected_batches
     assert result.details["batch_count"] == expected_batches
-    assert result.details["total_items"] == n
+    assert result.details["total_requirements"] == n
     # Every id classified exactly once, original order restored.
     ids = [i["id"] for i in result.details["items"]]
-    assert ids == [f"s{i}" for i in range(1, n + 1)]
+    assert ids == [f"r{i}" for i in range(1, n + 1)]
 
 
 def test_empty_extraction_makes_no_classify_call():
     judge = ScriptedBatchJudge([], {})
-    result = SourceCoverageEvaluator(judge).evaluate(SRC_CASE)
+    result = TaskCoverageEvaluator(judge).evaluate(TASK_CASE)
     assert result.label == "not_applicable"
     assert judge.classify_calls == 0
     assert result.details == {
-        "total_items": 0,
+        "total_requirements": 0,
         "covered_count": 0,
         "partial_count": 0,
         "missing_count": 0,
@@ -118,18 +114,18 @@ def test_default_classification_batch_size_is_12():
 
     assert DEFAULT_CLASSIFICATION_BATCH_SIZE == 12
     # 13 items with the default -> 2 batches (ceil(13/12)).
-    items, status = _items_and_status(13, "s")
+    items, status = _items_and_status(13, "r")
     judge = ScriptedBatchJudge(items, status)
-    result = SourceCoverageEvaluator(judge).evaluate(SRC_CASE)
+    result = TaskCoverageEvaluator(judge).evaluate(TASK_CASE)
     assert result.details["batch_size"] == 12
     assert result.details["batch_count"] == 2
 
 
 def test_custom_batch_size_still_works():
-    items, status = _items_and_status(10, "s")
+    items, status = _items_and_status(10, "r")
     judge = ScriptedBatchJudge(items, status)
-    result = SourceCoverageEvaluator(judge, classification_batch_size=4).evaluate(
-        SRC_CASE
+    result = TaskCoverageEvaluator(judge, classification_batch_size=4).evaluate(
+        TASK_CASE
     )
     assert judge.classify_calls == 3  # ceil(10/4)
     assert result.details["batch_size"] == 4
@@ -138,7 +134,7 @@ def test_custom_batch_size_still_works():
 @pytest.mark.parametrize("bad", [0, -1, 1.5, "12", True, None])
 def test_invalid_batch_size_rejected(bad):
     with pytest.raises(ValueError, match="classification_batch_size must be a"):
-        SourceCoverageEvaluator(object(), classification_batch_size=bad)
+        TaskCoverageEvaluator(object(), classification_batch_size=bad)
 
 
 # --- judge_call_count (item 19 G) -------------------------------------------
@@ -149,11 +145,11 @@ def test_invalid_batch_size_rejected(bad):
     [(0, 12, 1), (5, 12, 2), (31, 12, 4)],  # 1 + batch_count (0,1,3)
 )
 def test_judge_call_count(n, batch_size, expected_calls):
-    items, status = _items_and_status(n, "s")
+    items, status = _items_and_status(n, "r")
     judge = ScriptedBatchJudge(items, status)
-    result = SourceCoverageEvaluator(
+    result = TaskCoverageEvaluator(
         judge, classification_batch_size=batch_size
-    ).evaluate(SRC_CASE)
+    ).evaluate(TASK_CASE)
     assert result.details["judge_call_count"] == expected_calls
     assert judge.extract_calls + judge.classify_calls == expected_calls
 
@@ -163,33 +159,35 @@ def test_judge_call_count(n, batch_size, expected_calls):
 
 def test_compact_explanation_forms_are_deterministic():
     # complete
-    items, status = _items_and_status(3, "s")  # all covered
-    complete = SourceCoverageEvaluator(ScriptedBatchJudge(items, status)).evaluate(
-        SRC_CASE
+    items, status = _items_and_status(3, "r")  # all covered
+    complete = TaskCoverageEvaluator(ScriptedBatchJudge(items, status)).evaluate(
+        TASK_CASE
     )
-    assert complete.explanation == "All 3 source items are fully represented."
+    assert complete.explanation == (
+        "All 3 task-relevant requirements are fully represented."
+    )
     # none
-    items, status = _items_and_status(4, "s", lambda i: (False, False))
-    none = SourceCoverageEvaluator(ScriptedBatchJudge(items, status)).evaluate(
-        SRC_CASE
+    items, status = _items_and_status(4, "r", lambda i: (False, False))
+    none = TaskCoverageEvaluator(ScriptedBatchJudge(items, status)).evaluate(
+        TASK_CASE
     )
-    assert none.explanation == "None of the 4 source items are represented."
+    assert none.explanation == "None of the 4 task-relevant requirements are represented."
     # mixed
     items, status = _items_and_status(
-        3, "s", lambda i: [(True, True), (True, False), (False, False)][i - 1]
+        3, "r", lambda i: [(True, True), (True, False), (False, False)][i - 1]
     )
-    mixed = SourceCoverageEvaluator(ScriptedBatchJudge(items, status)).evaluate(
-        SRC_CASE
+    mixed = TaskCoverageEvaluator(ScriptedBatchJudge(items, status)).evaluate(
+        TASK_CASE
     )
     assert mixed.explanation == (
-        "1 of 3 source items are fully covered; 1 partial and 1 missing."
+        "1 of 3 task-relevant requirements are fully covered; 1 partial and 1 missing."
     )
 
 
 def test_no_extra_judge_call_for_explanation():
-    items, status = _items_and_status(3, "s")
+    items, status = _items_and_status(3, "r")
     judge = ScriptedBatchJudge(items, status)
-    SourceCoverageEvaluator(judge).evaluate(SRC_CASE)
+    TaskCoverageEvaluator(judge).evaluate(TASK_CASE)
     # 1 extract + 1 classify only; explanation is computed in Python.
     assert judge.extract_calls == 1 and judge.classify_calls == 1
 
@@ -211,14 +209,14 @@ def test_docs_and_code_make_no_60s_guarantee():
 def test_batching_score_matches_single_call_equivalent():
     # 20 items with a mixed pattern; batched (size 7 -> 3 batches) vs one batch.
     pattern = lambda i: [(True, True), (True, False), (False, False)][i % 3]
-    items, status = _items_and_status(20, "s", pattern)
+    items, status = _items_and_status(20, "r", pattern)
 
-    batched = SourceCoverageEvaluator(
+    batched = TaskCoverageEvaluator(
         ScriptedBatchJudge(items, status), classification_batch_size=7
-    ).evaluate(SRC_CASE)
-    single = SourceCoverageEvaluator(
+    ).evaluate(TASK_CASE)
+    single = TaskCoverageEvaluator(
         ScriptedBatchJudge(items, status), classification_batch_size=1000
-    ).evaluate(SRC_CASE)
+    ).evaluate(TASK_CASE)
 
     assert batched.details["batch_count"] == 3
     assert single.details["batch_count"] == 1
@@ -230,45 +228,45 @@ def test_batching_score_matches_single_call_equivalent():
 
 
 def test_batch_missing_id_fails():
-    items, status = _items_and_status(16, "s")
+    items, status = _items_and_status(16, "r")
 
     class DropsLastId(ScriptedBatchJudge):
         def generate_object(self, prompt, schema):
             response = super().generate_object(prompt, schema)
             user = prompt[1]["content"]
             if "[REQUIREMENTS]" in user and any(
-                r["id"] == "s16" for r in _requirements_from_prompt(user)
+                r["id"] == "r16" for r in _requirements_from_prompt(user)
             ):
                 response["requirements"] = [
-                    r for r in response["requirements"] if r["id"] != "s16"
+                    r for r in response["requirements"] if r["id"] != "r16"
                 ]
             return response
 
     with pytest.raises(ValueError, match="Missing classification"):
-        SourceCoverageEvaluator(
+        TaskCoverageEvaluator(
             DropsLastId(items, status), classification_batch_size=15
-        ).evaluate(SRC_CASE)
+        ).evaluate(TASK_CASE)
 
 
 def test_batch_duplicate_id_across_batches_fails():
-    items, status = _items_and_status(16, "s")
+    items, status = _items_and_status(16, "r")
 
     class DuplicatesFirstId(ScriptedBatchJudge):
         def generate_object(self, prompt, schema):
             response = super().generate_object(prompt, schema)
             user = prompt[1]["content"]
             if "[REQUIREMENTS]" in user and any(
-                r["id"] == "s16" for r in _requirements_from_prompt(user)
+                r["id"] == "r16" for r in _requirements_from_prompt(user)
             ):
                 response["requirements"].append(
-                    {"id": "s1", "meaningfully_present": True, "fully_present": True}
+                    {"id": "r1", "meaningfully_present": True, "fully_present": True}
                 )
             return response
 
     with pytest.raises(ValueError, match="Duplicate requirement id"):
-        SourceCoverageEvaluator(
+        TaskCoverageEvaluator(
             DuplicatesFirstId(items, status), classification_batch_size=15
-        ).evaluate(SRC_CASE)
+        ).evaluate(TASK_CASE)
 
 
 # --- verbose invariance (item 25) -------------------------------------------
@@ -276,10 +274,7 @@ def test_batch_duplicate_id_across_batches_fails():
 
 @pytest.mark.parametrize(
     "evaluator_cls,case,prefix",
-    [
-        (SourceCoverageEvaluator, SRC_CASE, "s"),
-        (TaskCoverageEvaluator, TASK_CASE, "r"),
-    ],
+    [(TaskCoverageEvaluator, TASK_CASE, "r")],
 )
 def test_verbose_matches_compact_score_and_statuses(evaluator_cls, case, prefix):
     pattern = lambda i: [(True, True), (True, False), (False, False)][i % 3]
@@ -304,8 +299,7 @@ def test_verbose_matches_compact_score_and_statuses(evaluator_cls, case, prefix)
         ]
 
     assert _fingerprint(compact) == _fingerprint(verbose)
-    assert compact.details["total_items" if prefix == "s" else "total_requirements"] \
-        == verbose.details["total_items" if prefix == "s" else "total_requirements"]
+    assert compact.details["total_requirements"] == verbose.details["total_requirements"]
     # Only diagnostic reason content differs.
     assert all(i["reason"] == "" for i in compact.details["items"])
     verbose_reasons = {
@@ -318,32 +312,34 @@ def test_verbose_matches_compact_score_and_statuses(evaluator_cls, case, prefix)
 
 
 def test_default_classify_uses_compact_schema_no_reason():
-    items, status = _items_and_status(3, "s")
+    items, status = _items_and_status(3, "r")
     judge = ScriptedBatchJudge(items, status)
-    SourceCoverageEvaluator(judge).evaluate(SRC_CASE)
+    TaskCoverageEvaluator(judge).evaluate(TASK_CASE)
     item_schema = judge.classify_schemas[0]["properties"]["requirements"]["items"]
     assert "reason" not in item_schema["properties"]
 
 
 def test_verbose_classify_uses_verbose_schema_and_prompt():
-    items, status = _items_and_status(3, "s")
+    items, status = _items_and_status(3, "r")
     judge = ScriptedBatchJudge(items, status, reason_prefix="why")
-    result = SourceCoverageEvaluator(judge, verbose=True).evaluate(SRC_CASE)
+    result = TaskCoverageEvaluator(judge, verbose=True).evaluate(TASK_CASE)
     item_schema = judge.classify_schemas[0]["properties"]["requirements"]["items"]
     assert "reason" in item_schema["properties"]
     assert "one-sentence" in judge.classify_prompts[0]
     # Overall explanation still present and Python-generated (3 items all covered).
-    assert result.explanation == "All 3 source items are fully represented."
+    assert result.explanation == (
+        "All 3 task-relevant requirements are fully represented."
+    )
 
 
 # --- diagnostics / timeout-shape (item 29) ----------------------------------
 
 
 def test_large_denominator_flagged_and_split():
-    items, status = _items_and_status(27, "s")
+    items, status = _items_and_status(27, "r")
     judge = ScriptedBatchJudge(items, status)
-    result = SourceCoverageEvaluator(judge, classification_batch_size=15).evaluate(
-        SRC_CASE
+    result = TaskCoverageEvaluator(judge, classification_batch_size=15).evaluate(
+        TASK_CASE
     )
     assert result.details["large_denominator"] is True
     assert result.details["final_item_count"] == 27
@@ -353,9 +349,9 @@ def test_large_denominator_flagged_and_split():
 
 
 def test_latency_fields_present_and_non_negative():
-    items, status = _items_and_status(3, "s")
-    result = SourceCoverageEvaluator(ScriptedBatchJudge(items, status)).evaluate(
-        SRC_CASE
+    items, status = _items_and_status(3, "r")
+    result = TaskCoverageEvaluator(ScriptedBatchJudge(items, status)).evaluate(
+        TASK_CASE
     )
     for field in ("extract_ms", "classify_ms", "total_ms"):
         assert field in result.details
@@ -364,11 +360,11 @@ def test_latency_fields_present_and_non_negative():
 
 
 def test_diagnostics_do_not_change_scored_shape_keys():
-    items, status = _items_and_status(2, "s", lambda i: (True, i == 1))
-    result = SourceCoverageEvaluator(ScriptedBatchJudge(items, status)).evaluate(
-        SRC_CASE
+    items, status = _items_and_status(2, "r", lambda i: (True, i == 1))
+    result = TaskCoverageEvaluator(ScriptedBatchJudge(items, status)).evaluate(
+        TASK_CASE
     )
     # Core scoring keys remain; diagnostics are additive.
-    for key in ("total_items", "covered_count", "partial_count", "missing_count",
+    for key in ("total_requirements", "covered_count", "partial_count", "missing_count",
                 "items"):
         assert key in result.details

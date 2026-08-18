@@ -202,14 +202,21 @@ def test_source_coverage_stage_span_names(spans):
     from idp_eval import SourceCoverageEvaluator
 
     judge = ScriptedJudge(
-        {"source_items": [{"source_item": "a"}]},
-        {"requirements": [
-            {"id": "s1", "meaningfully_present": True, "fully_present": True, "reason": "r"}
-        ]},
+        {
+            "items": [
+                {
+                    "source_item": "a",
+                    "meaningfully_present": True,
+                    "fully_present": True,
+                }
+            ]
+        }
     )
     EvaluationFramework(evaluators=[SourceCoverageEvaluator(judge)]).evaluate(CASE)
     names = _names(spans)
-    assert "source_coverage.extract" in names and "source_coverage.classify" in names
+    assert names.count("source_coverage.evaluate") == 1
+    assert "source_coverage.extract" not in names
+    assert "source_coverage.classify" not in names
 
 
 def test_supplemental_result_attributes_on_root_span(spans):

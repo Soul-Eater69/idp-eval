@@ -1,4 +1,4 @@
-"""Development benchmark for the production two-stage TaskCoverageEvaluator.
+"""Development benchmark for production task and source coverage evaluators.
 
 The script measures extraction stability, fixed-requirement classification
 stability, and optional end-to-end score stability. It uses a direct OpenAI judge
@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from idp_eval.evaluators.coverage import TaskCoverageEvaluator
+from idp_eval.evaluators.source_coverage import SourceCoverageEvaluator
 from idp_eval.scoring import calculate_coverage
 from scripts.coverage_benchmark_utils import (
     exact_set_summary,
@@ -58,8 +59,21 @@ def _percentiles(values: list[float]) -> dict[str, float | None]:
     }
 
 
-def estimate_calls(num_cases: int, runs: int, end_to_end: bool) -> dict[str, int]:
-    """Returns planned calls for extraction, classification, and end-to-end."""
+def estimate_calls(
+    num_cases: int,
+    runs: int,
+    end_to_end: bool,
+    metric: str = "task_coverage",
+) -> dict[str, int]:
+    """Returns planned calls for the selected coverage architecture."""
+    if metric == "source_coverage":
+        end_to_end_calls = num_cases * runs if end_to_end else 0
+        return {
+            "extraction": 0,
+            "classification": 0,
+            "end_to_end": end_to_end_calls,
+            "total": end_to_end_calls,
+        }
     extraction = num_cases * runs
     classification = num_cases * runs
     end_to_end_calls = num_cases * runs * 2 if end_to_end else 0
@@ -139,7 +153,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     cases = load_cases(args.cases_file)
     if args.cases is not None:
         cases = cases[: args.cases]
-    plan = estimate_calls(len(cases), args.runs, args.end_to_end)
+    metric = getattr(args, "metric", "task_coverage")
+    plan = estimate_calls(len(cases), args.runs, args.end_to_end, metric)
     print(f"Planned model calls: {plan}")
     if plan["total"] > CONFIRM_THRESHOLD and not args.yes:
         reply = input(f"This will make ~{plan['total']} model calls. Continue? [y/N] ")
@@ -149,7 +164,11 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     if args.trace:
         register_tracing(project_name=args.project_name)
     judge, model = _build_openai_judge()
-    evaluator = TaskCoverageEvaluator(judge)
+    evaluator = (
+        SourceCoverageEvaluator(judge)
+        if metric == "source_coverage"
+        else TaskCoverageEvaluator(judge)
+    )
     framework = EvaluationFramework(
         evaluators=[evaluator], output="phoenix" if args.trace else None
     )
@@ -165,43 +184,47 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             output=case["output"],
         )
         extraction_runs: list[list[dict]] = []
-        for run_number in range(1, args.runs + 1):
-            try:
-                extraction_runs.append(evaluator._extract_requirements(eval_case))
-                successful_calls += 1
-            except Exception as exc:  # noqa: BLE001 - record and continue
-                failures.append(
-                    {
-                        "case_id": case["case_id"],
-                        "phase": "extraction",
-                        "run": run_number,
-                        "error": f"{type(exc).__name__}: {exc}",
-                    }
-                )
+        if metric == "task_coverage":
+            for run_number in range(1, args.runs + 1):
+                try:
+                    extraction_runs.append(evaluator._extract_requirements(eval_case))
+                    successful_calls += 1
+                except Exception as exc:  # noqa: BLE001 - record and continue
+                    failures.append(
+                        {
+                            "case_id": case["case_id"],
+                            "phase": "extraction",
+                            "run": run_number,
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
 
-        fixed = _fixed_requirements(
-            case, extraction_runs[0] if extraction_runs else []
+        fixed = (
+            _fixed_requirements(case, extraction_runs[0] if extraction_runs else [])
+            if metric == "task_coverage"
+            else []
         )
         classification_runs: list[dict[str, dict[str, Any]]] = []
         classification_scores: list[float] = []
-        for run_number in range(1, args.runs + 1):
-            if not fixed:
-                break
-            try:
-                judgments, _batch_count = evaluator._run_classify(eval_case, fixed)
-                items = evaluator._build_items(fixed, judgments)
-                classification_runs.append({item["id"]: item for item in items})
-                classification_scores.append(calculate_coverage(items))
-                successful_calls += 1
-            except Exception as exc:  # noqa: BLE001
-                failures.append(
-                    {
-                        "case_id": case["case_id"],
-                        "phase": "classification",
-                        "run": run_number,
-                        "error": f"{type(exc).__name__}: {exc}",
-                    }
-                )
+        if metric == "task_coverage":
+            for run_number in range(1, args.runs + 1):
+                if not fixed:
+                    break
+                try:
+                    judgments, _batch_count = evaluator._run_classify(eval_case, fixed)
+                    items = evaluator._build_items(fixed, judgments)
+                    classification_runs.append({item["id"]: item for item in items})
+                    classification_scores.append(calculate_coverage(items))
+                    successful_calls += 1
+                except Exception as exc:  # noqa: BLE001
+                    failures.append(
+                        {
+                            "case_id": case["case_id"],
+                            "phase": "classification",
+                            "run": run_number,
+                            "error": f"{type(exc).__name__}: {exc}",
+                        }
+                    )
 
         end_to_end_scores: list[float] = []
         end_to_end_counts: list[float] = []
@@ -209,6 +232,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         end_to_end_extract_ms: list[float] = []
         end_to_end_classify_ms: list[float] = []
         end_to_end_batch_counts: list[int] = []
+        end_to_end_evaluate_ms: list[float] = []
+        end_to_end_judge_calls: list[int] = []
         end_to_end_abs_errors: list[float] = []
         # Optional ground-truth score for calibration (semantic-change signal).
         gt_score = case.get("gt_score")
@@ -219,11 +244,18 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                         eval_case,
                         run_name=f"coverage-run-{run_number:02d}",
                         dataset_name=args.dataset_name,
-                    )["task_coverage"]
-                    successful_calls += 2 if result.details["total_requirements"] else 1
+                    )[metric]
+                    call_count = result.details["judge_call_count"]
+                    successful_calls += call_count
+                    end_to_end_judge_calls.append(call_count)
                     if result.score is not None:
                         end_to_end_scores.append(result.score)
-                    end_to_end_counts.append(float(result.details["total_requirements"]))
+                    count_key = (
+                        "total_items"
+                        if metric == "source_coverage"
+                        else "total_requirements"
+                    )
+                    end_to_end_counts.append(float(result.details[count_key]))
                     # New optimization diagnostics (timeout-safety comparison):
                     if "total_ms" in result.details:
                         end_to_end_latencies_ms.append(result.details["total_ms"])
@@ -231,6 +263,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                         end_to_end_extract_ms.append(result.details["extract_ms"])
                     if "classify_ms" in result.details:
                         end_to_end_classify_ms.append(result.details["classify_ms"])
+                    if "evaluate_ms" in result.details:
+                        end_to_end_evaluate_ms.append(result.details["evaluate_ms"])
                     if "batch_count" in result.details:
                         end_to_end_batch_counts.append(result.details["batch_count"])
                     # Calibration: absolute error vs ground truth when provided.
@@ -282,6 +316,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     "extract_ms_distribution": _percentiles(end_to_end_extract_ms),
                     "classify_ms_distribution": _percentiles(end_to_end_classify_ms),
                     "batch_count_per_run": end_to_end_batch_counts,
+                    "evaluate_ms_distribution": _percentiles(end_to_end_evaluate_ms),
+                    "judge_call_count_per_run": end_to_end_judge_calls,
                     "gt_score": gt_score,
                     "abs_error_per_run": end_to_end_abs_errors,
                     "abs_error_stats": numeric_stats(end_to_end_abs_errors),
@@ -298,6 +334,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "model": model,
             "cases": len(cases),
             "runs": args.runs,
+            "metric": metric,
             "end_to_end": args.end_to_end,
             "trace": args.trace,
             "project_name": args.project_name if args.trace else None,
@@ -319,6 +356,11 @@ def main() -> None:
     parser.add_argument("--cases", type=int)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--end-to-end", action="store_true")
+    parser.add_argument(
+        "--metric",
+        choices=("task_coverage", "source_coverage"),
+        default="task_coverage",
+    )
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--project-name", default="coverage-stability-openai")
     parser.add_argument("--dataset-name", default="coverage-benchmark")
@@ -327,6 +369,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.runs < 1:
         parser.error("--runs must be at least 1")
+    if args.metric == "source_coverage" and not args.end_to_end:
+        parser.error("--metric source_coverage requires --end-to-end")
 
     report = run_benchmark(args)
     output_dir = Path(args.out_dir)

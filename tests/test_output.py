@@ -111,11 +111,15 @@ def test_record_from_result_validates_kind():
 
 def _source_judge():
     return ScriptedTwoStage(
-        {"source_items": [{"source_item": "Keep the identity provider."}]},
-        {"requirements": [
-            {"id": "s1", "meaningfully_present": True, "fully_present": False,
-             "reason": "IdP kept but SSO qualifier dropped."},
-        ]},
+        {
+            "items": [
+                {
+                    "source_item": "Keep the identity provider.",
+                    "meaningfully_present": True,
+                    "fully_present": False,
+                }
+            ]
+        }
     )
 
 
@@ -217,6 +221,11 @@ def test_source_coverage_items_sheet(tmp_path):
     assert rows[0]["source_item"] == "Keep the identity provider."
     assert rows[0]["status"] == "partial"
     assert rows[0]["item_score"] == 0.5
+    details = json.loads(_rows_as_dicts(path, "evaluations")[0]["raw_details_json"])
+    assert details["judge_call_count"] == 1
+    assert details["final_item_count"] == 1
+    assert "evaluate_ms" in details and "total_ms" in details
+    assert "extract_ms" not in details and "classify_ms" not in details
 
 
 def test_instruction_adherence_items_sheet(tmp_path):
@@ -316,22 +325,26 @@ def test_workbook_is_valid_and_reloadable(tmp_path):
 
 
 def _stateless_source_judge(*, reasons):
-    """Extraction returns 2 items; item 1 partial, item 2 missing (score 0.25)."""
+    """One call returns item 1 partial and item 2 missing (score 0.25)."""
 
     class _Judge:
         def generate_object(self, prompt, schema):
-            user = prompt[1]["content"]
-            if "[REQUIREMENTS]" not in user:
-                return {"source_items": [{"source_item": "Keep IdP"},
-                                         {"source_item": "Support SSO"}]}
-            answers = [
-                {"id": "s1", "meaningfully_present": True, "fully_present": False},
-                {"id": "s2", "meaningfully_present": False, "fully_present": False},
+            items = [
+                {
+                    "source_item": "Keep IdP",
+                    "meaningfully_present": True,
+                    "fully_present": False,
+                },
+                {
+                    "source_item": "Support SSO",
+                    "meaningfully_present": False,
+                    "fully_present": False,
+                },
             ]
             if reasons:
-                answers[0]["reason"] = "qualifier missing"
-                answers[1]["reason"] = "SSO absent"
-            return {"requirements": answers}
+                items[0]["reason"] = "qualifier missing"
+                items[1]["reason"] = "SSO absent"
+            return {"items": items}
 
     return _Judge()
 
@@ -373,15 +386,16 @@ def test_async_evaluate_many_writes_per_case_rows(tmp_path):
 
     class _AllCovered:
         def generate_object(self, prompt, schema):
-            user = prompt[1]["content"]
-            if "[REQUIREMENTS]" not in user:
-                return {"source_items": [{"source_item": "A"}, {"source_item": "B"}]}
-            block = user.split("[REQUIREMENTS]\n", 1)[1].split("\n\n[OUTPUT]", 1)[0]
-            reqs = json.loads(block)
-            return {"requirements": [
-                {"id": r["id"], "meaningfully_present": True, "fully_present": True}
-                for r in reqs
-            ]}
+            return {
+                "items": [
+                    {
+                        "source_item": source_item,
+                        "meaningfully_present": True,
+                        "fully_present": True,
+                    }
+                    for source_item in ("A", "B")
+                ]
+            }
 
     path = tmp_path / "async.xlsx"
     framework = EvaluationFramework(

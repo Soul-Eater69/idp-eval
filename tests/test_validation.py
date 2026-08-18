@@ -59,11 +59,15 @@ class CountingJudge:
 
 def _source_judge():
     return ScriptedJudge(
-        {"source_items": [{"source_item": "a"}]},
-        {"requirements": [
-            {"id": "s1", "meaningfully_present": True, "fully_present": True,
-             "reason": "r"}
-        ]},
+        {
+            "items": [
+                {
+                    "source_item": "a",
+                    "meaningfully_present": True,
+                    "fully_present": True,
+                }
+            ]
+        }
     )
 
 

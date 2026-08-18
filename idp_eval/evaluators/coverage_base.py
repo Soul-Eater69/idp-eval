@@ -1,10 +1,8 @@
-"""Shared internals for the two-stage coverage evaluators.
+"""Internal two-stage pipeline for task coverage.
 
-Not part of the public API. ``TaskCoverageEvaluator`` (task-scoped) and
-``SourceCoverageEvaluator`` (whole-source) share this base so the classification
-prompt, id-integrity validation, status derivation, scoring, empty-extraction
-handling, and result shaping exist in exactly one place. Only Stage 1 extraction
-(scope) and a few labels differ between subclasses.
+Not part of the public API. ``TaskCoverageEvaluator`` uses this base for its
+output-isolated extraction, fixed-denominator classification, id-integrity
+validation, status derivation, batching, scoring, and result shaping.
 
 Performance/robustness (the metric semantics are unchanged — covered/partial/
 missing = 1.0/0.5/0.0, deterministic Python mean, fixed output-isolated
@@ -242,8 +240,7 @@ class _TwoStageCoverageEvaluator(Evaluator):
     def _classify_input(self, case: EvaluationCase) -> str:
         """Task text passed to the classifier for semantic clarification.
 
-        Task-scoped coverage passes ``input``; source coverage overrides this to
-        ``""`` because it is task-agnostic.
+        Task coverage passes ``input`` for semantic clarification.
         """
         return case.input
 

@@ -167,8 +167,55 @@ The framework constructs each evaluator class with the shared judge.
 | `output` | Generated response being evaluated |
 | `instructions` | Optional explicit user or HITL instructions that apply to the output |
 
-`input`, `context`, and `output` are required constructor fields. A particular
-metric may use only a subset of them; `instructions` defaults to `None`.
+An `EvaluationCase` is exactly **one** logical evaluation unit. All content
+fields are optional at the model level and default to `None`; each *evaluator*
+declares which fields it actually requires (see §17), so you only supply what the
+metrics you run will use.
+
+### Structured values
+
+`input`, `context`, `output`, and `instructions` may be **structured values** —
+recursively `str`, `int`, `float`, `bool`, `None`, `dict[str, value]`, or
+`list[value]` — not just pre-rendered strings. The framework renders them to
+readable, labeled text for the judge deterministically (no LLM, no raw JSON):
+
+```python
+case = EvaluationCase(
+    context={
+        "description": "Improve customer onboarding",
+        "business_needs": [
+            "Reduce onboarding time by 25%",
+            "Retain current identity provider",
+        ],
+    },
+    output={
+        "title": "Improve onboarding workflow",
+        "success_criteria": ["Cut setup to under 10 minutes"],
+    },
+)
+```
+
+`context` above renders as:
+
+```
+Description: Improve customer onboarding
+
+Business Needs:
+- Reduce onboarding time by 25%
+- Retain current identity provider
+```
+
+Rules: dictionary insertion order is preserved, `snake_case` keys become
+`Title Case` labels (uppercase acronyms kept), scalar values render inline as
+`Label: value`, scalar lists become bullet lists, nested structures stay
+hierarchical (e.g. `Metadata:` then `  Priority: high`, and list-of-dict entries
+as `- Title: Epic`), and value text passes through unchanged.
+Unsupported objects (sets, tuples, bytes, arbitrary instances) raise a clear
+`TypeError` at case construction.
+
+> A `list` in `output` is a **single structured output**, not a request to
+> evaluate many outputs. `output=["Step 1", "Step 2"]` is one case. Use
+> `evaluate_many` / `evaluate_groups` (§10a) for many outputs.
 
 ## 6. Instruction Adherence Example
 
@@ -242,8 +289,7 @@ sentence is ignored.
 
 ```python
 case = EvaluationCase(
-    input="",                 # ignored by source coverage
-    context=document,
+    context=document,          # no input required for source coverage
     output=summary,
 )
 
@@ -278,14 +324,30 @@ faithfulness = framework.evaluate(
 )["faithfulness"]
 ```
 
-## 9. Running All Configured Metrics
+## 9. Evaluator Selection
+
+You configure evaluators **once**, in the constructor. You do not repeat them on
+every call.
+
+- **constructor `evaluators=[...]`** — the configured/available evaluator set.
+- **`evaluate(case)`** — runs *all* configured evaluators.
+- **`evaluate(case, metrics=[...])`** — optional subset filter: runs only those
+  configured evaluators.
 
 ```python
-results = framework.evaluate(case)
+framework = EvaluationFramework(
+    evaluators=[SourceCoverageEvaluator, FaithfulnessEvaluator],
+    judge=judge,
+)
+
+results = framework.evaluate(case)              # both configured evaluators
+subset = framework.evaluate(case, metrics=["faithfulness"])  # just one
 ```
 
-With no `metrics` argument, every evaluator configured on the framework runs.
-Supply `instructions` when instruction adherence should be applicable.
+`metrics=` never instantiates an evaluator that was not configured; an unknown or
+unconfigured metric name raises `KeyError`. Required-field validation (§17)
+applies only to the **selected** evaluators — a field an unselected evaluator
+would need does not block the call.
 
 ## 10. Running a Subset of Metrics
 
@@ -297,6 +359,45 @@ results = framework.evaluate(
 ```
 
 Unknown metric names raise `KeyError`.
+
+## 10a. Bulk and Grouped Evaluation
+
+`evaluate_many` runs many independent cases. Each case keeps its own validation,
+its own root `idp_eval.evaluate` trace, its own results, and its own Excel /
+Phoenix rows — there is no batch-level trace.
+
+```python
+cases = [
+    EvaluationCase(input=task1, context=theme1, output=epic1, case_id="theme-1:epic-1"),
+    EvaluationCase(input=task1, context=theme1, output=epic2, case_id="theme-1:epic-2"),
+    EvaluationCase(input=task2, context=theme2, output=epic3, case_id="theme-2:epic-3"),
+]
+
+results = framework.evaluate_many(cases)                      # all configured
+subset = framework.evaluate_many(cases, metrics=["source_coverage", "faithfulness"])
+```
+
+Failure behavior is **fail fast**: the whole batch is validated for the selected
+evaluators *before any judge call*, so a malformed later case never triggers paid
+work on earlier cases. Invalid cases raise a case-aware `ValueError` (naming the
+`case_id`) rather than being skipped or coerced to not-applicable.
+
+For a source (Theme) with several generated outputs (Epics), `evaluate_groups`
+is a thin convenience that fans out to one case per output and reuses
+`evaluate_many`:
+
+```python
+results = framework.evaluate_groups([
+    {"input": task1, "context": theme1, "outputs": [epic1, epic2], "group_id": "theme-1"},
+    {"input": task2, "context": theme2, "outputs": [epic3],        "group_id": "theme-2"},
+])
+```
+
+This produces **three independent cases / traces** (`theme-1:0`, `theme-1:1`,
+`theme-2:0`). Each output is evaluated on its own — `theme1 + [epic1, epic2]` is
+never sent as one coverage unit. Case ids come from an optional `case_ids` list,
+else `f"{group_id}:{i}"`, else `f"{group_index}:{i}"`; `group_id` is carried on
+`case.metadata` and output objects are never mutated.
 
 ## 11. Reading Results
 
@@ -468,24 +569,61 @@ for result in results.values():
     print(result.metric, result.score, result.label)
 ```
 
-## 17. Metric Input Requirements
+## 17. Required Fields by Evaluator
 
-| Metric | Fields used by the metric |
+Each evaluator declares the case fields it **requires** (validated before its
+first judge call). Fields it does not require may be omitted or left `None`.
+
+| Evaluator | Required fields |
 |---|---|
-| `faithfulness` | `input`, `context`, `output` |
-| `source_coverage` | `context`, `output` (`input` is ignored) |
-| `task_coverage` | `input`, `context`, `output` |
-| `instruction_adherence` | `instructions`, `output` |
+| `SourceCoverageEvaluator` | `context`, `output` |
+| `TaskCoverageEvaluator` | `input`, `context`, `output` |
+| `FaithfulnessEvaluator` | `context`, `output` |
+| `InstructionAdherenceEvaluator` | `instructions`, `output` |
 
-Although instruction adherence does not read `input` or `context`, callers must
-currently provide them when constructing `EvaluationCase`. Empty strings are
-appropriate when running only that metric.
+(`FaithfulnessEvaluator` also passes `input` to Phoenix when present, but does not
+require it.)
+
+**Missing / empty** required content is any of: `None`, `""`, a whitespace-only
+string, `{}`, or `[]`. Scalars such as `0` and `False` are legitimate values and
+are **not** treated as missing. When a required field is missing, the framework
+raises a `ValueError` before any judge call, e.g.:
+
+```
+TaskCoverageEvaluator requires non-empty `input`.
+
+Received:
+  input: missing
+  context: present
+  output: present
+```
+
+This required-field contract is **consistent across entry points**: it is
+enforced identically whether you call an evaluator directly
+(`SourceCoverageEvaluator(judge).evaluate(case)`), via `framework.evaluate(case)`,
+or via `framework.evaluate_many(cases)` (which pre-validates the whole batch). In
+every case validation runs before the first judge call.
+
+Distinguish two outcomes:
+
+- **Missing required field** (`None` / `""` / `{}` / `[]`) → `ValueError` before
+  any judge call.
+- **Valid required field, but the metric extracts nothing** (e.g. instructions
+  are supplied but no checkable instruction is found) → a metric-defined
+  not-applicable result (`score=None`, `label="not_applicable"`).
+
+**Extra fields are allowed.** A case may carry fields an evaluator does not use
+(so one case can run several metrics). Running `SourceCoverageEvaluator` on a case
+that also has `input` and `instructions` is valid — it consumes only `context`
+and `output`. Validation applies only to the metrics selected for the call (§9).
 
 ## 19. Error and Not-Applicable Behavior
 
-- Missing or blank instructions produce an instruction-adherence result with
-  `score=None` and `label="not_applicable"` without calling the judge.
-- An empty instruction extraction is also not applicable and skips Stage 2.
+- Missing required fields for a *selected* evaluator raise `ValueError` before any
+  judge call (fail fast) — they are never silently converted to not-applicable.
+- An empty instruction *extraction* (instructions supplied but nothing checkable
+  found) is a metric-defined not-applicable: `score=None`,
+  `label="not_applicable"`, Stage 2 skipped.
 - Coverage (`source_coverage` and `task_coverage`) is not applicable when Stage 1
   extraction identifies no items; classification is skipped and the result is
   `score=None`, `label="not_applicable"`.

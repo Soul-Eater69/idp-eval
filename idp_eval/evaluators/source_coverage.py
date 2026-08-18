@@ -27,6 +27,7 @@ from idp_eval.prompts.source_coverage_extract import (
     SOURCE_COVERAGE_EXTRACT_SCHEMA,
     render_source_coverage_extract_prompt,
 )
+from idp_eval.rendering import render_value
 
 
 class SourceCoverageEvaluator(_TwoStageCoverageEvaluator):
@@ -37,6 +38,7 @@ class SourceCoverageEvaluator(_TwoStageCoverageEvaluator):
     """
 
     name = "source_coverage"
+    required_fields = ("context", "output")
     _item_key = "source_item"
     _total_key = "total_items"
     _id_prefix = "s"
@@ -48,7 +50,9 @@ class SourceCoverageEvaluator(_TwoStageCoverageEvaluator):
 
     def _extract_requirements(self, case: EvaluationCase) -> list[dict]:
         """Stage 1: important source items from context only (no task/output)."""
-        prompt = render_source_coverage_extract_prompt(context=case.context)
+        prompt = render_source_coverage_extract_prompt(
+            context=render_value(case.context)
+        )
         with tracing.judge_span(
             f"{self.name}.extract",
             {"idp_eval.metric": self.name, "idp_eval.stage": "extract"},

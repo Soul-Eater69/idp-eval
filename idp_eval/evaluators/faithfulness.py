@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from idp_eval import tracing
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
+from idp_eval.rendering import render_value
 
 
 class FaithfulnessEvaluator(Evaluator):
@@ -29,6 +30,7 @@ class FaithfulnessEvaluator(Evaluator):
     """
 
     name = "faithfulness"
+    required_fields = ("context", "output")
 
     def __init__(self, llm):
         """Initializes the evaluator.
@@ -46,15 +48,20 @@ class FaithfulnessEvaluator(Evaluator):
         self._evaluator = PhoenixFaithfulnessEvaluator(llm=llm)
 
     def evaluate(self, case: EvaluationCase) -> EvaluationResult:
-        """Evaluates grounding for a single case."""
+        """Evaluates grounding for a single case.
+
+        Validates required fields first, so a missing ``context`` / ``output``
+        fails before the Phoenix judge call — consistent with the framework.
+        """
+        self.validate_case(case)
         with tracing.judge_span(
             "faithfulness.evaluate", {"idp_eval.metric": self.name}
         ):
             result = self._evaluator.evaluate(
                 {
-                    "input": case.input,
-                    "context": case.context,
-                    "output": case.output,
+                    "input": render_value(case.input),
+                    "context": render_value(case.context),
+                    "output": render_value(case.output),
                 }
             )[0]
 

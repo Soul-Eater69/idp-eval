@@ -8,7 +8,7 @@ output(s). Evaluation is never re-run for a second destination.
 
 from __future__ import annotations
 
-from typing import Union
+from typing import Iterable, Union
 
 from idp_eval import tracing
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
@@ -107,6 +107,34 @@ class EvaluationFramework:
         """Returns the names of all registered metrics."""
         return list(self._evaluators)
 
+    def _select(self, metrics: list[str] | None) -> list[str]:
+        """Resolves the metric subset to run against the configured evaluators.
+
+        ``None`` selects all configured evaluators. A ``metrics`` list is an
+        optional subset filter — it never instantiates unconfigured evaluators.
+
+        Raises:
+            KeyError: If a requested metric was not configured on the framework.
+        """
+        if metrics is None:
+            return list(self._evaluators)
+        for metric_name in metrics:
+            if metric_name not in self._evaluators:
+                raise KeyError(
+                    f"Unknown metric {metric_name!r}; configured metrics: "
+                    f"{sorted(self._evaluators)}"
+                )
+        return list(metrics)
+
+    def _validate_case(self, case: EvaluationCase, selected: list[str]) -> None:
+        """Level 2 validation: every selected evaluator's required fields.
+
+        Only the selected evaluators are checked, so a case missing a field an
+        unselected evaluator would need is still valid for this call.
+        """
+        for metric_name in selected:
+            self._evaluators[metric_name].validate_case(case)
+
     def evaluate(
         self,
         case: EvaluationCase,
@@ -129,13 +157,14 @@ class EvaluationFramework:
 
         Raises:
             KeyError: If a requested metric name is not registered.
+            ValueError: If the case is missing a field a selected evaluator
+                requires (raised before any judge call).
             PersistenceError: If evaluation succeeds but a configured writer
                 fails; the computed results are preserved on the exception.
         """
-        selected = metrics if metrics is not None else self.metrics
-        for metric_name in selected:
-            if metric_name not in self._evaluators:
-                raise KeyError(f"Unknown metric: {metric_name!r}")
+        selected = self._select(metrics)
+        # Level 2 validation before any trace/judge work, for selected only.
+        self._validate_case(case, selected)
 
         with tracing.case_evaluation_span(
             case.case_id, run_name, dataset_name
@@ -178,18 +207,44 @@ class EvaluationFramework:
 
         return results
 
-    def evaluate_batch(
+    def evaluate_many(
         self,
-        cases: list[EvaluationCase],
+        cases: "Iterable[EvaluationCase]",
         metrics: list[str] | None = None,
         run_name: str | None = None,
         dataset_name: str | None = None,
     ) -> list[dict[str, EvaluationResult]]:
-        """Evaluates many cases, one trace each (no batch root span).
+        """Evaluates many cases independently — one trace and result set each.
 
-        ``run_name`` / ``dataset_name`` only group the per-case traces and rows
-        via metadata.
+        Each case keeps its own :class:`EvaluationCase` validation, its own root
+        ``idp_eval.evaluate`` trace, its own metric results, and its own output
+        rows/annotations. There is no batch-level root span; ``run_name`` /
+        ``dataset_name`` only group the per-case traces and rows via metadata.
+
+        Failure behavior is **fail fast**: the whole batch is validated for the
+        selected evaluators *before any judge call*, so a malformed later case
+        never causes paid work on earlier cases. Invalid cases raise rather than
+        being silently skipped or coerced to not-applicable.
+
+        Returns:
+            One result mapping per case, in input order.
+
+        Raises:
+            KeyError: If a requested metric was not configured.
+            ValueError: If any case is missing a required field for a selected
+                evaluator; the message names the offending ``case_id`` (or index).
         """
+        case_list = list(cases)
+        selected = self._select(metrics)
+
+        # Pre-validate the entire batch before any judge work (fail fast).
+        for index, case in enumerate(case_list):
+            try:
+                self._validate_case(case, selected)
+            except ValueError as exc:
+                label = case.case_id if case.case_id is not None else f"index {index}"
+                raise ValueError(f"Case {label}: {exc}") from exc
+
         return [
             self.evaluate(
                 case,
@@ -197,8 +252,97 @@ class EvaluationFramework:
                 run_name=run_name,
                 dataset_name=dataset_name,
             )
-            for case in cases
+            for case in case_list
         ]
+
+    # Backward-compatible alias for the earlier name.
+    def evaluate_batch(
+        self,
+        cases: "Iterable[EvaluationCase]",
+        metrics: list[str] | None = None,
+        run_name: str | None = None,
+        dataset_name: str | None = None,
+    ) -> list[dict[str, EvaluationResult]]:
+        """Alias of :meth:`evaluate_many` (kept for existing callers)."""
+        return self.evaluate_many(
+            cases, metrics=metrics, run_name=run_name, dataset_name=dataset_name
+        )
+
+    def evaluate_groups(
+        self,
+        groups: "Iterable[dict]",
+        metrics: list[str] | None = None,
+        run_name: str | None = None,
+        dataset_name: str | None = None,
+    ) -> list[dict[str, EvaluationResult]]:
+        """Convenience orchestration: fan grouped outputs into single cases.
+
+        Each group is a mapping with an ``outputs`` list plus optional shared
+        ``input`` / ``context`` / ``instructions``, an optional ``group_id``, and
+        optional ``case_ids`` (aligned with ``outputs``). Every output becomes one
+        ordinary :class:`EvaluationCase` (``Theme -> [Epic1, Epic2]`` fans out to
+        two independent cases, one trace each); the fanned-out cases are then run
+        through :meth:`evaluate_many`. No evaluation logic is duplicated, and a
+        list output is never treated as multiple outputs.
+
+        Case ids: ``case_ids[i]`` if given, else ``f"{group_id}:{i}"`` when a
+        ``group_id`` is present, else ``f"{group_index}:{i}"``. ``group_id`` is
+        carried on ``case.metadata`` (never injected into prompts); output objects
+        are not mutated.
+
+        Returns:
+            One result mapping per fanned-out case, in group-then-output order.
+        """
+        cases: list[EvaluationCase] = []
+        for group_index, group in enumerate(groups):
+            cases.extend(self._fan_out_group(group, group_index))
+        return self.evaluate_many(
+            cases, metrics=metrics, run_name=run_name, dataset_name=dataset_name
+        )
+
+    @staticmethod
+    def _fan_out_group(group: dict, group_index: int) -> list[EvaluationCase]:
+        """Expands one grouped record into ordinary per-output cases."""
+        if "output" in group and "outputs" not in group:
+            raise ValueError(
+                "Grouped records use 'outputs' (a list); got singular 'output'. "
+                "Use evaluate_many for individual cases."
+            )
+        outputs = group.get("outputs")
+        if not isinstance(outputs, list) or not outputs:
+            raise ValueError("Each group must provide a non-empty 'outputs' list.")
+
+        group_id = group.get("group_id")
+        case_ids = group.get("case_ids")
+        if case_ids is not None and len(case_ids) != len(outputs):
+            raise ValueError(
+                "Group 'case_ids' length must match the number of 'outputs'."
+            )
+
+        shared = {
+            field: group[field]
+            for field in ("input", "context", "instructions")
+            if field in group
+        }
+        metadata = {"group_id": group_id} if group_id is not None else None
+
+        cases: list[EvaluationCase] = []
+        for output_index, output in enumerate(outputs):
+            if case_ids is not None:
+                case_id = case_ids[output_index]
+            elif group_id is not None:
+                case_id = f"{group_id}:{output_index}"
+            else:
+                case_id = f"{group_index}:{output_index}"
+            cases.append(
+                EvaluationCase(
+                    output=output,
+                    case_id=case_id,
+                    metadata=metadata,
+                    **shared,
+                )
+            )
+        return cases
 
     def log_evaluation(
         self,

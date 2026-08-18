@@ -222,6 +222,44 @@ results = framework.evaluate(case, metrics=["instruction_adherence"])
 
 See `example.py` for a full runnable script.
 
+### Structured values & bulk evaluation
+
+Content fields may be **structured values** (nested `dict` / `list` of scalars),
+not just strings — the framework renders them to readable labeled text for the
+judge deterministically:
+
+```python
+case = EvaluationCase(
+    context={"description": "Improve onboarding",
+             "business_needs": ["Reduce onboarding time by 25%", "Retain IdP"]},
+    output={"title": "Improve onboarding workflow", "success_criteria": ["..."]},
+)
+framework.evaluate(case)   # SourceCoverageEvaluator needs only context + output
+```
+
+A `list` in `output` is one structured output, **not** automatic bulk. For many
+outputs, use `evaluate_many` (independent case each — one trace, one result set,
+one row group) or the grouped convenience `evaluate_groups`:
+
+```python
+framework.evaluate_many([case1, case2, case3])
+
+framework.evaluate_groups([
+    {"input": task1, "context": theme1, "outputs": [epic1, epic2], "group_id": "theme-1"},
+    {"input": task2, "context": theme2, "outputs": [epic3],        "group_id": "theme-2"},
+])   # fans out to 3 independent cases: theme-1:0, theme-1:1, theme-2:0
+```
+
+Each evaluator declares its **required fields** (`SourceCoverageEvaluator`:
+`context` + `output`; `TaskCoverageEvaluator`: `input` + `context` + `output`;
+`FaithfulnessEvaluator`: `context` + `output`; `InstructionAdherenceEvaluator`:
+`instructions` + `output`). Missing required content (`None`/`""`/`{}`/`[]`) for a
+*selected* metric raises a clear `ValueError` before any judge call — consistently
+whether you call an evaluator directly or via `evaluate` / `evaluate_many` (which
+validates the whole batch up front, fail fast). Extra unused fields are fine. A
+valid field whose metric extracts nothing (e.g. no checkable instruction) is a
+metric-defined `not_applicable`, not an error.
+
 Local Phoenix tracing/annotations work with no configuration. Remote or
 authenticated Phoenix uses the standard Phoenix environment variables
 (`PHOENIX_COLLECTOR_ENDPOINT`, `PHOENIX_BASE_URL`, `PHOENIX_API_KEY`) — see the

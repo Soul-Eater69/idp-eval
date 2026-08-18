@@ -17,6 +17,7 @@ from idp_eval.prompts.coverage_classify import (
     COVERAGE_CLASSIFY_SCHEMA,
     render_coverage_classify_prompt,
 )
+from idp_eval.rendering import render_value
 from idp_eval.scoring import (
     calculate_coverage,
     coverage_label,
@@ -74,7 +75,12 @@ class _TwoStageCoverageEvaluator(Evaluator):
         self._llm = llm
 
     def evaluate(self, case: EvaluationCase) -> EvaluationResult:
-        """Evaluates coverage for one case using (at most) two judge calls."""
+        """Evaluates coverage for one case using (at most) two judge calls.
+
+        Required-field validation runs first, so a missing required field fails
+        before any judge call — identically to the framework entry point.
+        """
+        self.validate_case(case)
         requirements = self._extract_requirements(case)
 
         # No items: skip Stage 2, never divide by zero, and never report perfect
@@ -152,9 +158,9 @@ class _TwoStageCoverageEvaluator(Evaluator):
         ]
         requirements_json = json.dumps(payload, ensure_ascii=False)
         prompt = render_coverage_classify_prompt(
-            input_text=self._classify_input(case),
+            input_text=render_value(self._classify_input(case)),
             requirements_json=requirements_json,
-            output=case.output,
+            output=render_value(case.output),
         )
         with tracing.judge_span(
             f"{self.name}.classify",

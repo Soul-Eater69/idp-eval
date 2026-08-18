@@ -125,7 +125,9 @@ def test_all_violated_scores_zero():
 
 
 @pytest.mark.parametrize("instructions", [None, "", "   \n\t"])
-def test_no_instructions_is_not_applicable_without_judge_call(instructions):
+def test_missing_instructions_is_validation_error_without_judge_call(instructions):
+    # A missing/empty required field is now a validation error (not
+    # not_applicable), and no judge call is made — same as the framework path.
     judge = ScriptedJudge(AssertionError("judge must not be called"))
     case = EvaluationCase(
         input="Return exactly 3 bullet points.",
@@ -133,19 +135,22 @@ def test_no_instructions_is_not_applicable_without_judge_call(instructions):
         context="context",
         output="- one",
     )
-    result = InstructionAdherenceEvaluator(judge).evaluate(case)
-    assert result.score is None
-    assert result.label == "not_applicable"
-    assert result.details == {
-        "instruction_count": 0,
-        "followed_count": 0,
-        "violated_count": 0,
-        "instructions": [],
-    }
+    with pytest.raises(ValueError, match="requires non-empty `instructions`"):
+        InstructionAdherenceEvaluator(judge).evaluate(case)
+    assert judge.calls == []
+
+
+def test_missing_output_is_validation_error_without_judge_call():
+    judge = ScriptedJudge(AssertionError("judge must not be called"))
+    case = EvaluationCase(instructions="Use 3 bullets.", output="")
+    with pytest.raises(ValueError, match="requires non-empty `output`"):
+        InstructionAdherenceEvaluator(judge).evaluate(case)
     assert judge.calls == []
 
 
 def test_empty_extraction_is_not_applicable_and_skips_classification():
+    # Valid instructions, but extraction yields nothing checkable -> the
+    # metric-defined not_applicable (distinct from a missing required field).
     judge = ScriptedJudge(_extraction())
     result = InstructionAdherenceEvaluator(judge).evaluate(CASE)
     assert result.score is None

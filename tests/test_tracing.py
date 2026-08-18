@@ -138,13 +138,15 @@ def test_empty_instruction_extraction_only_creates_extract_span(spans):
     assert "instruction_adherence.classify" not in names
 
 
-def test_not_applicable_instruction_makes_no_judge_span(spans):
+def test_missing_instructions_fails_before_any_judge_span(spans):
     framework = EvaluationFramework(
         evaluators=[InstructionAdherenceEvaluator(ScriptedJudge())]
     )
-    # No instructions -> not_applicable -> no LLM call -> no judge span.
+    # Missing a required field -> framework validation fails fast, before any
+    # trace/judge span is created (no silent not_applicable).
     case = EvaluationCase(case_id="c", input="t", context="c", output="o")
-    framework.evaluate(case)
+    with pytest.raises(ValueError, match="requires non-empty `instructions`"):
+        framework.evaluate(case)
     assert "instruction_adherence.extract" not in _names(spans)
     assert "instruction_adherence.classify" not in _names(spans)
 

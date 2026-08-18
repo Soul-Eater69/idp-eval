@@ -25,6 +25,7 @@ from idp_eval.prompts.instruction_adherence_extract import (
     INSTRUCTION_ADHERENCE_EXTRACT_SCHEMA,
     render_instruction_adherence_extract_prompt,
 )
+from idp_eval.rendering import render_value
 from idp_eval.scoring import (
     calculate_instruction_adherence,
     instruction_adherence_label,
@@ -64,21 +65,29 @@ class InstructionAdherenceEvaluator(Evaluator):
     """
 
     name = "instruction_adherence"
+    required_fields = ("instructions", "output")
 
     def __init__(self, llm):
         """Initializes the evaluator with the shared structured-output judge."""
         self._llm = llm
 
     def evaluate(self, case: EvaluationCase) -> EvaluationResult:
-        """Evaluates instruction adherence for one case using up to two calls."""
-        if not case.instructions or not case.instructions.strip():
-            return self._not_applicable("No instructions were supplied on the case.")
+        """Evaluates instruction adherence for one case using up to two calls.
 
-        instructions = self._extract_instructions(case.instructions)
+        Required-field validation runs first: a missing/empty ``instructions``
+        (or ``output``) is a validation error before any judge call — never
+        not-applicable. Not-applicable is reserved for the metric-defined case
+        where valid instructions yield no extractable, checkable instructions.
+        """
+        self.validate_case(case)
+
+        instructions = self._extract_instructions(render_value(case.instructions))
         if not instructions:
             return self._not_applicable("No meaningful instructions were found.")
 
-        judgments = self._classify_instructions(instructions, case.output)
+        judgments = self._classify_instructions(
+            instructions, render_value(case.output)
+        )
         items = self._build_items(instructions, judgments)
         score = calculate_instruction_adherence(items)
         followed_count = sum(item["status"] == "followed" for item in items)

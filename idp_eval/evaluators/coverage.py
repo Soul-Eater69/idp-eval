@@ -23,6 +23,7 @@ from idp_eval.prompts.coverage_extract import (
     COVERAGE_EXTRACT_SCHEMA,
     render_coverage_extract_prompt,
 )
+from idp_eval.rendering import render_value
 
 
 class TaskCoverageEvaluator(_TwoStageCoverageEvaluator):
@@ -33,6 +34,7 @@ class TaskCoverageEvaluator(_TwoStageCoverageEvaluator):
     """
 
     name = "task_coverage"
+    required_fields = ("input", "context", "output")
     _item_key = "requirement"
     _total_key = "total_requirements"
     _id_prefix = "r"
@@ -45,8 +47,8 @@ class TaskCoverageEvaluator(_TwoStageCoverageEvaluator):
     def _extract_requirements(self, case: EvaluationCase) -> list[dict]:
         """Stage 1: task-relevant requirements from input + context (no output)."""
         prompt = render_coverage_extract_prompt(
-            input_text=case.input,
-            context=case.context,
+            input_text=render_value(case.input),
+            context=render_value(case.context),
         )
         with tracing.judge_span(
             f"{self.name}.extract",

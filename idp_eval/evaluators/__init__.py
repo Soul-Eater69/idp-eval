@@ -5,6 +5,10 @@ from idp_eval.evaluators.faithfulness import FaithfulnessEvaluator
 from idp_eval.evaluators.instruction_adherence import (
     InstructionAdherenceEvaluator,
 )
+from idp_eval.evaluators.retrieval import (
+    NDCGAtKEvaluator,
+    RelevanceAtKEvaluator,
+)
 from idp_eval.evaluators.source_coverage import SourceCoverageEvaluator
 
 __all__ = [
@@ -12,4 +16,6 @@ __all__ = [
     "TaskCoverageEvaluator",
     "SourceCoverageEvaluator",
     "InstructionAdherenceEvaluator",
+    "RelevanceAtKEvaluator",
+    "NDCGAtKEvaluator",
 ]

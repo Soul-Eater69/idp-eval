@@ -97,6 +97,9 @@ def test_task_empty_extraction_is_not_applicable():
         "partial_count": 0,
         "missing_count": 0,
         "items": [],
+        "final_item_count": 0,
+        "batch_count": 0,
+        "judge_call_count": 1,
     }
     assert len(judge.calls) == 1  # Stage 2 skipped
 
@@ -110,8 +113,9 @@ def test_benchmark_internal_methods_available():
     ev = TaskCoverageEvaluator(llm=judge)
     reqs = ev._extract_requirements(CASE)
     assert reqs[0]["id"] == "r1" and "requirement" in reqs[0]
-    classifications = ev._classify_requirements(CASE, reqs)
-    items = ev._build_items(reqs, classifications)
+    judgments, batch_count = ev._run_classify(CASE, reqs)
+    assert batch_count == 1
+    items = ev._build_items(reqs, judgments)
     assert items[0]["status"] == "covered"
 
 

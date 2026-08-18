@@ -357,6 +357,21 @@ _ITEM_SHEETS: dict[str, _ItemSheet] = {
     ),
 }
 
+# Retrieval metrics (relevance_at_k / ndcg_at_k) reuse the SAME per-document
+# relevance judgments, so their documents are written to one shared sheet, once
+# per case, rather than duplicated per metric. Detected structurally by a
+# ``documents`` list in details (a key no other metric uses).
+_RETRIEVAL_DOCUMENTS_SHEET = "retrieval_documents"
+_RETRIEVAL_IDENTITY_COLUMNS = ("run_name", "dataset_name", "case_id", "trace_id")
+_RETRIEVAL_DOCUMENT_COLUMNS = (
+    ("rank", "rank"),
+    ("document_id", "document_id"),
+    ("relevance_score", "relevance_score"),
+    ("relevance_label", "relevance_label"),
+    ("explanation", "explanation"),
+    ("retrieval_score", "retrieval_score"),
+)
+
 # Columns given extra width because they hold free text.
 _WIDE_COLUMNS = frozenset(
     {
@@ -394,6 +409,10 @@ class ExcelEvaluationWriter:
 
     def write(self, records: list[EvaluationRecord]) -> None:
         self._ensure_workbook()
+        # ``write`` receives one case's records, so retrieval metrics that share
+        # the same document-relevance judgments write their document rows only
+        # once (the first retrieval record in the batch).
+        retrieval_written = False
         for record in records:
             self._summary.append(
                 [
@@ -413,6 +432,8 @@ class ExcelEvaluationWriter:
                 ]
             )
             self._append_item_rows(record)
+            if not retrieval_written and self._append_retrieval_rows(record):
+                retrieval_written = True
         self._workbook.save(self._path)
 
     def _ensure_workbook(self) -> None:
@@ -447,6 +468,41 @@ class ExcelEvaluationWriter:
             ]
             row.extend(item.get(field) for _, field in spec.columns)
             sheet.append(row)
+
+    def _append_retrieval_rows(self, record: EvaluationRecord) -> bool:
+        """Writes shared retrieved-document rows once per case; returns whether it did.
+
+        Retrieval records are recognized structurally by a non-empty ``documents``
+        list of dicts with a ``rank`` (a shape unique to retrieval metrics), so
+        both ``relevance_at_k`` and ``ndcg_at_k`` map to one shared sheet without
+        duplicate rows or a metric column.
+        """
+        details = record.details
+        if not isinstance(details, dict):
+            return False
+        documents = details.get("documents")
+        if not isinstance(documents, list) or not documents:
+            return False
+        if not all(isinstance(doc, dict) and "rank" in doc for doc in documents):
+            return False
+        sheet = self._item_sheets.get(_RETRIEVAL_DOCUMENTS_SHEET)
+        if sheet is None:
+            headers = list(_RETRIEVAL_IDENTITY_COLUMNS) + [
+                column for column, _ in _RETRIEVAL_DOCUMENT_COLUMNS
+            ]
+            sheet = self._workbook.create_sheet(_RETRIEVAL_DOCUMENTS_SHEET)
+            self._init_sheet(sheet, headers)
+            self._item_sheets[_RETRIEVAL_DOCUMENTS_SHEET] = sheet
+        for doc in documents:
+            row = [
+                record.run_name,
+                record.dataset_name,
+                record.case_id,
+                record.trace_id,
+            ]
+            row.extend(doc.get(field) for _, field in _RETRIEVAL_DOCUMENT_COLUMNS)
+            sheet.append(row)
+        return True
 
     def _item_sheet(self, spec: _ItemSheet) -> Any:
         """Returns the detail sheet for ``spec``, creating it on first use."""

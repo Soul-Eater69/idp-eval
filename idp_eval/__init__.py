@@ -12,6 +12,11 @@ v1 metrics:
         (detects omissions, scoped by the task). Higher is better.
     instruction_adherence: does the output obey the explicit instructions in
         ``instructions``? Higher is better.
+    relevance_at_{k} / ndcg_at_{k}: retrieval metrics over ranked
+        ``retrieved_documents`` for a query (``input``). Relevance@K is the
+        fraction of the top-K documents that are relevant (= Precision@K under
+        binary relevance); nDCG@K is ranking quality from the same per-document
+        relevance judgments. Higher is better.
 
 Which ``EvaluationCase`` fields each metric reads:
     faithfulness: input (task) + context + output, passed to Phoenix.
@@ -21,11 +26,15 @@ Which ``EvaluationCase`` fields each metric reads:
     instruction_adherence: instructions + output. It reads only the dedicated
         ``instructions`` field as its instruction source, never ``input`` or
         ``context``.
+    relevance_at_{k} / ndcg_at_{k}: input (query) + retrieved_documents. No
+        generated output is required.
 """
 
 from idp_eval.evaluators import (
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
+    NDCGAtKEvaluator,
+    RelevanceAtKEvaluator,
     SourceCoverageEvaluator,
     TaskCoverageEvaluator,
 )
@@ -51,6 +60,8 @@ __all__ = [
     "TaskCoverageEvaluator",
     "SourceCoverageEvaluator",
     "InstructionAdherenceEvaluator",
+    "RelevanceAtKEvaluator",
+    "NDCGAtKEvaluator",
     "JudgeConfig",
     "create_judge",
     "register_tracing",

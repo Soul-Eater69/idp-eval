@@ -106,6 +106,9 @@ def test_empty_extraction_is_not_applicable_and_skips_stage_two():
         "partial_count": 0,
         "missing_count": 0,
         "items": [],
+        "final_item_count": 0,
+        "batch_count": 0,
+        "judge_call_count": 1,
     }
     assert len(judge.calls) == 1  # Stage 2 skipped
 

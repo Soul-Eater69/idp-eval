@@ -332,6 +332,68 @@ def test_no_second_retry_after_repeated_401(monkeypatch):
     assert response.status_code == 401
 
 
+def test_concurrent_401_refresh_is_safe(monkeypatch):
+    """Concurrent worker-thread requests that all hit an expired token.
+
+    The async coverage path calls the shared, synchronous gateway client from
+    worker threads. The only mutable shared state is the cached JWT
+    (``self._token``); token assignment is atomic and headers are rebuilt fresh
+    per call, so a concurrent 401 refresh is benign: each request refreshes at
+    most once and ends with a valid token. This test documents that (no lock is
+    used or needed).
+    """
+    import concurrent.futures
+    import itertools
+    import threading
+
+    counter = itertools.count()
+    lock = threading.Lock()
+    refreshes: list[int] = []
+
+    def fake_token(_config) -> str:
+        with lock:
+            n = next(counter)
+            refreshes.append(n)
+        return f"token-{n}"
+
+    monkeypatch.setattr(judge_mod, "_get_idp_token", fake_token)
+    client = _GatewayHTTPClient(_config())  # __init__ caches token-0
+
+    revoked = {"token-0"}  # the initial cached token is expired
+    seen_auth: list[str] = []
+    seen_lock = threading.Lock()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        auth = request.headers.get("Authorization", "")
+        with seen_lock:
+            seen_auth.append(auth)
+        token = auth.replace("Bearer ", "")
+        if token in revoked:
+            return httpx.Response(401, json={"error": "expired"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    client._gateway_client.close()
+    client._gateway_client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [
+                pool.submit(client.send, _openai_request({"messages": [], "i": i}))
+                for i in range(4)
+            ]
+            responses = [f.result() for f in futures]  # raises if any thread crashed
+    finally:
+        client.close()
+
+    # Every request ultimately succeeds; token state ends valid.
+    assert all(r.status_code == 200 for r in responses)
+    assert client._token not in revoked
+    # Headers are always well-formed (no corrupted/half-written token).
+    assert seen_auth and all(h.startswith("Bearer token-") for h in seen_auth)
+    # Bounded refreshes: at least one, never an uncontrolled loop (<= requests).
+    assert 1 <= len(refreshes) <= 4
+
+
 def test_choice_normalized_to_choices(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"choice": {"message": {"content": "ok"}}})

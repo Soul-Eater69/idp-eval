@@ -85,7 +85,9 @@ def test_mixed_deterministic_aggregation():
     )
     result = _run(judge)
     assert result.score == 0.625
-    assert "62.5%" in result.explanation
+    # Deterministic compact summary (2 covered, 1 partial, 1 missing of 4).
+    assert "2 of 4" in result.explanation
+    assert "1 partial and 1 missing" in result.explanation
     assert [i["status"] for i in result.details["items"]] == [
         "covered",
         "missing",
@@ -154,6 +156,9 @@ def test_empty_extraction_is_not_applicable_and_skips_stage_two():
         "partial_count": 0,
         "missing_count": 0,
         "items": [],
+        "final_item_count": 0,
+        "batch_count": 0,
+        "judge_call_count": 1,
     }
     # Stage 2 was never called.
     assert len(judge.calls) == 1

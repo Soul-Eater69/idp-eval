@@ -1,12 +1,14 @@
 """Deterministic scoring functions.
 
 The judge LLM classifies semantics (covered / partial / missing for coverage,
-followed / violated for instruction adherence). Python turns those
-classifications into numbers. Never ask the LLM to produce the final score
-directly.
+followed / violated for instruction adherence, relevant / unrelated per document
+for retrieval). Python turns those classifications into numbers. Never ask the
+LLM to produce the final score directly.
 """
 
 from __future__ import annotations
+
+import math
 
 # Semantic weights for coverage.
 COVERAGE_VALUES = {
@@ -169,3 +171,87 @@ def instruction_adherence_label(score: float) -> str:
     if score <= 0.0:
         return "violated"
     return "violations_present"
+
+
+# --- retrieval metrics ------------------------------------------------------
+#
+# Both retrieval metrics consume the SAME per-document relevance scores (one per
+# top-K document, in rank order). The LLM produces only per-document relevance;
+# these functions turn that into the metric numbers. The scores may be binary
+# (Phoenix's DocumentRelevanceEvaluator is binary today) or graded in ``[0, 1]``
+# — the math below works for both, so graded relevance needs no formula change.
+
+
+def relevance_at_k(relevance_scores: list[float]) -> float:
+    """Mean relevance over the already-sliced top-K documents.
+
+    ``relevance_scores`` must already be the top-``effective_k`` scores in rank
+    order. Under binary relevance this is exactly Precision@K
+    (relevant count / evaluated top-K count).
+
+    Raises:
+        ValueError: If the list is empty (the caller handles zero documents as
+            not-applicable, so this should never be reached with an empty list).
+    """
+    if not relevance_scores:
+        raise ValueError("relevance_at_k requires at least one relevance score.")
+    return sum(relevance_scores) / len(relevance_scores)
+
+
+def dcg(relevance_scores: list[float]) -> float:
+    """Discounted cumulative gain with ranks starting at 1.
+
+    ``DCG = sum(rel_i / log2(rank_i + 1))`` so the rank-1 document is undiscounted
+    (``log2(2) = 1``). Works for binary or graded relevance.
+    """
+    return sum(
+        rel / math.log2(rank + 1)
+        for rank, rel in enumerate(relevance_scores, start=1)
+    )
+
+
+def ndcg_at_k(relevance_scores: list[float]) -> tuple[float, float, float]:
+    """Normalized DCG over the already-sliced top-K scores.
+
+    Returns ``(ndcg, dcg, idcg)``. IDCG is the DCG of the same scores sorted
+    descending (the ideal ranking). When IDCG is 0 (no retrieved document was
+    relevant) nDCG is defined as ``0.0`` rather than raising on divide-by-zero.
+
+    Raises:
+        ValueError: If the list is empty (zero documents is handled upstream as
+            not-applicable).
+    """
+    if not relevance_scores:
+        raise ValueError("ndcg_at_k requires at least one relevance score.")
+    actual = dcg(relevance_scores)
+    ideal = dcg(sorted(relevance_scores, reverse=True))
+    if ideal == 0:
+        return 0.0, actual, ideal
+    return actual / ideal, actual, ideal
+
+
+def relevance_at_k_label(score: float) -> str:
+    """Descriptive Relevance@K label derived from the fraction relevant.
+
+    ``1.0`` -> "all_relevant", ``0.0`` -> "none_relevant", between ->
+    "partially_relevant". Not-applicable (no documents) is labeled by the
+    evaluator.
+    """
+    if score >= 1.0:
+        return "all_relevant"
+    if score <= 0.0:
+        return "none_relevant"
+    return "partially_relevant"
+
+
+def ndcg_at_k_label(score: float) -> str:
+    """Descriptive nDCG@K label derived from the ranking quality.
+
+    ``1.0`` -> "ideal_ranking" (relevant docs ranked first), ``0.0`` ->
+    "no_relevant_retrieved" (IDCG is 0), between -> "suboptimal_ranking".
+    """
+    if score >= 1.0:
+        return "ideal_ranking"
+    if score <= 0.0:
+        return "no_relevant_retrieved"
+    return "suboptimal_ranking"

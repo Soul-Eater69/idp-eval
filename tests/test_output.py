@@ -312,6 +312,95 @@ def test_workbook_is_valid_and_reloadable(tmp_path):
     assert summary["A1"].font.bold is True  # bold header
 
 
+# --- Excel + coverage verbosity / async bulk --------------------------------
+
+
+def _stateless_source_judge(*, reasons):
+    """Extraction returns 2 items; item 1 partial, item 2 missing (score 0.25)."""
+
+    class _Judge:
+        def generate_object(self, prompt, schema):
+            user = prompt[1]["content"]
+            if "[REQUIREMENTS]" not in user:
+                return {"source_items": [{"source_item": "Keep IdP"},
+                                         {"source_item": "Support SSO"}]}
+            answers = [
+                {"id": "s1", "meaningfully_present": True, "fully_present": False},
+                {"id": "s2", "meaningfully_present": False, "fully_present": False},
+            ]
+            if reasons:
+                answers[0]["reason"] = "qualifier missing"
+                answers[1]["reason"] = "SSO absent"
+            return {"requirements": answers}
+
+    return _Judge()
+
+
+def test_excel_reason_blank_in_compact_mode(tmp_path):
+    path = tmp_path / "compact.xlsx"
+    framework = EvaluationFramework(
+        evaluators=[SourceCoverageEvaluator(_stateless_source_judge(reasons=False))],
+        output="excel",
+        excel_path=str(path),
+    )
+    framework.evaluate(EvaluationCase(context="c", output="o", case_id="k1"))
+    rows = _rows_as_dicts(path, "source_coverage_items")
+    assert [r["status"] for r in rows] == ["partial", "missing"]
+    assert all(r["reason"] in (None, "") for r in rows)  # blank, not invented
+
+
+def test_excel_reason_written_in_verbose_mode(tmp_path):
+    path = tmp_path / "verbose.xlsx"
+    framework = EvaluationFramework(
+        evaluators=[
+            SourceCoverageEvaluator(
+                _stateless_source_judge(reasons=True), verbose=True
+            )
+        ],
+        output="excel",
+        excel_path=str(path),
+    )
+    framework.evaluate(EvaluationCase(context="c", output="o", case_id="k1"))
+    summary = _rows_as_dicts(path, "evaluations")
+    assert summary[0]["score"] == 0.25  # same score regardless of verbosity
+    rows = _rows_as_dicts(path, "source_coverage_items")
+    assert rows[0]["reason"] == "qualifier missing"
+    assert rows[1]["reason"] == "SSO absent"
+
+
+def test_async_evaluate_many_writes_per_case_rows(tmp_path):
+    import asyncio
+
+    class _AllCovered:
+        def generate_object(self, prompt, schema):
+            user = prompt[1]["content"]
+            if "[REQUIREMENTS]" not in user:
+                return {"source_items": [{"source_item": "A"}, {"source_item": "B"}]}
+            block = user.split("[REQUIREMENTS]\n", 1)[1].split("\n\n[OUTPUT]", 1)[0]
+            reqs = json.loads(block)
+            return {"requirements": [
+                {"id": r["id"], "meaningfully_present": True, "fully_present": True}
+                for r in reqs
+            ]}
+
+    path = tmp_path / "async.xlsx"
+    framework = EvaluationFramework(
+        evaluators=[SourceCoverageEvaluator(_AllCovered())],
+        output="excel",
+        excel_path=str(path),
+    )
+    cases = [
+        EvaluationCase(context="c", output="o", case_id="a1"),
+        EvaluationCase(context="c", output="o", case_id="a2"),
+    ]
+    asyncio.run(framework.a_evaluate_many(cases))
+
+    summary = _rows_as_dicts(path, "evaluations")
+    assert [r["case_id"] for r in summary] == ["a1", "a2"]  # order preserved
+    item_rows = _rows_as_dicts(path, "source_coverage_items")
+    assert [r["case_id"] for r in item_rows] == ["a1", "a1", "a2", "a2"]
+
+
 class _RecordingWriter:
     def __init__(self):
         self.writes = 0

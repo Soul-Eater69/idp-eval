@@ -8,6 +8,7 @@ output(s). Evaluation is never re-run for a second destination.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Iterable, Union
 
 from idp_eval import tracing
@@ -22,6 +23,10 @@ from idp_eval.output import (
 # An entry may be an evaluator class (constructed with the shared judge) or an
 # already-constructed evaluator instance (backward-compatible).
 EvaluatorEntry = Union[type[Evaluator], Evaluator]
+
+# Default global cap on simultaneous judge calls in an async evaluation run. The
+# corporate gateway does not accept unlimited concurrency; this bounds it.
+DEFAULT_MAX_CONCURRENCY = 4
 
 
 class EvaluationFramework:
@@ -95,6 +100,14 @@ class EvaluationFramework:
                 ) from exc
 
         if isinstance(entry, Evaluator):
+            # Instances constructed without a judge (e.g. RelevanceAtKEvaluator(k=5)
+            # needs its ``k`` at construction, so it is passed as an instance) can
+            # receive the shared judge here. ``_bind_judge`` only binds when unset,
+            # so an explicitly-provided judge always wins.
+            if judge is not None:
+                bind_judge = getattr(entry, "_bind_judge", None)
+                if callable(bind_judge):
+                    bind_judge(judge)
             return entry
 
         raise TypeError(
@@ -125,6 +138,42 @@ class EvaluationFramework:
                     f"{sorted(self._evaluators)}"
                 )
         return list(metrics)
+
+    @staticmethod
+    def _validate_max_concurrency(max_concurrency: int) -> None:
+        """Rejects a non-positive-integer concurrency limit with a clear error."""
+        if (
+            isinstance(max_concurrency, bool)
+            or not isinstance(max_concurrency, int)
+            or max_concurrency < 1
+        ):
+            raise ValueError(
+                "max_concurrency must be a positive integer, got "
+                f"{max_concurrency!r}."
+            )
+
+    def _retrieval_metrics(self, selected: list[str]) -> list[str]:
+        """Selected metric names that share the per-case document-relevance pass."""
+        return [
+            name
+            for name in selected
+            if getattr(self._evaluators[name], "uses_retrieval_relevance", False)
+        ]
+
+    def _build_relevance_pass(self, case: EvaluationCase, retrieval: list[str]):
+        """Builds the shared relevance pass and the deepest rank it must judge.
+
+        Returns ``(pass, max_depth)``. The lead retrieval evaluator provides the
+        relevance judge (retrieval metrics are configured with the same judge);
+        ``max_depth`` is the deepest ``effective_k`` across the selected retrieval
+        metrics, so documents are judged once up to that rank and reused.
+        """
+        lead = self._evaluators[retrieval[0]]
+        relevance_pass = lead._build_relevance_pass(case)
+        max_depth = max(
+            self._evaluators[name]._relevance_depth(case) for name in retrieval
+        )
+        return relevance_pass, max_depth
 
     def _validate_case(self, case: EvaluationCase, selected: list[str]) -> None:
         """Level 2 validation: every selected evaluator's required fields.
@@ -169,11 +218,27 @@ class EvaluationFramework:
         with tracing.case_evaluation_span(
             case.case_id, run_name, dataset_name
         ) as handle:
+            # One shared document-relevance pass for all selected retrieval
+            # metrics (judged once up to the deepest required rank).
+            retrieval = self._retrieval_metrics(selected)
+            relevance_pass = None
+            if retrieval:
+                relevance_pass, max_depth = self._build_relevance_pass(
+                    case, retrieval
+                )
+                relevance_pass.run(max_depth)
+
             results: dict[str, EvaluationResult] = {}
             for metric_name in selected:
-                results[metric_name] = self._evaluators[metric_name].evaluate(
-                    case
-                )
+                evaluator = self._evaluators[metric_name]
+                if relevance_pass is not None and getattr(
+                    evaluator, "uses_retrieval_relevance", False
+                ):
+                    results[metric_name] = evaluator.evaluate_shared(
+                        case, relevance_pass
+                    )
+                else:
+                    results[metric_name] = evaluator.evaluate(case)
 
             # Supplemental, compact result attributes on the open root span
             # (native Phoenix annotations, below, are the canonical record).
@@ -191,7 +256,25 @@ class EvaluationFramework:
 
         # The root span is now closed/exported; persist native annotations
         # against its span id.
-        records = [
+        records = self._build_records(
+            case, selected, results, run_name, dataset_name, trace_id, span_id
+        )
+        self._publish(records, results)
+
+        return results
+
+    def _build_records(
+        self,
+        case: EvaluationCase,
+        selected: list[str],
+        results: dict[str, EvaluationResult],
+        run_name: str | None,
+        dataset_name: str | None,
+        trace_id: str | None,
+        span_id: str | None,
+    ) -> list[EvaluationRecord]:
+        """Normalizes one case's results into publishable records (in order)."""
+        return [
             EvaluationRecord.from_result(
                 results[name],
                 annotator_kind=self._evaluators[name].annotator_kind,
@@ -203,9 +286,6 @@ class EvaluationFramework:
             )
             for name in selected
         ]
-        self._publish(records, results)
-
-        return results
 
     def evaluate_many(
         self,
@@ -343,6 +423,149 @@ class EvaluationFramework:
                 )
             )
         return cases
+
+    # --- async evaluation ---------------------------------------------------
+
+    async def a_evaluate(
+        self,
+        case: EvaluationCase,
+        metrics: list[str] | None = None,
+        run_name: str | None = None,
+        dataset_name: str | None = None,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+    ) -> dict[str, EvaluationResult]:
+        """Async counterpart of :meth:`evaluate` for one case (one trace).
+
+        Independent Stage-2 classification batches within a coverage evaluator may
+        overlap, bounded by a per-call global judge-concurrency limiter. Evaluators
+        without an async path (faithfulness, instruction adherence) run their sync
+        ``evaluate`` in a worker thread under the same limiter; their scoring is
+        unchanged. Validation still runs before any judge call.
+        """
+        self._validate_max_concurrency(max_concurrency)
+        selected = self._select(metrics)
+        self._validate_case(case, selected)
+        limiter = asyncio.Semaphore(max_concurrency)
+        results, records = await self._a_run_case(
+            case, selected, run_name, dataset_name, limiter
+        )
+        self._publish(records, results)
+        return results
+
+    async def a_evaluate_many(
+        self,
+        cases: "Iterable[EvaluationCase]",
+        metrics: list[str] | None = None,
+        run_name: str | None = None,
+        dataset_name: str | None = None,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+    ) -> list[dict[str, EvaluationResult]]:
+        """Async counterpart of :meth:`evaluate_many`: cases run concurrently.
+
+        Each case is independent (own validation, own root ``idp_eval.evaluate``
+        trace, own results/rows/annotations). A single shared
+        ``asyncio.Semaphore(max_concurrency)`` caps total simultaneous judge calls
+        across every case and every classification batch, so N cases x M batches
+        never floods the gateway.
+
+        Failure behavior mirrors :meth:`evaluate_many`: the whole batch is
+        validated up front (fail fast, case-aware error). Results are returned in
+        input order; persistence happens serially after evaluation to avoid
+        concurrent writer mutation.
+        """
+        self._validate_max_concurrency(max_concurrency)
+        case_list = list(cases)
+        selected = self._select(metrics)
+
+        for index, case in enumerate(case_list):
+            try:
+                self._validate_case(case, selected)
+            except ValueError as exc:
+                label = case.case_id if case.case_id is not None else f"index {index}"
+                raise ValueError(f"Case {label}: {exc}") from exc
+
+        limiter = asyncio.Semaphore(max_concurrency)
+        pairs = await asyncio.gather(
+            *(
+                self._a_run_case(case, selected, run_name, dataset_name, limiter)
+                for case in case_list
+            )
+        )
+
+        # Ordered, serial persistence (writers are not concurrency-safe).
+        results_list: list[dict[str, EvaluationResult]] = []
+        for results, records in pairs:
+            self._publish(records, results)
+            results_list.append(results)
+        return results_list
+
+    async def _a_run_case(
+        self,
+        case: EvaluationCase,
+        selected: list[str],
+        run_name: str | None,
+        dataset_name: str | None,
+        limiter: asyncio.Semaphore,
+    ) -> tuple[dict[str, EvaluationResult], list[EvaluationRecord]]:
+        """Runs one case's selected evaluators within its own root trace.
+
+        Returns the results and the (not-yet-persisted) records so the caller can
+        persist serially. Concurrent cases each get an independent root span/trace
+        because each is a separate task with its own OpenTelemetry context.
+        """
+        with tracing.case_evaluation_span(
+            case.case_id, run_name, dataset_name
+        ) as handle:
+            # One shared document-relevance pass for all selected retrieval
+            # metrics; documents are judged concurrently under the same limiter.
+            retrieval = self._retrieval_metrics(selected)
+            relevance_pass = None
+            if retrieval:
+                relevance_pass, max_depth = self._build_relevance_pass(
+                    case, retrieval
+                )
+                await relevance_pass.a_run(max_depth, limiter)
+
+            results: dict[str, EvaluationResult] = {}
+            for metric_name in selected:
+                evaluator = self._evaluators[metric_name]
+                if relevance_pass is not None and getattr(
+                    evaluator, "uses_retrieval_relevance", False
+                ):
+                    # Deterministic: reads the shared judgments, no judge calls.
+                    results[metric_name] = evaluator.evaluate_shared(
+                        case, relevance_pass
+                    )
+                    continue
+                a_evaluate = getattr(evaluator, "a_evaluate", None)
+                if a_evaluate is not None:
+                    results[metric_name] = await a_evaluate(
+                        case, judge_limiter=limiter
+                    )
+                else:
+                    # No async path: run sync evaluate in a worker thread under
+                    # the shared limiter (its judge calls stay bounded).
+                    async with limiter:
+                        results[metric_name] = await asyncio.to_thread(
+                            evaluator.evaluate, case
+                        )
+
+            for metric_name in selected:
+                result = results[metric_name]
+                tracing.annotate_current_span(
+                    metric=result.metric,
+                    score=result.score,
+                    label=result.label,
+                    explanation=result.explanation,
+                    annotator_kind=self._evaluators[metric_name].annotator_kind,
+                )
+            span_id = handle.span_id
+            trace_id = handle.trace_id
+
+        records = self._build_records(
+            case, selected, results, run_name, dataset_name, trace_id, span_id
+        )
+        return results, records
 
     def log_evaluation(
         self,

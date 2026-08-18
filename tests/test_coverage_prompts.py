@@ -6,6 +6,8 @@ from idp_eval.prompts.coverage_classify import (
     COVERAGE_CLASSIFY_PROMPT,
     COVERAGE_CLASSIFY_PROMPT_V1,
     COVERAGE_CLASSIFY_SCHEMA,
+    COVERAGE_CLASSIFY_SCHEMA_COMPACT,
+    COVERAGE_CLASSIFY_SCHEMA_VERBOSE,
     render_coverage_classify_prompt,
 )
 from idp_eval.prompts.coverage_extract import (
@@ -29,10 +31,20 @@ def test_extract_system_forbids_grading_and_output():
     system = " ".join(COVERAGE_EXTRACT_PROMPT[0]["content"].split())
     assert "NOT given any generated output" in system
     assert "must NOT grade" in system
-    assert "atomic" in system
     # Extraction must not ask for a numeric verdict.
     assert "score" in system  # only as part of "Do NOT return any status, score..."
     assert "Do NOT return any status, score, percentage" in system
+
+
+def test_extract_system_instructs_semantic_consolidation_without_hard_limit():
+    system = " ".join(COVERAGE_EXTRACT_PROMPT[0]["content"].split())
+    # Consolidation guidance present.
+    assert "Consolidate" in system
+    assert "independently" in system  # independently-satisfiable stay separate
+    # No hard maximum on the denominator.
+    assert "no target or maximum number" in system
+    # Extraction stays diagnostic-free (no rationale/evidence requested).
+    assert "rationale" in system and "evidence" in system
 
 
 def test_extract_render_has_input_context_not_output():
@@ -94,19 +106,40 @@ def test_classify_render_does_not_mutate_template():
     assert COVERAGE_CLASSIFY_PROMPT == before
 
 
-def test_classify_schema_requires_booleans_and_id():
+def test_classify_default_schema_is_compact_no_reason():
+    # Default (compact) schema: only id + the two booleans, no per-item reason.
+    assert COVERAGE_CLASSIFY_SCHEMA is COVERAGE_CLASSIFY_SCHEMA_COMPACT
     item = COVERAGE_CLASSIFY_SCHEMA["properties"]["requirements"]["items"]
+    assert set(item["properties"]) == {
+        "id",
+        "meaningfully_present",
+        "fully_present",
+    }
+    assert item["required"] == ["id", "meaningfully_present", "fully_present"]
+    assert item["properties"]["meaningfully_present"]["type"] == "boolean"
+    assert item["properties"]["fully_present"]["type"] == "boolean"
+
+
+def test_classify_verbose_schema_adds_optional_reason():
+    item = COVERAGE_CLASSIFY_SCHEMA_VERBOSE["properties"]["requirements"]["items"]
     assert set(item["properties"]) == {
         "id",
         "meaningfully_present",
         "fully_present",
         "reason",
     }
-    assert item["required"] == [
-        "id",
-        "meaningfully_present",
-        "fully_present",
-        "reason",
-    ]
-    assert item["properties"]["meaningfully_present"]["type"] == "boolean"
-    assert item["properties"]["fully_present"]["type"] == "boolean"
+    # reason is optional (only partial/missing items carry it).
+    assert item["required"] == ["id", "meaningfully_present", "fully_present"]
+
+
+def test_classify_compact_prompt_forbids_reason_verbose_requests_it():
+    compact = render_coverage_classify_prompt(
+        input_text="t", requirements_json="[]", output="o"
+    )[0]["content"]
+    verbose = render_coverage_classify_prompt(
+        input_text="t", requirements_json="[]", output="o", verbose=True
+    )[0]["content"]
+    assert "Do NOT return any\nreason" in compact or "Do NOT return any reason" in (
+        " ".join(compact.split())
+    )
+    assert "reason" in verbose and "one-sentence" in verbose

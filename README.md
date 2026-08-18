@@ -25,6 +25,8 @@ meaning. `instruction_adherence` reads `instructions` and never falls back to
 | `source_coverage`       | How much of the **whole source** reached the output? | `context -> output` | higher |
 | `task_coverage`         | How much of the **task-relevant** source reached the output? | `input + context -> output` | higher |
 | `instruction_adherence` | Did the output obey the supplied explicit instructions? | `instructions -> output` | higher |
+| `relevance_at_{k}`      | What fraction of the top-K retrieved docs are relevant? (= Precision@K, binary) | `query -> retrieved docs` | higher |
+| `ndcg_at_{k}`           | How well are relevant docs ranked in the top K? (binary-relevance nDCG) | `query -> retrieved docs` | higher |
 
 Complementary questions:
 
@@ -32,6 +34,19 @@ Complementary questions:
 - **Source coverage** — did the output **OMIT** important information from the whole source?
 - **Task coverage** — did the output **OMIT** source information relevant to the task?
 - **Instruction Adherence** — did the output **OBEY** the supplied explicit instructions?
+- **Relevance@K / nDCG@K** — are the **RETRIEVED** documents relevant, and well **RANKED**?
+
+### Retrieval metrics
+
+`RelevanceAtKEvaluator(k)` and `NDCGAtKEvaluator(k)` evaluate ranked
+`retrieved_documents` for a query (`input`); list order is the retrieval rank, and
+no generated `output` is required. Per-document relevance uses Phoenix's modern
+`DocumentRelevanceEvaluator` (binary relevant/unrelated), so Relevance@K equals
+**Precision@K** and nDCG v1 is **binary-relevance** nDCG (computed deterministically
+in Python — no extra LLM call). Both metrics **share one document-relevance pass**
+(judged once up to the deepest selected K), run documents concurrently on the async
+path, and write a single shared `retrieval_documents` Excel sheet. See
+`docs/SETUP_AND_USAGE.md` §8a.
 
 `source_coverage` and `task_coverage` share the same two-stage extract→classify
 mechanics and `covered`/`partial`/`missing` = `1.0`/`0.5`/`0.0` scoring; they
@@ -259,6 +274,29 @@ whether you call an evaluator directly or via `evaluate` / `evaluate_many` (whic
 validates the whole batch up front, fail fast). Extra unused fields are fine. A
 valid field whose metric extracts nothing (e.g. no checkable instruction) is a
 metric-defined `not_applicable`, not an error.
+
+### Coverage performance
+
+Both coverage evaluators stay two-stage, with unchanged scoring semantics, but are
+tuned for latency and to reduce the risk of a request exceeding the gateway
+timeout (a mitigation, not a guarantee):
+
+- **Compact by default** — Stage 2 returns only booleans per item and
+  `result.explanation` is a deterministic Python summary; pass `verbose=True` for
+  per-item judge reasons on partial/missing items (diagnostics only, identical
+  score/label/statuses).
+- **Adaptive Stage-2 batching** — a large denominator is split into batches
+  (`classification_batch_size`, an operational request-size control, **default
+  12**) and merged by stable id; batching never truncates the denominator or
+  changes the score, and may increase total request count (1 extraction + one per
+  batch).
+- **Async bulk evaluation** — `await framework.a_evaluate_many(cases,
+  max_concurrency=4)` runs independent cases (and independent batches)
+  concurrently under one global judge-concurrency cap; each case keeps its own
+  trace/results/rows and errors propagate (no swallowing, no auto-retries). Sync
+  APIs are unchanged.
+
+See `docs/SETUP_AND_USAGE.md` §7a–7b.
 
 Local Phoenix tracing/annotations work with no configuration. Remote or
 authenticated Phoenix uses the standard Phoenix environment variables

@@ -51,6 +51,12 @@ class EvaluationCase:
         case_id: Optional identifier for tracing and reporting.
         metadata: Optional free-form metadata carried alongside the case. Never
             injected into evaluator prompts.
+        retrieved_documents: Optional ordered list of retrieved documents for the
+            retrieval metrics (``relevance_at_k`` / ``ndcg_at_k``). **List order
+            is the retrieval rank.** Each entry is a document string or a mapping
+            with a text field (default key ``"text"``) plus optional
+            ``document_id`` and ``score`` (similarity) metadata. Used only by the
+            retrieval evaluators; other metrics ignore it.
     """
 
     input: StructuredValue = None
@@ -59,11 +65,18 @@ class EvaluationCase:
     instructions: StructuredValue = None
     case_id: str | None = None
     metadata: dict[str, Any] | None = None
+    retrieved_documents: StructuredValue = None
 
     def __post_init__(self) -> None:
         """Structural (Level 1) validation of the structured content fields."""
         for name in _CONTENT_FIELDS:
             validate_structured_value(getattr(self, name), f"EvaluationCase.{name}")
+        # Retrieved documents are structured values too (list of str/dict), but
+        # are not rendered like the content fields — they feed the relevance
+        # judge as individual document texts.
+        validate_structured_value(
+            self.retrieved_documents, "EvaluationCase.retrieved_documents"
+        )
 
 
 @dataclass

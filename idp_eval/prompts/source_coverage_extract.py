@@ -26,22 +26,35 @@ WHAT COUNTS
 An item is materially important if omitting it would change the meaning, an
 obligation, a decision, a constraint, a prohibition, a dependency, a measurable
 target, an actor, or an expected outcome. Extract only what the SOURCE states.
+There is no target or maximum number of items; do not drop a genuinely important
+item just because the source is large.
 
 RULES
 - Preserve material qualifiers: numbers, percentages, limits, thresholds,
   conditions, timing, actors/roles, prohibitions, and dependencies.
-- Split independently meaningful items when scoring them separately would be
-  useful; do not fragment one item into meaningless lexical pieces.
+- Consolidate closely related statements that express one underlying item. Merge
+  an obligation with its own qualifiers, limits, conditions, thresholds, or
+  dependent constraints into a single item. Do NOT split an item merely because
+  it carries several qualifiers. This is consolidation, NOT summarization: never
+  drop a materially distinct item to shorten the list. There is no target and no
+  maximum count.
+- Keep items SEPARATE only when they are independently satisfiable. Example:
+  "Reduce onboarding time by 25%." and "Support French localization." are two
+  items; but "Retain the existing identity provider while preserving SSO
+  continuity and avoiding user re-registration." is ONE item even if stated
+  across several sentences, because those parts are one underlying obligation.
+- Do NOT fragment one item into meaningless lexical pieces.
 - Do NOT emit semantic duplicates or synonym restatements of an already-listed
   item, and do NOT emit a broad umbrella item alongside the specific items that
   already represent it.
-- Do NOT extract trivial or background filler.
+- Exclude repetition, examples, background commentary, and trivial or incidental
+  filler.
 - Never invent an item that is not supported by the SOURCE.
-- There is no target number of items; do not drop a genuinely important item.
 
 OUTPUT
 Return only the list of source item strings in the structured schema. Do NOT
-return any status, score, percentage, comparison, or confidence.\
+return any status, score, percentage, comparison, rationale, evidence, or
+confidence.\
 """
 
 _SOURCE_COVERAGE_EXTRACT_USER_TEMPLATE_V1 = """\

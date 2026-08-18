@@ -120,6 +120,25 @@ def judge_span(
         yield
 
 
+def set_current_span_attributes(attributes: dict[str, Any]) -> None:
+    """Sets compact diagnostic attributes on the current span (safe no-op).
+
+    Used for coverage instrumentation (item counts, batch counts, latencies).
+    Values must be OTel-safe scalars (str/bool/int/float). ``None`` values are
+    skipped. No-op when tracing is unavailable or the current span is
+    non-recording.
+    """
+    trace = _trace_api()
+    if trace is None:
+        return
+    span = trace.get_current_span()
+    if span is None:
+        return
+    for key, value in attributes.items():
+        if value is not None:
+            span.set_attribute(key, value)
+
+
 def annotate_current_span(
     metric: str,
     score: float | None,

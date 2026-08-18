@@ -306,6 +306,96 @@ summarization, document compression, and generic source-to-output transforms.
 Details use `source_item` / `total_items`; task coverage details use `requirement`
 / `total_requirements`. The score means the same for both.
 
+### 7a. Coverage performance and options
+
+Both coverage evaluators keep the validated two-stage design (output-isolated
+extraction, then fixed-denominator classification, then a deterministic Python
+mean of covered=1.0 / partial=0.5 / missing=0.0). Several options make it
+practical at scale without changing those semantics:
+
+- **Semantic consolidation (Stage 1).** Extraction produces every materially
+  distinct, independently checkable item, with **no hard maximum** — a large
+  source is never truncated. Closely related statements that form one underlying
+  requirement (an obligation plus its qualifiers/limits/dependencies) are merged
+  into one item, while independently satisfiable obligations stay separate. This
+  keeps the denominator meaningful instead of fragmented.
+
+- **Compact output by default (`verbose=False`).** Stage 2 returns only the two
+  booleans per item (no per-item prose). `result.explanation` is a **deterministic
+  Python summary**, not a judge rationale, and needs no extra LLM call — e.g. "All
+  8 source items are fully represented.", "None of the 6 source items are
+  represented.", or "10 of 15 source items are fully covered; 3 partial and 2
+  missing.".
+
+- **`verbose=True` diagnostics.** Opt in to item-level *semantic reasons from the
+  judge* for partial/missing items:
+
+  ```python
+  SourceCoverageEvaluator(verbose=True)   # or TaskCoverageEvaluator(verbose=True)
+  ```
+
+  Verbose changes **diagnostics only** — the extracted denominator, item ids, the
+  `meaningfully_present` / `fully_present` booleans, statuses, item scores, overall
+  score, and label are identical to `verbose=False`. In Excel, the `reason` column
+  is blank in compact mode and populated (partial/missing) in verbose mode.
+
+- **Adaptive Stage-2 batching.** A large denominator is split into batches of
+  `classification_batch_size` (**default 12**) so no single classification request
+  carries the whole denominator. `classification_batch_size` is an *operational
+  request-size control* — it is **not** the same as the denominator (the semantic
+  count of coverage items), and it never truncates or caps the denominator.
+  Batching reduces the risk of a classification request exceeding the gateway
+  timeout, but is a mitigation, not a guarantee (latency also depends on model
+  load and input/output length). Batches are merged by stable id; batch boundaries
+  have **no** effect on the score:
+
+  ```python
+  SourceCoverageEvaluator(classification_batch_size=12)  # must be a positive int
+  ```
+
+  Batching can *increase* total request count for large denominators — e.g. 27
+  items with `classification_batch_size=12` is 1 extraction + 3 classification
+  requests = 4 judge calls. That is intentional: smaller, parallelizable requests
+  over minimum call count.
+
+- **Diagnostics.** Scored `details` include `final_item_count`, `batch_count`,
+  `batch_size`, `judge_call_count` (`1 + batch_count`; `1` for an empty
+  extraction), `verbose`, `large_denominator` (a soft flag when items > 20; never
+  a cutoff, scoring rule, or failure), and `extract_ms` / `classify_ms` /
+  `total_ms`. The root `idp_eval.evaluate` span carries matching `coverage.*`
+  attributes; batched runs add `source_coverage.classify.batch` /
+  `task_coverage.classify.batch` child spans (with `coverage.batch_index`) under
+  the existing `*.classify` span.
+
+### 7b. Async coverage evaluation
+
+Independent cases (and, within a case, independent Stage-2 batches) can run
+concurrently, bounded by a single global judge-concurrency limiter. Extraction
+and classification for one case stay dependent (extract then classify).
+
+```python
+results = await framework.a_evaluate(case)                      # one case
+results = await framework.a_evaluate_many(cases, max_concurrency=4)  # many cases
+```
+
+`max_concurrency` (default 4; must be a positive integer) caps total simultaneous
+judge calls across every case and every batch — one shared limiter for the whole
+operation, so N cases × M batches never floods the gateway. Each case still gets
+its own root `idp_eval.evaluate` trace, its own results, and its own Excel/Phoenix
+rows (persistence happens serially after evaluation, so writers are never mutated
+concurrently). If one case/evaluator raises (e.g. a gateway timeout), the whole
+`a_evaluate_many` operation fails clearly — errors are never swallowed and a
+timeout is never turned into `not_applicable` (that status is reserved for a valid
+input that extracts nothing). The synchronous `evaluate` / `evaluate_many` /
+`evaluate_groups` APIs are unchanged and remain fully supported; the async path is
+additive and does not use nested event loops, so it is safe from notebooks.
+
+**Performance rationale:** compact judge output (no per-item reasons by default) +
+smaller per-request batch sizing + bounded concurrency reduce both per-request
+size and wall-clock time. No automatic retries are added, so a timeout is not
+multiplied. Exact speedups depend on the gateway and are not claimed here until
+measured.
+
 ## 8. Faithfulness Example
 
 Faithfulness checks whether output claims are supported by the authoritative
@@ -323,6 +413,71 @@ faithfulness = framework.evaluate(
     metrics=["faithfulness"],
 )["faithfulness"]
 ```
+
+## 8a. Retrieval Metrics (Relevance@K and nDCG@K)
+
+Retrieval metrics evaluate ranked retrieved documents for a query. Put the query
+in `input` and the ranked documents in `retrieved_documents` — **list order is the
+retrieval rank**. Each document is a string or a mapping with a text field
+(default key `"text"`) plus optional `document_id` and `score` (similarity)
+metadata. No generated `output` is required.
+
+```python
+from idp_eval import RelevanceAtKEvaluator, NDCGAtKEvaluator
+
+case = EvaluationCase(
+    input="How do I reset my password?",
+    retrieved_documents=[
+        {"text": "To reset your password, open Settings > Security...",
+         "score": 0.91, "document_id": "doc-1"},
+        {"text": "Billing information is available under Account...",
+         "score": 0.83, "document_id": "doc-2"},
+    ],
+)
+
+framework = EvaluationFramework(
+    evaluators=[RelevanceAtKEvaluator(k=5), NDCGAtKEvaluator(k=5)],
+    judge=judge,
+)
+results = framework.evaluate(case)
+# results["relevance_at_5"], results["ndcg_at_5"]
+```
+
+- **`RelevanceAtKEvaluator(k)`** (metric `relevance_at_{k}`): the fraction of the
+  top-K retrieved documents that are relevant to the query. Under binary
+  relevance this is exactly **Precision@K**. Labels: `all_relevant` /
+  `partially_relevant` / `none_relevant` / `not_applicable`.
+- **`NDCGAtKEvaluator(k)`** (metric `ndcg_at_{k}`): how well relevant documents
+  are ranked within the top K, computed deterministically from the **same**
+  relevance judgments. Labels: `ideal_ranking` / `suboptimal_ranking` /
+  `no_relevant_retrieved` / `not_applicable`.
+
+Key behaviors:
+
+- **Per-document relevance uses Phoenix's modern `DocumentRelevanceEvaluator`**
+  (query + one document → relevant/unrelated → 1.0/0.0). The retrieval similarity
+  `score` is kept as diagnostics only and is never sent to the relevance judge.
+- **Relevance is judged once and shared.** Running both metrics for a case does
+  one relevance pass, not two — and when different K values are selected (e.g.
+  `RelevanceAtKEvaluator(k=3)` + `NDCGAtKEvaluator(k=5)`), documents are judged
+  once up to the deepest rank (5) and reused. nDCG adds **no** extra LLM call.
+- **Binary relevance (v1).** `DocumentRelevanceEvaluator` is binary today, so
+  nDCG v1 is binary-relevance nDCG (not graded). The internal math already accepts
+  graded `[0, 1]` relevance, so graded relevance can be added later without
+  changing these evaluators.
+- **`effective_k = min(k, number_of_documents)`** — fewer documents than K are not
+  padded with fake irrelevants. **Zero documents → `score=None`,
+  `label="not_applicable"`** with no relevance judge calls.
+
+Async (documents judged concurrently under the shared global limiter):
+
+```python
+results = await framework.a_evaluate_many(cases, max_concurrency=4)
+```
+
+`RelevanceAtKEvaluator` / `NDCGAtKEvaluator` may be constructed with `verbose=True`
+to include each document's text in result details (off by default), and with
+`document_text_key="..."` to change the mapping key that holds document text.
 
 ## 9. Evaluator Selection
 
@@ -497,6 +652,7 @@ results are readable without inspecting JSON:
 | `source_coverage_items` | extracted source item | identity cols + `item_id`, `source_item`, `meaningfully_present`, `fully_present`, `status`, `item_score`, `reason` |
 | `task_coverage_items` | task-relevant requirement | identity cols + `item_id`, `requirement`, `meaningfully_present`, `fully_present`, `status`, `item_score`, `reason` |
 | `instruction_adherence_items` | instruction | identity cols + `instruction_id`, `instruction`, `status`, `item_score`, `reason` |
+| `retrieval_documents` | judged retrieved document | `run_name`, `dataset_name`, `case_id`, `trace_id`, `rank`, `document_id`, `relevance_score`, `relevance_label`, `explanation`, `retrieval_score` |
 
 The identity columns (`run_name`, `dataset_name`, `case_id`, `trace_id`,
 `metric`) are repeated on every detail row so you can filter or pivot a single
@@ -505,6 +661,10 @@ written. Faithfulness and custom code metrics have no item list, so they show up
 only in `evaluations`; their full `details` are preserved in the trailing
 `raw_details_json` column. Numeric scores are stored as numbers, and header rows
 are bold, frozen, and auto-filtered.
+
+Because `relevance_at_k` and `ndcg_at_k` share the **same** per-document relevance
+judgments, `retrieval_documents` is written **once per case** (no `metric` column,
+no duplicate rows per retrieval metric).
 
 ## 14. Custom Evaluation Logging
 
@@ -580,9 +740,13 @@ first judge call). Fields it does not require may be omitted or left `None`.
 | `TaskCoverageEvaluator` | `input`, `context`, `output` |
 | `FaithfulnessEvaluator` | `context`, `output` |
 | `InstructionAdherenceEvaluator` | `instructions`, `output` |
+| `RelevanceAtKEvaluator` | `input` (query), `retrieved_documents` |
+| `NDCGAtKEvaluator` | `input` (query), `retrieved_documents` |
 
 (`FaithfulnessEvaluator` also passes `input` to Phoenix when present, but does not
-require it.)
+require it. The retrieval evaluators require `input` + `retrieved_documents` and
+do **not** require `context` or `output`; an empty `retrieved_documents` list is
+valid and yields a not-applicable result.)
 
 **Missing / empty** required content is any of: `None`, `""`, a whitespace-only
 string, `{}`, or `[]`. Scalars such as `0` and `False` are legitimate values and

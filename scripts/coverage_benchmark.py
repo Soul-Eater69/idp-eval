@@ -32,6 +32,32 @@ DEFAULT_MODEL = "gpt-4o-mini"
 CONFIRM_THRESHOLD = 200
 
 
+def _percentiles(values: list[float]) -> dict[str, float | None]:
+    """Returns min / p50 / p95 / max (linear interpolation), or ``None``s.
+
+    Pure Python (no numpy) so the benchmark keeps its light dependency set.
+    """
+    if not values:
+        return {key: None for key in ("min", "p50", "p95", "max")}
+    ordered = sorted(values)
+
+    def _pct(fraction: float) -> float:
+        if len(ordered) == 1:
+            return ordered[0]
+        position = fraction * (len(ordered) - 1)
+        lower = int(position)
+        upper = min(lower + 1, len(ordered) - 1)
+        weight = position - lower
+        return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+    return {
+        "min": ordered[0],
+        "p50": _pct(0.50),
+        "p95": _pct(0.95),
+        "max": ordered[-1],
+    }
+
+
 def estimate_calls(num_cases: int, runs: int, end_to_end: bool) -> dict[str, int]:
     """Returns planned calls for extraction, classification, and end-to-end."""
     extraction = num_cases * runs
@@ -162,9 +188,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             if not fixed:
                 break
             try:
-                items = evaluator._build_items(
-                    fixed, evaluator._classify_requirements(eval_case, fixed)
-                )
+                judgments, _batch_count = evaluator._run_classify(eval_case, fixed)
+                items = evaluator._build_items(fixed, judgments)
                 classification_runs.append({item["id"]: item for item in items})
                 classification_scores.append(calculate_coverage(items))
                 successful_calls += 1
@@ -180,6 +205,13 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 
         end_to_end_scores: list[float] = []
         end_to_end_counts: list[float] = []
+        end_to_end_latencies_ms: list[float] = []
+        end_to_end_extract_ms: list[float] = []
+        end_to_end_classify_ms: list[float] = []
+        end_to_end_batch_counts: list[int] = []
+        end_to_end_abs_errors: list[float] = []
+        # Optional ground-truth score for calibration (semantic-change signal).
+        gt_score = case.get("gt_score")
         if args.end_to_end:
             for run_number in range(1, args.runs + 1):
                 try:
@@ -192,6 +224,18 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     if result.score is not None:
                         end_to_end_scores.append(result.score)
                     end_to_end_counts.append(float(result.details["total_requirements"]))
+                    # New optimization diagnostics (timeout-safety comparison):
+                    if "total_ms" in result.details:
+                        end_to_end_latencies_ms.append(result.details["total_ms"])
+                    if "extract_ms" in result.details:
+                        end_to_end_extract_ms.append(result.details["extract_ms"])
+                    if "classify_ms" in result.details:
+                        end_to_end_classify_ms.append(result.details["classify_ms"])
+                    if "batch_count" in result.details:
+                        end_to_end_batch_counts.append(result.details["batch_count"])
+                    # Calibration: absolute error vs ground truth when provided.
+                    if gt_score is not None and result.score is not None:
+                        end_to_end_abs_errors.append(abs(result.score - gt_score))
                 except Exception as exc:  # noqa: BLE001
                     failures.append(
                         {
@@ -228,6 +272,19 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                         int(value) for value in end_to_end_counts
                     ],
                     "requirement_count_stats": numeric_stats(end_to_end_counts),
+                    # Optimization diagnostics: latency distributions (min/p50/
+                    # p95/max) so we can inspect tails, not just averages, plus
+                    # per-run batch counts (timeout safety). Kept separate from
+                    # score so performance and semantic-calibration changes can be
+                    # analyzed independently.
+                    "latency_ms_per_run": end_to_end_latencies_ms,
+                    "latency_ms_distribution": _percentiles(end_to_end_latencies_ms),
+                    "extract_ms_distribution": _percentiles(end_to_end_extract_ms),
+                    "classify_ms_distribution": _percentiles(end_to_end_classify_ms),
+                    "batch_count_per_run": end_to_end_batch_counts,
+                    "gt_score": gt_score,
+                    "abs_error_per_run": end_to_end_abs_errors,
+                    "abs_error_stats": numeric_stats(end_to_end_abs_errors),
                 }
                 if args.end_to_end
                 else None,

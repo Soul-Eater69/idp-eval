@@ -6,7 +6,7 @@ from idp_eval import (
     EvaluationCase,
     EvaluationFramework,
     CoverageEvaluator,
-    TaskCoverageEvaluator,
+    InstructionAdherenceEvaluator,
 )
 
 openpyxl = pytest.importorskip("openpyxl")
@@ -73,7 +73,7 @@ def test_list_output_stays_one_case_and_is_rendered():
     judge = Capturing()
     case = EvaluationCase(context="Source doc.", output=["Step 1", "Step 2"])
     result = EvaluationFramework(
-        evaluators=[CoverageEvaluator(judge, mode="g_eval")]
+        evaluators=[CoverageEvaluator(judge)]
     ).evaluate(case)
 
     # One case -> one result mapping (a dict, not a list of results).
@@ -106,7 +106,7 @@ def _cases():
 
 def test_evaluate_many_independent_results_in_order():
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(ReusableSourceJudge(), mode="g_eval")]
+        evaluators=[CoverageEvaluator(ReusableSourceJudge())]
     )
     results = framework.evaluate_many(_cases())
     assert isinstance(results, list) and len(results) == 2
@@ -116,7 +116,7 @@ def test_evaluate_many_independent_results_in_order():
 
 def test_evaluate_many_one_trace_per_case(spans):
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(ReusableSourceJudge(), mode="g_eval")]
+        evaluators=[CoverageEvaluator(ReusableSourceJudge())]
     )
     framework.evaluate_many(_cases())
     roots = [s for s in spans.get_finished_spans() if s.name == "idp_eval.evaluate"]
@@ -127,7 +127,7 @@ def test_evaluate_many_one_trace_per_case(spans):
 def test_evaluate_many_excel_rows_attributable(tmp_path):
     path = tmp_path / "many.xlsx"
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(ReusableSourceJudge(), mode="g_eval")],
+        evaluators=[CoverageEvaluator(ReusableSourceJudge())],
         output="excel",
         excel_path=str(path),
     )
@@ -140,8 +140,8 @@ def test_evaluate_many_excel_rows_attributable(tmp_path):
 def test_evaluate_many_metric_subset_applied_to_every_case():
     framework = EvaluationFramework(
         evaluators=[
-            CoverageEvaluator(ReusableSourceJudge(), mode="g_eval"),
-            TaskCoverageEvaluator(object()),  # not selected -> never called
+            CoverageEvaluator(ReusableSourceJudge()),
+            InstructionAdherenceEvaluator(object()),  # not selected -> never called
         ]
     )
     results = framework.evaluate_many(_cases(), metrics=["coverage"])
@@ -149,19 +149,18 @@ def test_evaluate_many_metric_subset_applied_to_every_case():
 
 
 def test_evaluate_many_fails_fast_with_case_aware_error():
-    judge = ReusableSourceJudge()  # for source coverage
-    task_judge = ReusableSourceJudge()
+    judge = ReusableSourceJudge()
     framework = EvaluationFramework(
-        evaluators=[TaskCoverageEvaluator(task_judge)]
+        evaluators=[CoverageEvaluator(judge)]
     )
     cases = [
-        EvaluationCase(input="i", context="c", output="o", case_id="ok-1"),
-        EvaluationCase(context="c", output="o", case_id="bad-2"),  # no input
+        EvaluationCase(context="c", output="o", case_id="ok-1"),
+        EvaluationCase(output="o", case_id="bad-2"),  # no context
     ]
-    with pytest.raises(ValueError, match="Case bad-2:.*requires non-empty `input`"):
+    with pytest.raises(ValueError, match="Case bad-2:.*requires non-empty `context`"):
         framework.evaluate_many(cases)
     # Fail fast: no judge calls happened for the valid earlier case either.
-    assert task_judge.calls == 0
+    assert judge.calls == 0
 
 
 # --- grouped convenience ----------------------------------------------------
@@ -184,7 +183,7 @@ def _groups():
 
 def test_evaluate_groups_fans_out_to_three_cases(spans):
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(ReusableSourceJudge(), mode="g_eval")]
+        evaluators=[CoverageEvaluator(ReusableSourceJudge())]
     )
     results = framework.evaluate_groups(_groups())
     assert len(results) == 3  # 2 + 1 flattened outputs
@@ -195,7 +194,7 @@ def test_evaluate_groups_fans_out_to_three_cases(spans):
 def test_evaluate_groups_deterministic_case_ids(tmp_path):
     path = tmp_path / "groups.xlsx"
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(ReusableSourceJudge(), mode="g_eval")],
+        evaluators=[CoverageEvaluator(ReusableSourceJudge())],
         output="excel",
         excel_path=str(path),
     )
@@ -208,7 +207,7 @@ def test_evaluate_groups_deterministic_case_ids(tmp_path):
 
 def test_evaluate_groups_returns_one_result_per_output_in_order():
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(ReusableSourceJudge(), mode="g_eval")]
+        evaluators=[CoverageEvaluator(ReusableSourceJudge())]
     )
     results = framework.evaluate_groups(_groups())
     # Fans out to 3 independent outputs (2 + 1), one result mapping each, in order.
@@ -219,7 +218,7 @@ def test_evaluate_groups_returns_one_result_per_output_in_order():
 
 def test_group_singular_output_key_is_rejected():
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(ReusableSourceJudge(), mode="g_eval")]
+        evaluators=[CoverageEvaluator(ReusableSourceJudge())]
     )
     with pytest.raises(ValueError, match="use 'outputs'|singular 'output'"):
         framework.evaluate_groups([{"context": "c", "output": "epic"}])
@@ -228,7 +227,7 @@ def test_group_singular_output_key_is_rejected():
 def test_group_case_ids_override_is_preserved(tmp_path):
     path = tmp_path / "override.xlsx"
     framework = EvaluationFramework(
-        evaluators=[CoverageEvaluator(ReusableSourceJudge(), mode="g_eval")],
+        evaluators=[CoverageEvaluator(ReusableSourceJudge())],
         output="excel",
         excel_path=str(path),
     )

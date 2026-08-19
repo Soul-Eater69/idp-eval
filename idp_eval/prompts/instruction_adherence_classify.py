@@ -71,10 +71,12 @@ INSTRUCTION_ADHERENCE_CLASSIFY_SCHEMA = {
                     "reason": {"type": "string"},
                 },
                 "required": ["id", "status", "reason"],
+                "additionalProperties": False,
             },
         }
     },
     "required": ["answers"],
+    "additionalProperties": False,
 }
 
 

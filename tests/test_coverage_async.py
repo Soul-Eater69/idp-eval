@@ -45,8 +45,38 @@ class ProbeJudge:
                 self._current -= 1
 
 
+class AsyncProbeJudge:
+    """Proves coverage uses a native async judge without sync bridging."""
+
+    def __init__(self):
+        self.current = 0
+        self.max_concurrent = 0
+        self.calls = 0
+
+    def generate_object(self, prompt, schema):
+        raise AssertionError("sync generate_object must not be called")
+
+    async def async_generate_object(self, prompt, schema):
+        self.current += 1
+        self.max_concurrent = max(self.max_concurrent, self.current)
+        self.calls += 1
+        try:
+            await asyncio.sleep(0.01)
+            return {
+                "items": [
+                    {
+                        "source_item": "Important source item.",
+                        "meaningfully_present": True,
+                        "fully_present": True,
+                    }
+                ]
+            }
+        finally:
+            self.current -= 1
+
+
 def _framework(judge):
-    return EvaluationFramework(evaluators=[CoverageEvaluator(judge, mode="g_eval")])
+    return EvaluationFramework(evaluators=[CoverageEvaluator(judge)])
 
 
 def _case(output, case_id):
@@ -81,6 +111,19 @@ def test_cases_overlap_but_respect_global_max_concurrency():
     )
     assert judge.max_concurrent == 2
     assert judge.calls == 6
+
+
+def test_native_async_judge_is_used_and_bounded_without_event_loop_nesting():
+    judge = AsyncProbeJudge()
+    results = asyncio.run(
+        _framework(judge).a_evaluate_many(
+            [_case("GOOD", f"c{i}") for i in range(5)],
+            max_concurrency=2,
+        )
+    )
+    assert [result["coverage"].score for result in results] == [1.0] * 5
+    assert judge.calls == 5
+    assert judge.max_concurrent == 2
 
 
 @pytest.mark.parametrize("bad", [0, -1, 1.5, "4", True, None])
@@ -133,10 +176,6 @@ def test_concurrent_cases_keep_separate_traces_and_one_stage_span(spans):
     stages = [span for span in finished if span.name == "coverage.evaluate"]
     assert len(roots) == len(stages) == 3
     assert len({span.context.trace_id for span in roots}) == 3
-    assert not any(
-        span.name in {"coverage.extract", "coverage.classify"}
-        for span in finished
-    )
 
 
 def test_root_span_records_one_call_source_summary(spans):

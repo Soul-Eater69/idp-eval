@@ -24,8 +24,8 @@ from idp_eval.output import (
 # already-constructed evaluator instance (backward-compatible).
 EvaluatorEntry = Union[type[Evaluator], Evaluator]
 
-# Default global cap on simultaneous judge calls in an async evaluation run. The
-# corporate gateway does not accept unlimited concurrency; this bounds it.
+# Default global cap on simultaneous judge calls in an async evaluation run.
+# This protects any configured backend from unbounded request fan-out.
 DEFAULT_MAX_CONCURRENCY = 4
 
 
@@ -90,7 +90,7 @@ class EvaluationFramework:
             if judge is None:
                 raise ValueError(
                     f"A judge is required to construct evaluator class "
-                    f"{entry.__name__!r}; pass judge=create_judge()."
+                    f"{entry.__name__!r}; pass a configured judge."
                 )
             try:
                 return entry(llm=judge)
@@ -184,20 +184,12 @@ class EvaluationFramework:
         for metric_name in selected:
             self._evaluators[metric_name].validate_case(case)
 
-    def _shared_extraction_metric(self, selected: list[str]) -> str | None:
-        """The selected metric (if any) that supports grouped shared extraction."""
-        for name in selected:
-            if getattr(self._evaluators[name], "uses_shared_extraction", False):
-                return name
-        return None
-
     def evaluate(
         self,
         case: EvaluationCase,
         metrics: list[str] | None = None,
         run_name: str | None = None,
         dataset_name: str | None = None,
-        shared_items: dict[str, list] | None = None,
     ) -> dict[str, EvaluationResult]:
         """Evaluates one case (one trace) with the selected metrics.
 
@@ -244,11 +236,6 @@ class EvaluationFramework:
                 ):
                     results[metric_name] = evaluator.evaluate_shared(
                         case, relevance_pass
-                    )
-                elif shared_items is not None and metric_name in shared_items:
-                    # Grouped reuse: classify the group's pre-extracted items.
-                    results[metric_name] = evaluator.evaluate_with_items(
-                        case, shared_items[metric_name]
                     )
                 else:
                     results[metric_name] = evaluator.evaluate(case)
@@ -383,37 +370,18 @@ class EvaluationFramework:
         carried on ``case.metadata`` (never injected into prompts); output objects
         are not mutated.
 
-        For ``mode="dag"`` coverage, when a group has a shared context and more
-        than one output, the source items are extracted **once** for the group and
-        reused for each output's classification (1 extraction + one classify per
-        output, not one extract+classify per output). ``details["shared_extraction"]``
-        marks the reused per-output results.
-
         Returns:
             One result mapping per fanned-out case, in group-then-output order.
         """
-        selected = self._select(metrics)
-        all_results: list[dict[str, EvaluationResult]] = []
+        cases: list[EvaluationCase] = []
         for group_index, group in enumerate(groups):
-            cases = self._fan_out_group(group, group_index)
-            for index, case in enumerate(cases):
-                try:
-                    self._validate_case(case, selected)
-                except ValueError as exc:
-                    label = case.case_id if case.case_id is not None else index
-                    raise ValueError(f"Case {label}: {exc}") from exc
-
-            shared_items = None
-            cov = self._shared_extraction_metric(selected)
-            if cov is not None and len(cases) > 1:
-                shared_items = {cov: self._evaluators[cov].extract_items(cases[0])}
-
-            for case in cases:
-                all_results.append(self.evaluate(
-                    case, metrics=metrics, run_name=run_name,
-                    dataset_name=dataset_name, shared_items=shared_items,
-                ))
-        return all_results
+            cases.extend(self._fan_out_group(group, group_index))
+        return self.evaluate_many(
+            cases,
+            metrics=metrics,
+            run_name=run_name,
+            dataset_name=dataset_name,
+        )
 
     async def a_evaluate_groups(
         self,
@@ -423,55 +391,22 @@ class EvaluationFramework:
         dataset_name: str | None = None,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
     ) -> list[dict[str, EvaluationResult]]:
-        """Async grouped evaluation with shared DAG extraction reuse.
+        """Fans grouped outputs into cases, then evaluates them concurrently.
 
-        For each group with a shared context and >1 output, the coverage (dag)
-        source items are extracted **once** (that extraction finishes before the
-        group's classifications), then each output's classification runs
-        concurrently. All judge calls (extractions and classifications, across all
-        groups) are bounded by one shared ``asyncio.Semaphore(max_concurrency)``.
-        Each output keeps its own root ``idp_eval.evaluate`` trace; group 1's
-        extraction is never reused for group 2. Results are returned in
-        group-then-output order; persistence happens serially.
+        Every output is an ordinary independent case with its own root trace and
+        judge call. The framework-level semaphore bounds all concurrent judge
+        work, and results remain in group-then-output order.
         """
-        self._validate_max_concurrency(max_concurrency)
-        selected = self._select(metrics)
-        cov = self._shared_extraction_metric(selected)
-
-        group_cases: list[list[EvaluationCase]] = []
+        cases: list[EvaluationCase] = []
         for group_index, group in enumerate(groups):
-            cases = self._fan_out_group(group, group_index)
-            for index, case in enumerate(cases):
-                try:
-                    self._validate_case(case, selected)
-                except ValueError as exc:
-                    label = case.case_id if case.case_id is not None else index
-                    raise ValueError(f"Case {label}: {exc}") from exc
-            group_cases.append(cases)
-
-        limiter = asyncio.Semaphore(max_concurrency)
-
-        async def process_group(cases):
-            shared_items = None
-            if cov is not None and len(cases) > 1:
-                # Extract once for the group before any classification.
-                items = await self._evaluators[cov].a_extract_items(cases[0], limiter)
-                shared_items = {cov: items}
-            return await asyncio.gather(*(
-                self._a_run_case(c, selected, run_name, dataset_name, limiter, shared_items)
-                for c in cases
-            ))
-
-        group_pairs = await asyncio.gather(
-            *(process_group(cases) for cases in group_cases)
+            cases.extend(self._fan_out_group(group, group_index))
+        return await self.a_evaluate_many(
+            cases,
+            metrics=metrics,
+            run_name=run_name,
+            dataset_name=dataset_name,
+            max_concurrency=max_concurrency,
         )
-
-        results_list: list[dict[str, EvaluationResult]] = []
-        for pairs in group_pairs:
-            for results, records in pairs:
-                self._publish(records, results)
-                results_list.append(results)
-        return results_list
 
     @staticmethod
     def _fan_out_group(group: dict, group_index: int) -> list[EvaluationCase]:
@@ -529,11 +464,10 @@ class EvaluationFramework:
     ) -> dict[str, EvaluationResult]:
         """Async counterpart of :meth:`evaluate` for one case (one trace).
 
-        Independent Stage-2 classification batches within a coverage evaluator may
-        overlap, bounded by a per-call global judge-concurrency limiter. Evaluators
-        without an async path (faithfulness, instruction adherence) run their sync
-        ``evaluate`` in a worker thread under the same limiter; their scoring is
-        unchanged. Validation still runs before any judge call.
+        Judge calls are bounded by a per-call global concurrency limiter.
+        Evaluators without an async path run their synchronous ``evaluate`` in a
+        worker thread under the same limiter. Validation still runs before any
+        judge call.
         """
         self._validate_max_concurrency(max_concurrency)
         selected = self._select(metrics)
@@ -558,8 +492,7 @@ class EvaluationFramework:
         Each case is independent (own validation, own root ``idp_eval.evaluate``
         trace, own results/rows/annotations). A single shared
         ``asyncio.Semaphore(max_concurrency)`` caps total simultaneous judge calls
-        across every case and every classification batch, so N cases x M batches
-        never floods the gateway.
+        across every case so a large batch never floods the configured backend.
 
         Failure behavior mirrors :meth:`evaluate_many`: the whole batch is
         validated up front (fail fast, case-aware error). Results are returned in
@@ -599,7 +532,6 @@ class EvaluationFramework:
         run_name: str | None,
         dataset_name: str | None,
         limiter: asyncio.Semaphore,
-        shared_items: dict[str, list] | None = None,
     ) -> tuple[dict[str, EvaluationResult], list[EvaluationRecord]]:
         """Runs one case's selected evaluators within its own root trace.
 
@@ -629,12 +561,6 @@ class EvaluationFramework:
                     # Deterministic: reads the shared judgments, no judge calls.
                     results[metric_name] = evaluator.evaluate_shared(
                         case, relevance_pass
-                    )
-                    continue
-                if shared_items is not None and metric_name in shared_items:
-                    # Grouped reuse: classify the group's pre-extracted items.
-                    results[metric_name] = await evaluator.a_evaluate_with_items(
-                        case, shared_items[metric_name], judge_limiter=limiter
                     )
                     continue
                 a_evaluate = getattr(evaluator, "a_evaluate", None)

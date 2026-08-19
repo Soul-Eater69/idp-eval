@@ -30,8 +30,7 @@ class EvaluationCase:
     ``instructions`` are distinct on purpose so the same case can be run through
     every metric without any field changing meaning:
 
-    - ``input`` is the task/request (used by ``task_coverage`` to scope relevant
-      context, and passed to Phoenix by ``faithfulness``).
+    - ``input`` is the task/request passed to Phoenix by ``faithfulness``.
     - ``instructions`` is the explicit instruction text evaluated by
       ``instruction_adherence``. It is never derived from ``input``.
 

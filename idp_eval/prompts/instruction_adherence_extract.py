@@ -69,10 +69,12 @@ INSTRUCTION_ADHERENCE_EXTRACT_SCHEMA = {
                 "type": "object",
                 "properties": {"instruction": {"type": "string"}},
                 "required": ["instruction"],
+                "additionalProperties": False,
             },
         }
     },
     "required": ["instructions"],
+    "additionalProperties": False,
 }
 
 

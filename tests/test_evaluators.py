@@ -6,7 +6,7 @@ import types
 import pytest
 
 from idp_eval import (
-    TaskCoverageEvaluator,
+    CoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessEvaluator,
@@ -32,7 +32,7 @@ class FakeJudge:
 
 
 class ScriptedJudge:
-    """Returns queued structured responses in order (for the two-stage coverage)."""
+    """Returns queued structured responses in order."""
 
     def __init__(self, *responses: dict):
         self._responses = list(responses)
@@ -87,55 +87,49 @@ CASE = EvaluationCase(
 
 
 def _coverage_judge():
-    """Scripted two-stage coverage judge: 1 covered + 1 missing -> score 0.5."""
+    """One-call coverage judge: 1 covered + 1 missing -> score 0.5."""
     return ScriptedJudge(
         {
-            "requirements": [
-                {"requirement": "Users can view invoices."},
-                {"requirement": "Invoices show total amount due."},
+            "items": [
+                {"source_item": "Users can view invoices.",
+                 "meaningfully_present": True, "fully_present": True},
+                {"source_item": "Invoices show total amount due.",
+                 "meaningfully_present": False, "fully_present": False},
             ]
-        },
-        {
-            "requirements": [
-                {"id": "r1", "meaningfully_present": True, "fully_present": True,
-                 "reason": "Output states invoices are viewable."},
-                {"id": "r2", "meaningfully_present": False, "fully_present": False,
-                 "reason": "Output omits the total amount due."},
-            ]
-        },
+        }
     )
 
 
 def test_coverage_evaluator():
     judge = _coverage_judge()
-    result = TaskCoverageEvaluator(llm=judge).evaluate(CASE)
+    result = CoverageEvaluator(llm=judge).evaluate(CASE)
 
-    assert result.metric == "task_coverage"
+    assert result.metric == "coverage"
     assert result.score == 0.5
-    assert result.details["total_requirements"] == 2
+    assert result.details["final_item_count"] == 2
     assert result.details["missing_count"] == 1
-    # Two judge calls (extraction then classification).
-    assert len(judge.calls) == 2
-    extract_user = judge.calls[0]["prompt"][1]["content"]
-    assert CASE.input in extract_user
-    assert CASE.output not in extract_user  # Stage 1 never sees the output
+    assert len(judge.calls) == 1
+    user = judge.calls[0]["prompt"][1]["content"]
+    assert CASE.context in user and CASE.output in user
+    assert CASE.input not in user
 
 
 def test_coverage_partial_and_missing():
     judge = ScriptedJudge(
-        {"requirements": [{"requirement": "a"}, {"requirement": "b"},
-                          {"requirement": "c"}]},
-        {"requirements": [
-            {"id": "r1", "meaningfully_present": True, "fully_present": True, "reason": "r"},
-            {"id": "r2", "meaningfully_present": True, "fully_present": False, "reason": "r"},
-            {"id": "r3", "meaningfully_present": False, "fully_present": False, "reason": "r"},
-        ]},
+        {"items": [
+            {"source_item": "a", "meaningfully_present": True,
+             "fully_present": True, "reason": ""},
+            {"source_item": "b", "meaningfully_present": True,
+             "fully_present": False, "reason": "Qualifier missing."},
+            {"source_item": "c", "meaningfully_present": False,
+             "fully_present": False, "reason": "Missing."},
+        ]}
     )
-    result = TaskCoverageEvaluator(llm=judge).evaluate(CASE)
+    result = CoverageEvaluator(llm=judge, verbose=True).evaluate(CASE)
 
     assert result.score == (1.0 + 0.5 + 0.0) / 3
     assert result.details["missing_count"] == 1
-    assert result.details["items"][1]["score"] == 0.5
+    assert result.details["items"][1]["item_score"] == 0.5
 
 
 def test_faithfulness_evaluator():
@@ -151,12 +145,12 @@ def test_framework_runs_all_metrics_by_default():
     framework = EvaluationFramework(
         evaluators=[
             FaithfulnessEvaluator(llm=object()),
-            TaskCoverageEvaluator(llm=_coverage_judge()),
+            CoverageEvaluator(llm=_coverage_judge()),
         ]
     )
     results = framework.evaluate(CASE)
 
-    assert set(results) == {"faithfulness", "task_coverage"}
+    assert set(results) == {"faithfulness", "coverage"}
 
 
 def test_framework_runs_all_three_metrics():
@@ -171,38 +165,38 @@ def test_framework_runs_all_three_metrics():
     framework = EvaluationFramework(
         evaluators=[
             FaithfulnessEvaluator(llm=object()),
-            TaskCoverageEvaluator(llm=_coverage_judge()),
+            CoverageEvaluator(llm=_coverage_judge()),
             InstructionAdherenceEvaluator(llm=instruction_judge),
         ]
     )
     results = framework.evaluate(CASE)
 
-    assert set(results) == {"faithfulness", "task_coverage", "instruction_adherence"}
+    assert set(results) == {"faithfulness", "coverage", "instruction_adherence"}
 
 
 def test_framework_runs_selected_metrics():
     framework = EvaluationFramework(
         evaluators=[
             FaithfulnessEvaluator(llm=object()),
-            TaskCoverageEvaluator(llm=_coverage_judge()),
+            CoverageEvaluator(llm=_coverage_judge()),
         ]
     )
-    results = framework.evaluate(CASE, metrics=["task_coverage"])
+    results = framework.evaluate(CASE, metrics=["coverage"])
 
-    assert set(results) == {"task_coverage"}
-    assert results["task_coverage"].score == 0.5
+    assert set(results) == {"coverage"}
+    assert results["coverage"].score == 0.5
 
 
 def test_framework_rejects_duplicate_names():
-    a = TaskCoverageEvaluator(llm=FakeJudge({"items": []}))
-    b = TaskCoverageEvaluator(llm=FakeJudge({"items": []}))
+    a = CoverageEvaluator(llm=FakeJudge({"items": []}))
+    b = CoverageEvaluator(llm=FakeJudge({"items": []}))
     with pytest.raises(ValueError):
         EvaluationFramework(evaluators=[a, b])
 
 
 def test_framework_rejects_unknown_metric():
     framework = EvaluationFramework(
-        evaluators=[TaskCoverageEvaluator(llm=FakeJudge({"items": []}))]
+        evaluators=[CoverageEvaluator(llm=FakeJudge({"items": []}))]
     )
     with pytest.raises(KeyError):
         framework.evaluate(CASE, metrics=["nope"])
@@ -230,35 +224,35 @@ def test_custom_evaluator_needs_no_framework_change():
 def test_framework_from_classes_shares_judge():
     judge = _coverage_judge()
     framework = EvaluationFramework(
-        evaluators=[TaskCoverageEvaluator, InstructionAdherenceEvaluator],
+        evaluators=[CoverageEvaluator, InstructionAdherenceEvaluator],
         judge=judge,
     )
-    assert set(framework.metrics) == {"task_coverage", "instruction_adherence"}
+    assert set(framework.metrics) == {"coverage", "instruction_adherence"}
     # The same judge instance was injected into each constructed evaluator.
-    assert framework._evaluators["task_coverage"]._llm is judge
+    assert framework._evaluators["coverage"]._llm is judge
     assert framework._evaluators["instruction_adherence"]._llm is judge
 
 
 def test_framework_classes_select_two_only():
     framework = EvaluationFramework(
-        evaluators=[FaithfulnessEvaluator, TaskCoverageEvaluator],
+        evaluators=[FaithfulnessEvaluator, CoverageEvaluator],
         judge=object(),
     )
-    assert set(framework.metrics) == {"faithfulness", "task_coverage"}
+    assert set(framework.metrics) == {"faithfulness", "coverage"}
 
 
 def test_framework_all_three_classes():
     framework = EvaluationFramework(
         evaluators=[
             FaithfulnessEvaluator,
-            TaskCoverageEvaluator,
+            CoverageEvaluator,
             InstructionAdherenceEvaluator,
         ],
         judge=object(),
     )
     assert set(framework.metrics) == {
         "faithfulness",
-        "task_coverage",
+        "coverage",
         "instruction_adherence",
     }
 
@@ -266,13 +260,13 @@ def test_framework_all_three_classes():
 def test_framework_duplicate_classes_fail():
     with pytest.raises(ValueError):
         EvaluationFramework(
-            evaluators=[TaskCoverageEvaluator, TaskCoverageEvaluator], judge=object()
+            evaluators=[CoverageEvaluator, CoverageEvaluator], judge=object()
         )
 
 
 def test_framework_class_without_judge_raises():
     with pytest.raises(ValueError):
-        EvaluationFramework(evaluators=[TaskCoverageEvaluator])
+        EvaluationFramework(evaluators=[CoverageEvaluator])
 
 
 def test_framework_rejects_invalid_entry():

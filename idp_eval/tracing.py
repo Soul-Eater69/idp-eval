@@ -3,7 +3,7 @@
 The tracing model is intentionally narrow (v1):
 
     one EvaluationCase   -> one trace  (root span ``idp_eval.evaluate``)
-    one real judge call  -> one child span (e.g. ``coverage.extract``)
+    one real judge call  -> one child span (e.g. ``coverage.evaluate``)
 
 Everything here degrades to a safe no-op when OpenTelemetry is not installed or
 no tracer provider has been registered (``register_tracing`` not called): spans
@@ -108,7 +108,7 @@ def judge_span(
     real work. No-op when tracing is unavailable.
 
     Args:
-        name: Stable span name (e.g. ``"coverage.extract"``).
+        name: Stable span name (e.g. ``"coverage.evaluate"``).
         attributes: Optional namespaced span attributes.
     """
     trace = _trace_api()

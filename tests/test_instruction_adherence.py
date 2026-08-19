@@ -317,6 +317,10 @@ def test_prompt_schemas_are_minimal_and_binary():
     ]
     assert extract_item["required"] == ["instruction"]
     assert classify_item["required"] == ["id", "status", "reason"]
+    assert extract_item["additionalProperties"] is False
+    assert classify_item["additionalProperties"] is False
+    assert INSTRUCTION_ADHERENCE_EXTRACT_SCHEMA["additionalProperties"] is False
+    assert INSTRUCTION_ADHERENCE_CLASSIFY_SCHEMA["additionalProperties"] is False
     assert classify_item["properties"]["status"]["enum"] == [
         "followed",
         "violated",

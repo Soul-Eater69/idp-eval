@@ -63,8 +63,9 @@ def test_coverage_mixed_four():
     assert calculate_coverage(items) == 0.625
 
 
-def test_coverage_empty_is_full():
-    assert calculate_coverage([]) == 1.0
+def test_coverage_empty_requires_evaluator_not_applicable_handling():
+    with pytest.raises(ValueError, match="At least one source item"):
+        calculate_coverage([])
 
 
 def test_coverage_status_score_mapping():

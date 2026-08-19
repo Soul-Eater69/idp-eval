@@ -1,258 +1,255 @@
-"""Two-stage coverage mechanics tested via TaskCoverageEvaluator (no real LLM)."""
+"""Final one-call CoverageEvaluator behavior (offline; no real LLM)."""
 
+import inspect
 import pytest
 
-from idp_eval import EvaluationCase, TaskCoverageEvaluator
-from idp_eval.models import EvaluationResult
-
-
-class ScriptedJudge:
-    """Returns queued structured responses in order and records each call."""
-
-    def __init__(self, *responses):
-        self._responses = list(responses)
-        self.calls: list[dict] = []
-
-    def generate_object(self, prompt, schema: dict) -> dict:
-        self.calls.append({"prompt": prompt, "schema": schema})
-        if not self._responses:
-            raise AssertionError("Unexpected extra judge call")
-        return self._responses.pop(0)
-
-
-def _extract(*requirements: str) -> dict:
-    return {"requirements": [{"requirement": r} for r in requirements]}
-
-
-def _classify(*entries) -> dict:
-    """entries: (id, meaningfully_present, fully_present) tuples."""
-    return {
-        "requirements": [
-            {
-                "id": rid,
-                "meaningfully_present": present,
-                "fully_present": full,
-                "reason": "r",
-            }
-            for (rid, present, full) in entries
-        ]
-    }
+from idp_eval import CoverageEvaluator, EvaluationCase, EvaluationFramework
 
 
 CASE = EvaluationCase(
-    input="Generate a Jira Epic from the provided Theme.",
-    context="Theme with onboarding goals.",
-    output="UNIQUE_OUTPUT_TOKEN epic body.",
+    input="IGNORED_TASK",
+    context={"requirements": ["Retain SSO", "Preserve MFA"]},
+    output={"summary": "SSO remains available"},
 )
 
 
-def _run(judge) -> EvaluationResult:
-    return TaskCoverageEvaluator(llm=judge).evaluate(CASE)
+class Judge:
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    def generate_object(self, prompt, schema):
+        self.calls.append({"prompt": prompt, "schema": schema})
+        return self.response
 
 
-# --- aggregation & binary-to-status logic -----------------------------------
+def _item(text, present, full, reason=None):
+    item = {
+        "source_item": text,
+        "meaningfully_present": present,
+        "fully_present": full,
+    }
+    if reason is not None:
+        item["reason"] = reason
+    return item
 
 
-def test_full_coverage():
-    judge = ScriptedJudge(
-        _extract("a", "b"),
-        _classify(("r1", True, True), ("r2", True, True)),
+def _evaluate(items, *, verbose=False):
+    judge = Judge({"items": items})
+    result = CoverageEvaluator(judge, verbose=verbose).evaluate(CASE)
+    return result, judge
+
+
+def test_public_api_requires_context_and_output_only():
+    assert CoverageEvaluator.required_fields == ("context", "output")
+    CoverageEvaluator(object()).validate_case(EvaluationCase(context="c", output="o"))
+    with pytest.raises(ValueError, match="requires non-empty `context`"):
+        CoverageEvaluator(object()).evaluate(EvaluationCase(output="o"))
+    with pytest.raises(ValueError, match="requires non-empty `output`"):
+        CoverageEvaluator(object()).evaluate(EvaluationCase(context="c"))
+
+
+def test_public_constructor_is_judge_plus_verbose_only():
+    assert tuple(inspect.signature(CoverageEvaluator).parameters) == (
+        "llm",
+        "verbose",
     )
-    result = _run(judge)
-    assert result.score == 1.0
-    assert result.details["covered_count"] == 2
 
 
-def test_complete_omission():
-    judge = ScriptedJudge(
-        _extract("a", "b"),
-        _classify(("r1", False, False), ("r2", False, False)),
+def test_exactly_one_call_and_structured_context_output_rendering():
+    result, judge = _evaluate([_item("Retain SSO", True, True)])
+    assert result.metric == "coverage"
+    assert len(judge.calls) == 1
+    user = judge.calls[0]["prompt"][1]["content"]
+    assert "Requirements:\n- Retain SSO\n- Preserve MFA" in user
+    assert "Summary: SSO remains available" in user
+    assert "IGNORED_TASK" not in user
+
+
+@pytest.mark.parametrize(
+    "present,full,score,label",
+    [
+        (True, True, 1.0, "complete"),
+        (True, False, 0.5, "incomplete"),
+        (False, False, 0.0, "missing"),
+    ],
+)
+def test_binary_status_scoring_and_labels(present, full, score, label):
+    result, _ = _evaluate([_item("A", present, full)])
+    assert result.score == score
+    assert result.label == label
+
+
+def test_aggregate_mean_and_counts_are_deterministic_python():
+    result, _ = _evaluate(
+        [
+            _item("A", True, True),
+            _item("B", True, False),
+            _item("C", False, False),
+        ]
     )
-    result = _run(judge)
-    assert result.score == 0.0
-    assert result.details["missing_count"] == 2
+    assert result.score == pytest.approx(0.5)
+    assert result.details["covered_count"] == 1
+    assert result.details["partial_count"] == 1
+    assert result.details["missing_count"] == 1
 
 
-def test_mixed_deterministic_aggregation():
-    judge = ScriptedJudge(
-        _extract("a", "b", "c", "d"),
-        _classify(
-            ("r1", True, True),    # covered  -> 1.0
-            ("r2", False, False),  # missing  -> 0.0
-            ("r3", True, False),   # partial  -> 0.5
-            ("r4", True, True),    # covered  -> 1.0
-        ),
-    )
-    result = _run(judge)
-    assert result.score == 0.625
-    # Deterministic compact summary (2 covered, 1 partial, 1 missing of 4).
-    assert "2 of 4" in result.explanation
-    assert "1 partial and 1 missing" in result.explanation
-    assert [i["status"] for i in result.details["items"]] == [
-        "covered",
-        "missing",
-        "partial",
-        "covered",
-    ]
-    assert [i["score"] for i in result.details["items"]] == [1.0, 0.0, 0.5, 1.0]
-
-
-def test_binary_combinations_map_to_status():
-    judge = ScriptedJudge(
-        _extract("present-full", "present-partial", "absent"),
-        _classify(
-            ("r1", True, True),
-            ("r2", True, False),
-            ("r3", False, False),
-        ),
-    )
-    items = _run(judge).details["items"]
-    assert items[0]["status"] == "covered"
-    assert items[1]["status"] == "partial"
-    assert items[2]["status"] == "missing"
-
-
-def test_invalid_binary_combination_fails():
-    judge = ScriptedJudge(
-        _extract("a"),
-        _classify(("r1", False, True)),  # meaningfully_present=False + full=True
-    )
-    with pytest.raises(ValueError, match="Invalid coverage classification"):
-        _run(judge)
-
-
-def test_non_boolean_classification_fails():
-    judge = ScriptedJudge(
-        _extract("a"),
-        {"requirements": [{"id": "r1", "meaningfully_present": "yes",
-                           "fully_present": False, "reason": "r"}]},
-    )
-    with pytest.raises(ValueError, match="Non-boolean"):
-        _run(judge)
-
-
-# --- extraction: dedup, empty, malformed ------------------------------------
-
-
-def test_normalized_exact_dedup_after_extraction():
-    judge = ScriptedJudge(
-        _extract("Reduce onboarding time", " reduce   onboarding time ",
-                 "REDUCE ONBOARDING TIME"),
-        _classify(("r1", True, True)),
-    )
-    result = _run(judge)
-    assert result.details["total_requirements"] == 1
-    assert result.details["items"][0]["requirement"] == "Reduce onboarding time"
-
-
-def test_empty_extraction_is_not_applicable_and_skips_stage_two():
-    judge = ScriptedJudge(_extract())  # only one response queued
-    result = _run(judge)
+def test_empty_items_is_not_applicable_after_one_call():
+    result, judge = _evaluate([])
+    assert len(judge.calls) == 1
     assert result.score is None
     assert result.label == "not_applicable"
-    assert result.details == {
-        "total_requirements": 0,
-        "covered_count": 0,
-        "partial_count": 0,
-        "missing_count": 0,
-        "items": [],
-        "final_item_count": 0,
-        "batch_count": 0,
-        "judge_call_count": 1,
+    assert result.details["final_item_count"] == 0
+
+
+def test_compact_details_are_minimal_and_omit_items():
+    result, _ = _evaluate([_item("A", True, True)])
+    assert set(result.details) == {
+        "final_item_count",
+        "covered_count",
+        "partial_count",
+        "missing_count",
+        "judge_call_count",
+        "total_ms",
+        "verbose",
     }
-    # Stage 2 was never called.
-    assert len(judge.calls) == 1
+    assert result.details["judge_call_count"] == 1
+    assert result.details["verbose"] is False
 
 
-def test_malformed_extraction_missing_key_fails():
-    judge = ScriptedJudge({"requirements": [{"note": "no requirement field"}]})
-    with pytest.raises(KeyError):
-        _run(judge)
-
-
-# --- two-call behavior & stage isolation ------------------------------------
-
-
-def test_two_calls_for_non_empty_and_stage_isolation():
-    judge = ScriptedJudge(
-        _extract("a", "b"),
-        _classify(("r1", True, True), ("r2", False, False)),
+def test_verbose_details_include_full_audit_trail_and_reasons():
+    result, _ = _evaluate(
+        [
+            _item("Covered", True, True, ""),
+            _item("Partial", True, False, "Threshold missing."),
+            _item("Missing", False, False, "Not represented."),
+        ],
+        verbose=True,
     )
-    _run(judge)
+    assert result.details["verbose"] is True
+    assert [item["id"] for item in result.details["items"]] == ["S1", "S2", "S3"]
+    assert [item["status"] for item in result.details["items"]] == [
+        "covered",
+        "partial",
+        "missing",
+    ]
+    assert [item["item_score"] for item in result.details["items"]] == [
+        1.0,
+        0.5,
+        0.0,
+    ]
+    assert result.details["items"][0]["reason"] == ""
+
+
+def test_verbose_reason_contract_is_validated():
+    with pytest.raises(ValueError, match="covered items must use an empty"):
+        _evaluate([_item("A", True, True, "not empty")], verbose=True)
+    with pytest.raises(ValueError, match="must include a non-empty"):
+        _evaluate([_item("A", True, False, "")], verbose=True)
+
+
+def test_normalized_exact_dedup_keeps_first_item():
+    result, _ = _evaluate(
+        [
+            _item("Retain SSO", True, True, ""),
+            _item(" retain   sso ", True, True, ""),
+            _item("Preserve MFA", False, False, "Missing."),
+        ],
+        verbose=True,
+    )
+    assert result.details["final_item_count"] == 2
+    assert [item["source_item"] for item in result.details["items"]] == [
+        "Retain SSO",
+        "Preserve MFA",
+    ]
+
+
+def test_invalid_binary_combination_fails_clearly():
+    with pytest.raises(ValueError, match="fully_present=True requires"):
+        _evaluate([_item("A", False, True)])
+
+
+@pytest.mark.parametrize(
+    "response,match",
+    [
+        ({}, "missing `items`"),
+        ({"items": None}, "must be a list"),
+        ({"items": ["bad"]}, "expected an object"),
+        ({"items": [_item("", True, True)]}, "non-empty string"),
+        (
+            {
+                "items": [
+                    {
+                        "source_item": "A",
+                        "meaningfully_present": "yes",
+                        "fully_present": False,
+                    }
+                ]
+            },
+            "must be booleans",
+        ),
+    ],
+)
+def test_malformed_response_fails_clearly(response, match):
+    with pytest.raises(ValueError, match=match):
+        CoverageEvaluator(Judge(response)).evaluate(CASE)
+
+
+def test_framework_class_construction_and_evaluate_groups_use_one_call_per_output():
+    judge = Judge({"items": [_item("A", True, True)]})
+    framework = EvaluationFramework(evaluators=[CoverageEvaluator], judge=judge)
+    results = framework.evaluate_groups(
+        [{"context": "source", "outputs": ["one", "two"], "group_id": "g"}]
+    )
+    assert [result["coverage"].score for result in results] == [1.0, 1.0]
     assert len(judge.calls) == 2
 
-    extract_user = judge.calls[0]["prompt"][1]["content"]
-    assert CASE.input in extract_user
-    assert CASE.context in extract_user
-    assert CASE.output not in extract_user  # Stage 1 must NOT see output
 
-    classify_user = judge.calls[1]["prompt"][1]["content"]
-    assert CASE.output in classify_user
-    assert '"id": "r1"' in classify_user  # fixed requirement set passed in
-    assert CASE.context not in classify_user  # full context not leaked
-
-
-# --- requirement id integrity -----------------------------------------------
-
-
-def test_missing_id_fails():
-    judge = ScriptedJudge(_extract("a", "b"), _classify(("r1", True, True)))
-    with pytest.raises(ValueError, match="Missing classification"):
-        _run(judge)
-
-
-def test_unknown_id_fails():
-    judge = ScriptedJudge(
-        _extract("a"),
-        _classify(("r1", True, True), ("r2", True, True)),
+def test_verbose_and_compact_scores_match():
+    compact, _ = _evaluate(
+        [
+            _item("A", True, True),
+            _item("B", True, False),
+            _item("C", False, False),
+        ]
     )
-    with pytest.raises(ValueError, match="Unknown requirement id"):
-        _run(judge)
-
-
-def test_duplicate_id_fails():
-    judge = ScriptedJudge(
-        _extract("a"),
-        _classify(("r1", True, True), ("r1", False, False)),
+    verbose, _ = _evaluate(
+        [
+            _item("A", True, True, ""),
+            _item("B", True, False, "Qualifier missing."),
+            _item("C", False, False, "Not present."),
+        ],
+        verbose=True,
     )
-    with pytest.raises(ValueError, match="Duplicate requirement id"):
-        _run(judge)
+    assert compact.score == verbose.score
+    assert compact.label == verbose.label
 
 
-def test_reordered_ids_are_reconstructed_in_original_order():
-    judge = ScriptedJudge(
-        _extract("first", "second"),
-        _classify(("r2", True, False), ("r1", True, True)),  # returned reversed
-    )
-    items = _run(judge).details["items"]
-    assert [i["id"] for i in items] == ["r1", "r2"]
-    assert items[0]["requirement"] == "first"
-    assert items[0]["status"] == "covered"
-    assert items[1]["status"] == "partial"
+def test_backend_type_does_not_affect_coverage_result():
+    response = {
+        "items": [
+            _item("A", True, True),
+            _item("B", True, False),
+            _item("C", False, False),
+        ]
+    }
 
+    class GatewayCompatibleJudge(Judge):
+        pass
 
-# --- semantic expectations (via fake judgments) -----------------------------
+    class AzureCompatibleJudge(Judge):
+        pass
 
-
-def test_paraphrase_counts_as_covered():
-    judge = ScriptedJudge(
-        _extract("Automate identity verification."),
-        _classify(("r1", True, True)),
-    )
-    assert _run(judge).score == 1.0
-
-
-def test_qualifier_omission_is_partial():
-    judge = ScriptedJudge(
-        _extract("Reduce verification effort by 40%."),
-        _classify(("r1", True, False)),
-    )
-    assert _run(judge).score == 0.5
-
-
-def test_unsupported_addition_does_not_lower_coverage():
-    judge = ScriptedJudge(
-        _extract("Goal 1.", "Goal 2."),
-        _classify(("r1", True, True), ("r2", True, True)),
-    )
-    assert _run(judge).score == 1.0
+    gateway = CoverageEvaluator(GatewayCompatibleJudge(response)).evaluate(CASE)
+    azure = CoverageEvaluator(AzureCompatibleJudge(response)).evaluate(CASE)
+    assert gateway.score == azure.score == 0.5
+    assert gateway.label == azure.label == "incomplete"
+    assert {
+        key: value
+        for key, value in gateway.details.items()
+        if key != "total_ms"
+    } == {
+        key: value
+        for key, value in azure.details.items()
+        if key != "total_ms"
+    }

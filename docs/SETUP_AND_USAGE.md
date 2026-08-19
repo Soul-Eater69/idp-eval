@@ -2,88 +2,105 @@
 
 ## 1. Installation
 
-From a repository checkout, install the base package with `uv`:
-
 ```bash
 uv sync
-```
-
-Install development and test dependencies when working on the project:
-
-```bash
 uv sync --extra dev
 ```
 
-With `pip`, install the local package instead:
+Or:
 
 ```bash
 python -m pip install -e .
-python -m pip install -e ".[dev]"  # development dependencies
+python -m pip install -e ".[dev]"
 ```
 
-The project metadata uses the package name `idp-eval`, but this guide does not
-assume it has been published to a package index.
+Optional features are available through the `yaml`, `excel`, `tracing`, and
+`phoenix` extras.
 
-## 2. Environment Configuration
+## 2. Judge backends
 
-`create_judge()` resolves explicit arguments first, then environment variables,
-then an optional YAML file. These environment variables supply the corporate IDP
-gateway configuration:
+Both judge constructors return a Phoenix-compatible object and use:
+
+```text
+explicit argument > environment variable > optional YAML
+```
+
+### Corporate IDP/Mule gateway
+
+```python
+from idp_eval import create_gateway_judge
+
+judge = create_gateway_judge()
+judge = create_gateway_judge(model="test-model")
+judge = create_gateway_judge(config_path="config.yaml")
+```
 
 | Variable | Purpose |
-|---|---|
-| `IDP_EVAL_MODEL` | Gateway model name |
-| `IDP_EVAL_BASE_URL` | LLM gateway base URL |
-| `IDP_EVAL_APP_ID` | Gateway `app-id` value |
+| --- | --- |
+| `IDP_EVAL_MODEL` | gateway model name |
+| `IDP_EVAL_BASE_URL` | gateway base URL |
+| `IDP_EVAL_APP_ID` | gateway application ID |
 | `IDP_EVAL_AUTH_URL` | IDP authentication endpoint |
 | `IDP_EVAL_CLIENT_ID` | IDP client identifier |
 | `IDP_EVAL_CLIENT_SECRET` | IDP client secret |
 | `IDP_EVAL_USER` | IDP username |
 | `IDP_EVAL_PASSWORD` | IDP password |
+| `IDP_EVAL_GATEWAY_TIMEOUT` | client-side request timeout |
 
-Example placeholders:
+This preserves the corporate token and gateway contract. A larger client
+timeout cannot override a shorter upstream Mule/gateway timeout.
 
-```bash
-export IDP_EVAL_MODEL="model-name"
-export IDP_EVAL_BASE_URL="https://gateway.example"
-export IDP_EVAL_APP_ID="application-id"
-export IDP_EVAL_AUTH_URL="https://auth.example"
-export IDP_EVAL_CLIENT_ID="client-id"
-export IDP_EVAL_CLIENT_SECRET="client-secret"
-export IDP_EVAL_USER="service-user"
-export IDP_EVAL_PASSWORD="service-password"
+### Direct Azure OpenAI
+
+```python
+from idp_eval import create_azure_judge
+
+judge = create_azure_judge(
+    model="azure-deployment",
+    azure_endpoint="https://example-resource.openai.azure.com",
+    tenant_id="tenant-id",
+    client_id="client-id",
+    client_secret="client-secret",
+    api_version="2024-12-01-preview",
+    timeout=180,
+    proxy_url=None,
+    verify_ssl=True,
+    reasoning_effort=None,
+)
 ```
 
-Optional settings are `IDP_EVAL_CONFIG`, which points to a YAML configuration
-file, and `IDP_EVAL_VERIFY_SSL`. TLS verification defaults to enabled; disable it
-only for an explicitly controlled local test environment.
+| Variable | Purpose |
+| --- | --- |
+| `IDP_EVAL_AZURE_MODEL` | Azure deployment name |
+| `IDP_EVAL_AZURE_ENDPOINT` | Azure OpenAI endpoint |
+| `IDP_EVAL_AZURE_TENANT_ID` | Azure AD tenant |
+| `IDP_EVAL_AZURE_CLIENT_ID` | service-principal client ID |
+| `IDP_EVAL_AZURE_CLIENT_SECRET` | service-principal secret |
+| `IDP_EVAL_AZURE_API_VERSION` | Azure OpenAI API version |
+| `IDP_EVAL_AZURE_TIMEOUT` | client timeout, default 180 seconds |
+| `IDP_EVAL_AZURE_PROXY_URL` | optional HTTP proxy |
+| `IDP_EVAL_AZURE_VERIFY_SSL` | TLS verification, default true |
+| `IDP_EVAL_AZURE_REASONING_EFFORT` | optional request setting |
 
-Never commit secrets. This repository ignores `.env`, but `idp-eval` does not
-load it automatically; export variables through your normal environment-loading
-workflow.
+Direct Azure uses `ClientSecretCredential` and the Cognitive Services bearer
+token scope. Token caching and refresh are handled by Azure Identity. It does
+not use an API key or the corporate gateway URL.
 
-## 3. Optional Phoenix Setup
+`IDP_EVAL_CONFIG` can point to YAML with a `judge` section for the gateway and an
+`azure_judge` section for Azure. Keep secrets out of committed files. Setting
+`verify_ssl=False` is only for controlled development environments.
 
-Tracing and judge creation are separate concerns (Phoenix config never touches
-`create_judge`). Phoenix is configured primarily through its standard environment
-variables, which the Phoenix SDK resolves natively:
+Judge creation is separate from tracing and never adds temperature. The legacy
+`create_judge()` name is a deprecated gateway alias.
 
-| Variable                    | Used by                          | Purpose                                          |
-| --------------------------- | -------------------------------- | ------------------------------------------------ |
-| `PHOENIX_COLLECTOR_ENDPOINT`| `phoenix.otel` (trace export)    | Where OTEL traces are sent                       |
-| `PHOENIX_BASE_URL`          | `phoenix.client` (REST)          | Phoenix REST/client URL for span annotations     |
-| `PHOENIX_API_KEY`           | both OTEL export and the client  | Authentication for OTEL export and REST calls    |
-| `PHOENIX_PROJECT_NAME`      | `phoenix.otel`                   | Default project name                             |
+Evaluator wiring does not depend on the backend:
 
-`PHOENIX_COLLECTOR_ENDPOINT` (trace export) and `PHOENIX_BASE_URL` (REST
-annotations) are **distinct paths**; set both to your Phoenix host for a remote
-instance. `PHOENIX_API_KEY` authenticates both.
-
-### Local Phoenix (no API key)
-
-```bash
-phoenix serve
+```python
+coverage = CoverageEvaluator(judge)
+framework = EvaluationFramework(judge=judge, evaluators=[coverage])
 ```
+
+## 3. Phoenix tracing
 
 ```python
 from idp_eval import register_tracing
@@ -91,747 +108,218 @@ from idp_eval import register_tracing
 register_tracing(project_name="my-eval-project")
 ```
 
-Unauthenticated local Phoenix needs **no** API key and no endpoint — the Phoenix
-SDK defaults to `http://localhost:6006`.
+Local Phoenix started with `phoenix serve` normally needs no API key. Remote or
+authenticated Phoenix uses its standard variables:
 
-### Authenticated / remote Phoenix (environment-driven — recommended)
+| Variable | Purpose |
+| --- | --- |
+| `PHOENIX_COLLECTOR_ENDPOINT` | trace export endpoint |
+| `PHOENIX_BASE_URL` | REST endpoint for annotations |
+| `PHOENIX_API_KEY` | authentication when enabled |
+| `PHOENIX_PROJECT_NAME` | default project |
 
-```bash
-export PHOENIX_COLLECTOR_ENDPOINT="https://phoenix.example.com"
-export PHOENIX_BASE_URL="https://phoenix.example.com"
-export PHOENIX_API_KEY="your-api-key"        # keep secrets in the environment
-```
+One `framework.evaluate(case)` call creates one `idp_eval.evaluate` root
+trace. Every actual judge operation is a child stage span. Coverage creates one
+`coverage.evaluate` stage. Native model spans may appear beneath it; the
+package does not create duplicate model spans.
 
-```python
-register_tracing(project_name="my-eval-project")
-```
-
-The same configuration drives trace export, root evaluation spans, native model
-spans, and the `PhoenixEvaluationWriter` span annotations (`output="phoenix"`).
-
-### Explicit arguments (optional)
-
-`register_tracing` also accepts explicit `endpoint` / `api_key`, resolved as
-**explicit argument → Phoenix env var → SDK default**. Prefer env vars for
-secrets; a placeholder is shown only to illustrate the argument:
-
-```python
-register_tracing(
-    project_name="my-eval-project",
-    endpoint="https://phoenix.example.com",
-    # api_key="your-api-key",  # prefer PHOENIX_API_KEY in the environment
-)
-```
-
-For programmatic (non-env) REST config, `PhoenixEvaluationWriter(base_url=...,
-api_key=...)` forwards to the native `phoenix.client.Client`. `EvaluationFramework`
-itself has no Phoenix parameters — configure via environment variables.
-
-When tracing is registered, each `framework.evaluate(...)` call creates one root
-`idp_eval.evaluate` trace for that case. Tracing is optional.
-
-## 4. Basic Framework Setup
+## 4. Framework setup
 
 ```python
 from idp_eval import (
+    CoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
-    CoverageEvaluator,
-    TaskCoverageEvaluator,
-    create_judge,
+    NDCGAtKEvaluator,
+    RelevanceAtKEvaluator,
+    create_gateway_judge,
 )
 
-judge = create_judge()
-
+judge = create_gateway_judge()
 framework = EvaluationFramework(
     evaluators=[
+        CoverageEvaluator,
         FaithfulnessEvaluator,
-        CoverageEvaluator(judge, mode="dag"),
-        TaskCoverageEvaluator,
         InstructionAdherenceEvaluator,
     ],
     judge=judge,
 )
 ```
 
-The framework constructs each evaluator class with the shared judge.
+Classes receive the shared judge. Constructed instances are also accepted:
 
-## 5. EvaluationCase Fields
+```python
+framework = EvaluationFramework(
+    evaluators=[CoverageEvaluator(judge, verbose=True)]
+)
+```
+
+## 5. EvaluationCase fields
 
 | Field | Meaning |
-|---|---|
-| `input` | What the model was asked to do |
-| `context` | Authoritative source, retrieved, or reference information |
-| `output` | Generated response being evaluated |
-| `instructions` | Optional explicit user or HITL instructions that apply to the output |
+| --- | --- |
+| `input` | task/request or retrieval query |
+| `context` | authoritative source information |
+| `output` | generated content being evaluated |
+| `instructions` | explicit instructions for the output |
+| `retrieved_documents` | ordered retrieval results |
+| `case_id` | optional correlation identifier |
+| `metadata` | optional non-prompt metadata |
 
-An `EvaluationCase` is exactly **one** logical evaluation unit. All content
-fields are optional at the model level and default to `None`; each *evaluator*
-declares which fields it actually requires (see §17), so you only supply what the
-metrics you run will use.
+Fields accept strings or nested dictionaries/lists of scalar values. Rendering
+is deterministic. Required fields are evaluator-specific:
 
-### Structured values
+| Evaluator | Required fields |
+| --- | --- |
+| `CoverageEvaluator` | `context`, `output` |
+| `FaithfulnessEvaluator` | `context`, `output` |
+| `InstructionAdherenceEvaluator` | `instructions`, `output` |
+| retrieval evaluators | `input`, `retrieved_documents` |
 
-`input`, `context`, `output`, and `instructions` may be **structured values** —
-recursively `str`, `int`, `float`, `bool`, `None`, `dict[str, value]`, or
-`list[value]` — not just pre-rendered strings. The framework renders them to
-readable, labeled text for the judge deterministically (no LLM, no raw JSON):
+## 6. Coverage
 
-```python
-case = EvaluationCase(
-    context={
-        "description": "Improve customer onboarding",
-        "business_needs": [
-            "Reduce onboarding time by 25%",
-            "Retain current identity provider",
-        ],
-    },
-    output={
-        "title": "Improve onboarding workflow",
-        "success_criteria": ["Cut setup to under 10 minutes"],
-    },
-)
-```
-
-`context` above renders as:
-
-```
-Description: Improve customer onboarding
-
-Business Needs:
-- Reduce onboarding time by 25%
-- Retain current identity provider
-```
-
-Rules: dictionary insertion order is preserved, `snake_case` keys become
-`Title Case` labels (uppercase acronyms kept), scalar values render inline as
-`Label: value`, scalar lists become bullet lists, nested structures stay
-hierarchical (e.g. `Metadata:` then `  Priority: high`, and list-of-dict entries
-as `- Title: Epic`), and value text passes through unchanged.
-Unsupported objects (sets, tuples, bytes, arbitrary instances) raise a clear
-`TypeError` at case construction.
-
-> A `list` in `output` is a **single structured output**, not a request to
-> evaluate many outputs. `output=["Step 1", "Step 2"]` is one case. Use
-> `evaluate_many` / `evaluate_groups` (§10a) for many outputs.
-
-## 6. Instruction Adherence Example
-
-`instructions` is one text field. Use a multiline string for multiple explicit
-instructions:
+Coverage asks how much materially important information from the full context is
+represented in the output. It is recall-like and does not penalize unsupported
+additions; faithfulness handles those.
 
 ```python
 case = EvaluationCase(
-    input="",
-    context="",
-    instructions="""
-Keep the response under 40 words.
-Use exactly 3 bullet points.
-Do not mention pricing.
-""",
-    output="""
-- Fast setup
-- Easy integration
-- Reliable support
-""",
-)
-
-results = framework.evaluate(
-    case,
-    metrics=["instruction_adherence"],
-)
-```
-
-Stage 1 extracts independently checkable instructions. Stage 2 marks each fixed
-instruction `followed` or `violated`. Python calculates `followed / total`.
-
-## 7. Coverage Example
-
-Coverage measures how completely the output represents important information from
-the context. There are two evaluators:
-
-| Evaluator               | Metric name    | Scope                                                              |
-| ----------------------- | -------------- | ----------------------------------------------------------------- |
-| `CoverageEvaluator`     | `coverage`     | Whole-source coverage (`context + output`, no `input`). One class, two modes. |
-| `TaskCoverageEvaluator` | `task_coverage`| Task-scoped two-stage coverage with an output-isolated denominator. |
-
-`CoverageEvaluator(judge, mode="dag", verbose=False)` is the public whole-source
-API. It carries the metric name `coverage` in **both** modes (the mode is recorded
-in `details["mode"]`, not in the metric name):
-
-- **`mode="dag"` (default, recommended).** Output-isolated, two-stage. Stage 1
-  sees the **context only** and extracts ~10 consolidated source items; Stage 2
-  classifies that fixed set against the output in one call
-  (`judge_call_count == 2`). The output can never influence the denominator. The
-  `~10` figure is a **semantic consolidation target**, not a hard cap and not a
-  Python truncation — the extractor may return fewer or more when the source
-  genuinely requires it, and never drops a materially distinct point to hit the
-  number.
-- **`mode="g_eval"`.** One call sees `context + output` and both identifies and
-  classifies the items (`judge_call_count == 1`). Lower latency / fewer calls; the
-  tradeoff is that the output is visible while the denominator is being identified.
-
-All variants share the same Python-derived `covered`/`partial`/`missing` =
-`1.0/0.5/0.0` scoring — the LLM never returns a number. Task coverage first
-extracts a fixed task-relevant denominator without seeing the output, then
-classifies it. Coverage focuses on omissions — unsupported additions are evaluated
-separately by faithfulness.
-
-`SourceCoverageEvaluator` is a **deprecated** thin alias that constructs
-`CoverageEvaluator` in `mode="g_eval"` and preserves the legacy metric/span name
-`source_coverage`. It emits a `DeprecationWarning`; new code should use
-`CoverageEvaluator(judge, mode="g_eval")`.
-
-### Task coverage — `input` scopes which parts of the context are relevant
-
-```python
-case = EvaluationCase(
-    input="Summarize the product's supported deployment options.",
     context=(
-        "The product supports cloud and on-premises deployment. "
-        "On-premises deployments require version 4.2 or later. "
-        "Billing is invoiced monthly."   # irrelevant to the task
+        "Users can view invoices. Invoices show the total due. "
+        "A confirmation is sent after payment."
     ),
-    output="The product supports cloud and on-premises deployment.",
+    output="Users can view invoices and see the total due.",
 )
-
-framework = EvaluationFramework(
-    evaluators=[TaskCoverageEvaluator],
-    judge=judge,
-)
-result = framework.evaluate(case)["task_coverage"]
+result = framework.evaluate(case, metrics=["coverage"])["coverage"]
 ```
 
-Only deployment (task-relevant) information becomes coverage items; the billing
-sentence is ignored.
+`CoverageEvaluator(judge, verbose=False)` makes exactly one structured call
+using `context + output`. The judge identifies all materially distinct source
+items and returns two booleans:
 
-### Whole-source coverage — the whole context defines what should be covered
+- `fully_present=True` becomes `covered` and 1.0.
+- `meaningfully_present=True, fully_present=False` becomes `partial` and 0.5.
+- both false becomes `missing` and 0.0.
+
+Python calculates the mean and label. An empty item set returns `score=None`
+and `label="not_applicable"` after the one call.
+
+There is no item-count target. The prompt preserves qualifiers, consolidates
+semantic redundancy, excludes structural/meta wrapper text, and avoids counting
+both an umbrella objective and equivalent detailed items. Generic topical
+overlap is insufficient for partial credit.
+
+Compact details:
 
 ```python
-case = EvaluationCase(
-    context=document,          # no input required for whole-source coverage
-    output=summary,
-)
-
-framework = EvaluationFramework(
-    evaluators=[CoverageEvaluator(judge, mode="dag")],   # default mode
-    judge=judge,
-)
-result = framework.evaluate(case)["coverage"]
+{
+    "final_item_count": 3,
+    "covered_count": 2,
+    "partial_count": 0,
+    "missing_count": 1,
+    "judge_call_count": 1,
+    "total_ms": 123.4,
+    "verbose": False,
+}
 ```
 
-In the default DAG mode the extractor sees the **context only** and consolidates
-it into ~10 source items (the output-isolated denominator); a second call
-classifies each item against the output with two booleans, and Python derives the
-statuses and final score. Swap to `CoverageEvaluator(judge, mode="g_eval")` to do
-the same in one call when latency matters more than an output-isolated
-denominator. Typical uses are summarization, document compression, and generic
-source-to-output transforms. `coverage` details use `source_item` /
-`final_item_count`; task coverage details use `requirement` /
-`total_requirements`.
+With `verbose=True`, `details["items"]` adds stable IDs, source text, the
+binary judgments, Python-derived status and score, and reasons. Covered reasons
+are empty; partial/missing reasons are non-empty.
 
-### 7a. Coverage performance and options
+## 7. Other evaluators
 
-- **DAG mode: two calls.** Stage 1 (`coverage.extract`) consolidates the context
-  into ~10 items without the output; Stage 2 (`coverage.classify`) classifies that
-  fixed set in a single call (`judge_call_count == 2`). `verbose=False` keeps the
-  details compact and **omits the per-item array**; `verbose=True` includes
-  `items` (with concise reasons) and populates the `coverage_items` Excel sheet.
-  Deterministic Python scoring requires no extra model request.
+Instruction adherence reads only `instructions + output`. It extracts fixed
+instructions and classifies each as `followed` or `violated`; Python computes
+the score. No instructions returns `not_applicable` without a judge call.
 
-- **DAG safety batching.** The single Stage-2 classify call is only split when the
-  denominator is unusually large: `> CLASSIFICATION_BATCH_THRESHOLD` (20) items are
-  processed in safety batches of `SAFETY_CLASSIFICATION_BATCH_SIZE` (10) purely to
-  reduce gateway-timeout risk. So 21 items → 3 batches → `judge_call_count == 4`
-  (1 extract + 3 classify). This never truncates or reweights the denominator, and
-  there is no normal user-facing batch-size option in DAG mode.
+Faithfulness uses Phoenix's native evaluator and asks whether output claims are
+supported by context.
 
-- **G-Eval mode: one call.** A single request sees `context + output`, identifies
-  the source items, and classifies them (`judge_call_count == 1`, including a
-  not-applicable result). Its one request includes the full context and output, so
-  very large inputs may still approach a gateway timeout, and because the output is
-  visible during identification the denominator is not output-isolated.
+`RelevanceAtKEvaluator(k)` and `NDCGAtKEvaluator(k)` judge ranked retrieval
+documents against the query in `input`. Relevance@K is binary Precision@K;
+nDCG@K is derived from the same relevance judgments.
 
-- **Coverage diagnostics.** `coverage` details expose `mode`, `final_item_count`,
-  the covered/partial/missing counts, `judge_call_count`, `batch_count`,
-  `extract_ms`, `classify_ms`, `total_ms`, and `verbose`.
-
-- **Grouped shared extraction (DAG).** For one shared context with N outputs,
-  `framework.evaluate_groups` / `a_evaluate_groups` extracts the source items
-  **once** and reuses that fixed denominator for each output's classification
-  (1 extraction + one classify per output). Grouped DAG results add
-  `shared_extraction=True` and `classification_calls`, and report
-  `judge_call_count` as the per-output classify count (not 2). G-Eval and
-  single-output groups fall back to the normal per-case path.
-
-- **Task coverage: two stages.** Stage 1 extracts every materially distinct,
-  task-relevant item without the output. Stage 2 classifies that fixed set.
-  `verbose=False` keeps Stage 2 compact; `verbose=True` adds reasons without
-  changing the rubric or Python scoring.
-
-- **Task Stage-2 batching.** A large task denominator is split into batches of
-  `classification_batch_size` (default 12). This operational request-size control
-  never truncates or reweights the denominator. It can increase total calls to
-  one extraction plus one classification call per batch, and mitigates rather
-  than eliminates timeout risk.
-
-- **Task diagnostics.** Task details retain `final_item_count`, `batch_count`,
-  `batch_size`, `judge_call_count`, `large_denominator`, `extract_ms`,
-  `classify_ms`, and `total_ms`. Batched task runs add
-  `task_coverage.classify.batch` spans under `task_coverage.classify`.
-
-### 7b. Async coverage evaluation
-
-Independent cases run concurrently under one global judge-concurrency limiter.
-G-Eval coverage contributes one call per case. DAG coverage and task coverage keep
-dependent extract-then-classify stages, while independent Stage-2 (safety) batches
-may overlap. In grouped DAG runs the shared extraction finishes first, then the
-per-output classifications overlap under the same limiter.
+## 8. Bulk, grouped, and async APIs
 
 ```python
-results = await framework.a_evaluate(case)                      # one case
-results = await framework.a_evaluate_many(cases, max_concurrency=4)  # many cases
-```
+framework.evaluate_many([case1, case2])
 
-`max_concurrency` (default 4; must be a positive integer) caps total simultaneous
-judge calls across every case and every batch — one shared limiter for the whole
-operation, so N cases × M batches never floods the gateway. Each case still gets
-its own root `idp_eval.evaluate` trace, its own results, and its own Excel/Phoenix
-rows (persistence happens serially after evaluation, so writers are never mutated
-concurrently). If one case/evaluator raises (e.g. a gateway timeout), the whole
-`a_evaluate_many` operation fails clearly — errors are never swallowed and a
-timeout is never turned into `not_applicable` (that status is reserved for a valid
-input that extracts nothing). The synchronous `evaluate` / `evaluate_many` /
-`evaluate_groups` APIs are unchanged and remain fully supported; the async path is
-additive and does not use nested event loops, so it is safe from notebooks.
-
-**Performance rationale:** compact judge output (no per-item reasons by default) +
-smaller per-request batch sizing + bounded concurrency reduce both per-request
-size and wall-clock time. No automatic retries are added, so a timeout is not
-multiplied. Exact speedups depend on the gateway and are not claimed here until
-measured.
-
-## 8. Faithfulness Example
-
-Faithfulness checks whether output claims are supported by the authoritative
-context.
-
-```python
-case = EvaluationCase(
-    input="Summarize the payment methods.",
-    context="Customers can pay by credit card or bank transfer.",
-    output="Customers can pay by credit card, bank transfer, or cryptocurrency.",
-)
-
-faithfulness = framework.evaluate(
-    case,
-    metrics=["faithfulness"],
-)["faithfulness"]
-```
-
-## 8a. Retrieval Metrics (Relevance@K and nDCG@K)
-
-Retrieval metrics evaluate ranked retrieved documents for a query. Put the query
-in `input` and the ranked documents in `retrieved_documents` — **list order is the
-retrieval rank**. Each document is a string or a mapping with a text field
-(default key `"text"`) plus optional `document_id` and `score` (similarity)
-metadata. No generated `output` is required.
-
-```python
-from idp_eval import RelevanceAtKEvaluator, NDCGAtKEvaluator
-
-case = EvaluationCase(
-    input="How do I reset my password?",
-    retrieved_documents=[
-        {"text": "To reset your password, open Settings > Security...",
-         "score": 0.91, "document_id": "doc-1"},
-        {"text": "Billing information is available under Account...",
-         "score": 0.83, "document_id": "doc-2"},
-    ],
-)
-
-framework = EvaluationFramework(
-    evaluators=[RelevanceAtKEvaluator(k=5), NDCGAtKEvaluator(k=5)],
-    judge=judge,
-)
-results = framework.evaluate(case)
-# results["relevance_at_5"], results["ndcg_at_5"]
-```
-
-- **`RelevanceAtKEvaluator(k)`** (metric `relevance_at_{k}`): the fraction of the
-  top-K retrieved documents that are relevant to the query. Under binary
-  relevance this is exactly **Precision@K**. Labels: `all_relevant` /
-  `partially_relevant` / `none_relevant` / `not_applicable`.
-- **`NDCGAtKEvaluator(k)`** (metric `ndcg_at_{k}`): how well relevant documents
-  are ranked within the top K, computed deterministically from the **same**
-  relevance judgments. Labels: `ideal_ranking` / `suboptimal_ranking` /
-  `no_relevant_retrieved` / `not_applicable`.
-
-Key behaviors:
-
-- **Per-document relevance uses Phoenix's modern `DocumentRelevanceEvaluator`**
-  (query + one document → relevant/unrelated → 1.0/0.0). The retrieval similarity
-  `score` is kept as diagnostics only and is never sent to the relevance judge.
-- **Relevance is judged once and shared.** Running both metrics for a case does
-  one relevance pass, not two — and when different K values are selected (e.g.
-  `RelevanceAtKEvaluator(k=3)` + `NDCGAtKEvaluator(k=5)`), documents are judged
-  once up to the deepest rank (5) and reused. nDCG adds **no** extra LLM call.
-- **Binary relevance (v1).** `DocumentRelevanceEvaluator` is binary today, so
-  nDCG v1 is binary-relevance nDCG (not graded). The internal math already accepts
-  graded `[0, 1]` relevance, so graded relevance can be added later without
-  changing these evaluators.
-- **`effective_k = min(k, number_of_documents)`** — fewer documents than K are not
-  padded with fake irrelevants. **Zero documents → `score=None`,
-  `label="not_applicable"`** with no relevance judge calls.
-
-Async (documents judged concurrently under the shared global limiter):
-
-```python
-results = await framework.a_evaluate_many(cases, max_concurrency=4)
-```
-
-`RelevanceAtKEvaluator` / `NDCGAtKEvaluator` may be constructed with `verbose=True`
-to include each document's text in result details (off by default), and with
-`document_text_key="..."` to change the mapping key that holds document text.
-
-## 9. Evaluator Selection
-
-You configure evaluators **once**, in the constructor. You do not repeat them on
-every call.
-
-- **constructor `evaluators=[...]`** — the configured/available evaluator set.
-- **`evaluate(case)`** — runs *all* configured evaluators.
-- **`evaluate(case, metrics=[...])`** — optional subset filter: runs only those
-  configured evaluators.
-
-```python
-framework = EvaluationFramework(
-    evaluators=[CoverageEvaluator(judge, mode="dag"), FaithfulnessEvaluator],
-    judge=judge,
-)
-
-results = framework.evaluate(case)              # both configured evaluators
-subset = framework.evaluate(case, metrics=["faithfulness"])  # just one
-```
-
-`metrics=` never instantiates an evaluator that was not configured; an unknown or
-unconfigured metric name raises `KeyError`. Required-field validation (§17)
-applies only to the **selected** evaluators — a field an unselected evaluator
-would need does not block the call.
-
-## 10. Running a Subset of Metrics
-
-```python
-results = framework.evaluate(
-    case,
-    metrics=["faithfulness", "instruction_adherence"],
-)
-```
-
-Unknown metric names raise `KeyError`.
-
-## 10a. Bulk and Grouped Evaluation
-
-`evaluate_many` runs many independent cases. Each case keeps its own validation,
-its own root `idp_eval.evaluate` trace, its own results, and its own Excel /
-Phoenix rows — there is no batch-level trace.
-
-```python
-cases = [
-    EvaluationCase(input=task1, context=theme1, output=epic1, case_id="theme-1:epic-1"),
-    EvaluationCase(input=task1, context=theme1, output=epic2, case_id="theme-1:epic-2"),
-    EvaluationCase(input=task2, context=theme2, output=epic3, case_id="theme-2:epic-3"),
-]
-
-results = framework.evaluate_many(cases)                      # all configured
-subset = framework.evaluate_many(cases, metrics=["coverage", "faithfulness"])
-```
-
-Failure behavior is **fail fast**: the whole batch is validated for the selected
-evaluators *before any judge call*, so a malformed later case never triggers paid
-work on earlier cases. Invalid cases raise a case-aware `ValueError` (naming the
-`case_id`) rather than being skipped or coerced to not-applicable.
-
-For a source (Theme) with several generated outputs (Epics), `evaluate_groups`
-(and its async twin `a_evaluate_groups`) fans out to one case per output:
-
-```python
-results = framework.evaluate_groups([
-    {"input": task1, "context": theme1, "outputs": [epic1, epic2], "group_id": "theme-1"},
-    {"input": task2, "context": theme2, "outputs": [epic3],        "group_id": "theme-2"},
+framework.evaluate_groups([
+    {
+        "context": shared_context,
+        "outputs": [output1, output2],
+        "group_id": "group-1",
+    }
 ])
+
+await framework.a_evaluate_many(cases, max_concurrency=4)
 ```
 
-This produces **three independent cases / traces** (`theme-1:0`, `theme-1:1`,
-`theme-2:0`). Each output is evaluated on its own — `theme1 + [epic1, epic2]` is
-never sent as one coverage unit. Case ids come from an optional `case_ids` list,
-else `f"{group_id}:{i}"`, else `f"{group_index}:{i}"`; `group_id` is carried on
-`case.metadata` and output objects are never mutated.
+Groups fan out into ordinary independent cases; evaluator work is not shared.
+Async results preserve input order and a framework-level semaphore limits all
+concurrent judge calls.
 
-When a group has **more than one** output and DAG-mode `CoverageEvaluator` is
-selected, the shared context's source items are extracted **once** and reused for
-each output's classification (1 extraction + one classify per output), scoped to
-that single group — items are never reused across groups. See §7a.
-
-## 11. Reading Results
-
-`evaluate()` returns a dictionary keyed by metric name. Every value is an
-`EvaluationResult` with `metric`, `score`, `label`, `explanation`, and `details`.
-
-```python
-for result in results.values():
-    print(result.metric)
-    print(result.score)
-    print(result.label)
-    print(result.explanation)
-    print(result.details)
-```
-
-`score` is the quantitative result (`[0, 1]`, higher is better). `label` is a
-short qualitative interpretation **derived from the score**, and is
-metric-specific rather than a generic high/medium/low bucket:
-
-| Metric | `score == 1.0` | `0 < score < 1` | `score == 0.0` | not applicable |
-|---|---|---|---|---|
-| `coverage`, `task_coverage` | `complete` | `incomplete` | `missing` | `not_applicable` |
-| `instruction_adherence` | `fully_followed` | `violations_present` | `violated` | `not_applicable` |
-| `faithfulness` | provided by Phoenix (e.g. `faithful` / `unfaithful`) — not derived here |
-
-A partial instruction-adherence result (any violation) is therefore
-`violations_present`, never a misleading `high`. Not-applicable results carry
-`score=None` and `label="not_applicable"`.
-
-## 12. Phoenix Logging
-
-Enable tracing before creating evaluations, select Phoenix output on the
-framework, and put the case identifier on `EvaluationCase`:
-
-```python
-from idp_eval import register_tracing
-
-register_tracing(project_name="my-eval-project")
-
-framework = EvaluationFramework(
-    evaluators=[InstructionAdherenceEvaluator],
-    judge=judge,
-    output="phoenix",
-)
-
-case = EvaluationCase(
-    case_id="case-001",
-    input="",
-    context="",
-    instructions="Use exactly 3 bullet points.",
-    output="- First\n- Second\n- Third",
-)
-
-results = framework.evaluate(
-    case,
-    run_name="test-run-1",
-    dataset_name="instruction-test",
-)
-```
-
-Phoenix receives one root evaluation trace, evaluator stage spans, native model
-spans when model instrumentation is active, and native metric annotations on the
-root span. Requesting Phoenix output without an active root span raises a clear
-persistence error.
-
-Annotation logging uses the `phoenix.client.Client`, which reads `PHOENIX_BASE_URL`
-and `PHOENIX_API_KEY` from the environment (see section 3) — the same
-authenticated remote setup that drives trace export also drives annotations, with
-no manual client or header construction.
-
-## 13. Excel Output
-
-Install the Excel extra, then provide `excel_path`:
-
-```bash
-python -m pip install -e ".[excel]"
-```
+## 9. Output destinations
 
 ```python
 framework = EvaluationFramework(
-    evaluators=[TaskCoverageEvaluator],
+    evaluators=[CoverageEvaluator, FaithfulnessEvaluator],
     judge=judge,
-    output="excel",
+    output="both",                 # "phoenix" | "excel" | "both" | None
     excel_path="evaluation_results.xlsx",
 )
+results = framework.evaluate(case, run_name="run-1", dataset_name="dataset-1")
 ```
 
-Use `output="both"` with the same `excel_path` to publish the one computed result
-set to Phoenix and Excel. Evaluators are not run twice.
+Evaluation happens once. Phoenix writes native span annotations to the root case
+span. Excel can contain:
 
-The workbook has a summary sheet plus structured per-metric detail sheets so
-results are readable without inspecting JSON:
+| Sheet | One row per |
+| --- | --- |
+| `evaluations` | case and metric |
+| `coverage_items` | verbose coverage item |
+| `instruction_adherence_items` | instruction item |
+| `retrieval_documents` | retrieval document |
 
-| Sheet | One row per | Columns |
-|---|---|---|
-| `evaluations` | case + metric | `run_name`, `dataset_name`, `case_id`, `trace_id`, `metric`, `score`, `label`, `explanation`, `annotator_kind`, `timestamp`, `raw_details_json` |
-| `coverage_items` | judged source item (verbose only) | identity cols + `item_id`, `source_item`, `meaningfully_present`, `fully_present`, `status`, `item_score`, `reason` |
-| `task_coverage_items` | task-relevant requirement | identity cols + `item_id`, `requirement`, `meaningfully_present`, `fully_present`, `status`, `item_score`, `reason` |
-| `instruction_adherence_items` | instruction | identity cols + `instruction_id`, `instruction`, `status`, `item_score`, `reason` |
-| `retrieval_documents` | judged retrieved document | `run_name`, `dataset_name`, `case_id`, `trace_id`, `rank`, `document_id`, `relevance_score`, `relevance_label`, `explanation`, `retrieval_score` |
+Nested details remain JSON on the summary sheet. Persistence failures retain
+computed results and never rerun evaluation.
 
-The identity columns (`run_name`, `dataset_name`, `case_id`, `trace_id`,
-`metric`) are repeated on every detail row so you can filter or pivot a single
-sheet. Detail sheets appear only when a metric with a registered item layout is
-written. `coverage_items` is populated only when `CoverageEvaluator` runs with
-`verbose=True` (the compact default omits the per-item array). Faithfulness and
-custom code metrics have no item list, so they show up
-only in `evaluations`; their full `details` are preserved in the trailing
-`raw_details_json` column. Numeric scores are stored as numbers, and header rows
-are bold, frozen, and auto-filtered.
-
-Because `relevance_at_k` and `ndcg_at_k` share the **same** per-document relevance
-judgments, `retrieval_documents` is written **once per case** (no `metric` column,
-no duplicate rows per retrieval metric).
-
-## 14. Custom Evaluation Logging
-
-Custom results use the framework's configured output writers:
+## 10. Custom evaluation publishing
 
 ```python
 framework.log_custom_evaluation(
-    name="json_validity",
+    name="company_policy",
     score=1.0,
-    label="valid",
-    explanation="The output is valid JSON.",
-    details={"validator": "json.loads"},
-    kind="CODE",
+    label="pass",
+    explanation="All policy rules passed.",
+    kind="CODE",  # LLM | CODE | HUMAN
     case_id="case-001",
-    run_name="test-run-1",
-    dataset_name="instruction-test",
 )
 ```
 
-You may instead pass an existing `EvaluationResult` to
-`framework.log_evaluation(result, case=case, annotator_kind="CODE")`.
-Supported annotator kinds are `LLM`, `CODE`, and `HUMAN`.
+An existing `EvaluationResult` can be passed to `framework.log_evaluation`.
 
-## 15. Reusing a Framework Instance
+## 11. Validation and labels
 
-Create the judge and framework once, then reuse them:
+Missing required fields fail before judge work. Empty structures count as
+missing; numeric zero and boolean false are valid content. Extra fields are
+allowed.
 
-```python
-for case in cases:
-    results = framework.evaluate(case)
-```
+| Coverage score | Label |
+| --- | --- |
+| `1.0` | `complete` |
+| `0 < score < 1` | `incomplete` |
+| `0.0` | `missing` |
+| `None` | `not_applicable` |
 
-This also reuses the same configured judge and output writers.
-
-## 16. Minimal Application Example
-
-```python
-from idp_eval import (
-    EvaluationCase,
-    EvaluationFramework,
-    TaskCoverageEvaluator,
-    create_judge,
-    register_tracing,
-)
-
-register_tracing(project_name="my-eval-project")
-judge = create_judge()
-framework = EvaluationFramework(
-    evaluators=[TaskCoverageEvaluator],
-    judge=judge,
-)
-
-case = EvaluationCase(
-    case_id="example-001",
-    input="Summarize supported payment methods.",
-    context="Customers can pay by credit card or bank transfer.",
-    output="Customers can pay by credit card.",
-)
-
-results = framework.evaluate(case)
-for result in results.values():
-    print(result.metric, result.score, result.label)
-```
-
-## 17. Required Fields by Evaluator
-
-Each evaluator declares the case fields it **requires** (validated before its
-first judge call). Fields it does not require may be omitted or left `None`.
-
-| Evaluator | Required fields |
-|---|---|
-| `CoverageEvaluator` | `context`, `output` |
-| `TaskCoverageEvaluator` | `input`, `context`, `output` |
-| `FaithfulnessEvaluator` | `context`, `output` |
-| `InstructionAdherenceEvaluator` | `instructions`, `output` |
-| `RelevanceAtKEvaluator` | `input` (query), `retrieved_documents` |
-| `NDCGAtKEvaluator` | `input` (query), `retrieved_documents` |
-
-(`FaithfulnessEvaluator` also passes `input` to Phoenix when present, but does not
-require it. The retrieval evaluators require `input` + `retrieved_documents` and
-do **not** require `context` or `output`; an empty `retrieved_documents` list is
-valid and yields a not-applicable result.)
-
-**Missing / empty** required content is any of: `None`, `""`, a whitespace-only
-string, `{}`, or `[]`. Scalars such as `0` and `False` are legitimate values and
-are **not** treated as missing. When a required field is missing, the framework
-raises a `ValueError` before any judge call, e.g.:
-
-```
-TaskCoverageEvaluator requires non-empty `input`.
-
-Received:
-  input: missing
-  context: present
-  output: present
-```
-
-This required-field contract is **consistent across entry points**: it is
-enforced identically whether you call an evaluator directly
-(`CoverageEvaluator(judge).evaluate(case)`), via `framework.evaluate(case)`,
-or via `framework.evaluate_many(cases)` (which pre-validates the whole batch). In
-every case validation runs before the first judge call.
-
-Distinguish two outcomes:
-
-- **Missing required field** (`None` / `""` / `{}` / `[]`) → `ValueError` before
-  any judge call.
-- **Valid required field, but the metric extracts nothing** (e.g. instructions
-  are supplied but no checkable instruction is found) → a metric-defined
-  not-applicable result (`score=None`, `label="not_applicable"`).
-
-**Extra fields are allowed.** A case may carry fields an evaluator does not use
-(so one case can run several metrics). Running `CoverageEvaluator` on a case
-that also has `input` and `instructions` is valid — it consumes only `context`
-and `output`. Validation applies only to the metrics selected for the call (§9).
-
-## 19. Error and Not-Applicable Behavior
-
-- Missing required fields for a *selected* evaluator raise `ValueError` before any
-  judge call (fail fast) — they are never silently converted to not-applicable.
-- An empty instruction *extraction* (instructions supplied but nothing checkable
-  found) is a metric-defined not-applicable: `score=None`,
-  `label="not_applicable"`, Stage 2 skipped.
-- Whole-source `coverage` is not applicable when no important source items are
-  identified (in DAG mode that means Stage 1 extracts nothing and Stage 2 is
-  skipped; in g_eval mode the single call identifies nothing). Task coverage is
-  not applicable when Stage 1 identifies no task-relevant requirements; its
-  classification stage is then skipped. All return `score=None`,
-  `label="not_applicable"`.
-- Unknown requested metric names raise `KeyError`.
-- Missing judge configuration raises `ValueError` listing missing field names,
-  without exposing secret values.
-- A persistence failure raises `PersistenceError`; computed results remain
-  available on `error.results` and evaluators are not rerun.
-
-## 20. Development and Testing
-
-Run the offline suite and syntax compilation with:
+## 12. Verification
 
 ```bash
-pytest
-python -m compileall idp_eval
+uv run pytest -q
+python3 -m compileall -q idp_eval
 ```
 
-Development validation scripts live under `scripts/`. Some benchmark scripts
-make paid model calls and should be run only intentionally; they are not part of
-the getting-started workflow.
+Unit tests use fake judges and do not call a live model or gateway.

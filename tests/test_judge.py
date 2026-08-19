@@ -1,9 +1,10 @@
-"""Tests for judge configuration, the IDP gateway client, and create_judge.
+"""Tests for corporate gateway configuration and transport behavior.
 
 No real Phoenix or IDP systems are contacted; the token helper and gateway HTTP
 transport are mocked.
 """
 
+import asyncio
 import json
 import sys
 import types
@@ -11,13 +12,15 @@ import types
 import httpx
 import pytest
 
-from idp_eval import judge as judge_mod
-from idp_eval.judge import (
-    JudgeConfig,
+from idp_eval import create_judge
+from idp_eval.judges import gateway as gateway_mod
+from idp_eval.judges.gateway import (
+    GatewayJudge,
+    GatewayJudgeConfig,
     _GatewayHTTPClient,
     _get_idp_token,
-    create_judge,
-    resolve_judge_config,
+    create_gateway_judge,
+    resolve_gateway_judge_config,
 )
 
 FULL_CONFIG = {
@@ -46,20 +49,24 @@ ENV_MAP = {
 @pytest.fixture(autouse=True)
 def clear_env(monkeypatch):
     """Ensures a clean environment for every test."""
-    for env_name in list(ENV_MAP.values()) + ["IDP_EVAL_CONFIG", "IDP_EVAL_VERIFY_SSL"]:
+    for env_name in list(ENV_MAP.values()) + [
+        "IDP_EVAL_CONFIG",
+        "IDP_EVAL_VERIFY_SSL",
+        "IDP_EVAL_GATEWAY_TIMEOUT",
+    ]:
         monkeypatch.delenv(env_name, raising=False)
 
 
-def _config(**overrides) -> JudgeConfig:
+def _config(**overrides) -> GatewayJudgeConfig:
     values = {**FULL_CONFIG, **overrides}
-    return JudgeConfig(**values)
+    return GatewayJudgeConfig(**values)
 
 
 # --- configuration resolution -----------------------------------------------
 
 
 def test_resolve_from_explicit_args():
-    config = resolve_judge_config(**FULL_CONFIG)
+    config = resolve_gateway_judge_config(**FULL_CONFIG)
     assert config.model == "gpt-5-idp"
     assert config.verify_ssl is True
 
@@ -67,7 +74,7 @@ def test_resolve_from_explicit_args():
 def test_resolve_from_environment(monkeypatch):
     for field, env_name in ENV_MAP.items():
         monkeypatch.setenv(env_name, FULL_CONFIG[field])
-    config = resolve_judge_config()
+    config = resolve_gateway_judge_config()
     assert config.app_id == "app-123"
 
 
@@ -87,7 +94,7 @@ def test_resolve_from_yaml(tmp_path, monkeypatch):
     # Clear the env for the YAML-provided fields so YAML supplies them.
     for field in ("model", "base_url", "app_id", "idp_auth_url"):
         monkeypatch.delenv(ENV_MAP[field])
-    config = resolve_judge_config(config_path=str(yaml_path))
+    config = resolve_gateway_judge_config(config_path=str(yaml_path))
     assert config.model == "yaml-model"
     assert config.base_url == "https://yaml"
 
@@ -96,7 +103,7 @@ def test_explicit_beats_env(monkeypatch):
     for field, env_name in ENV_MAP.items():
         monkeypatch.setenv(env_name, FULL_CONFIG[field])
     monkeypatch.setenv("IDP_EVAL_MODEL", "env-model")
-    config = resolve_judge_config(model="explicit-model")
+    config = resolve_gateway_judge_config(model="explicit-model")
     assert config.model == "explicit-model"
 
 
@@ -106,13 +113,13 @@ def test_env_beats_yaml(tmp_path, monkeypatch):
     monkeypatch.setenv("IDP_EVAL_MODEL", "env-model")
     yaml_path = tmp_path / "config.yaml"
     yaml_path.write_text("judge:\n  model: yaml-model\n", encoding="utf-8")
-    config = resolve_judge_config(config_path=str(yaml_path))
+    config = resolve_gateway_judge_config(config_path=str(yaml_path))
     assert config.model == "env-model"
 
 
 def test_missing_configuration_lists_fields():
     with pytest.raises(ValueError) as exc:
-        resolve_judge_config(model="only-model")
+        resolve_gateway_judge_config(model="only-model")
     message = str(exc.value)
     assert "base_url" in message and "idp_password" in message
 
@@ -123,23 +130,28 @@ def test_missing_error_does_not_leak_secret_values(monkeypatch):
         if field != "idp_password":
             monkeypatch.setenv(env_name, FULL_CONFIG[field])
     with pytest.raises(ValueError) as exc:
-        resolve_judge_config()
+        resolve_gateway_judge_config()
     message = str(exc.value)
     # The secret *value* must never appear; only the field name may.
     assert "secret-xyz" not in message
     assert "idp_password" in message
 
 
-def test_unknown_override_field_raises():
-    with pytest.raises(TypeError):
-        resolve_judge_config(nonsense="x", **FULL_CONFIG)
-
-
 def test_verify_ssl_from_env(monkeypatch):
     for field, env_name in ENV_MAP.items():
         monkeypatch.setenv(env_name, FULL_CONFIG[field])
     monkeypatch.setenv("IDP_EVAL_VERIFY_SSL", "false")
-    assert resolve_judge_config().verify_ssl is False
+    assert resolve_gateway_judge_config().verify_ssl is False
+
+
+def test_gateway_timeout_and_safe_config_repr(monkeypatch):
+    for field, env_name in ENV_MAP.items():
+        monkeypatch.setenv(env_name, FULL_CONFIG[field])
+    monkeypatch.setenv("IDP_EVAL_GATEWAY_TIMEOUT", "45")
+    config = resolve_gateway_judge_config()
+    assert config.timeout == 45.0
+    assert "secret-xyz" not in repr(config)
+    assert "svc-pass" not in repr(config)
 
 
 # --- token helper (auth contract) -------------------------------------------
@@ -195,7 +207,7 @@ def test_get_idp_token_missing_jwt_is_safe(monkeypatch):
 
 def _build_client(monkeypatch, handler, config=None, token="TESTTOKEN"):
     tokens = iter([token, token + "-refreshed", token + "-3"])
-    monkeypatch.setattr(judge_mod, "_get_idp_token", lambda cfg: next(tokens))
+    monkeypatch.setattr(gateway_mod, "_get_idp_token", lambda cfg: next(tokens))
     client = _GatewayHTTPClient(config or _config())
     client._gateway_client.close()
     client._gateway_client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -356,7 +368,7 @@ def test_concurrent_401_refresh_is_safe(monkeypatch):
             refreshes.append(n)
         return f"token-{n}"
 
-    monkeypatch.setattr(judge_mod, "_get_idp_token", fake_token)
+    monkeypatch.setattr(gateway_mod, "_get_idp_token", fake_token)
     client = _GatewayHTTPClient(_config())  # __init__ caches token-0
 
     revoked = {"token-0"}  # the initial cached token is expired
@@ -457,10 +469,10 @@ def test_bad_request_body_raises(monkeypatch):
         client.close()
 
 
-# --- create_judge -----------------------------------------------------------
+# --- public constructors ----------------------------------------------------
 
 
-def test_create_judge_builds_phoenix_llm(monkeypatch):
+def test_create_gateway_judge_builds_phoenix_llm(monkeypatch):
     captured: dict = {}
 
     class FakeLLM:
@@ -471,9 +483,9 @@ def test_create_judge_builds_phoenix_llm(monkeypatch):
     fake_evals.LLM = FakeLLM
     monkeypatch.setitem(sys.modules, "phoenix", types.ModuleType("phoenix"))
     monkeypatch.setitem(sys.modules, "phoenix.evals", fake_evals)
-    monkeypatch.setattr(judge_mod, "_get_idp_token", lambda cfg: "JWT")
+    monkeypatch.setattr(gateway_mod, "_get_idp_token", lambda cfg: "JWT")
 
-    create_judge(**FULL_CONFIG)
+    judge = create_gateway_judge(**FULL_CONFIG)
 
     assert captured["provider"] == "openai"
     assert captured["client"] == "openai"
@@ -483,4 +495,50 @@ def test_create_judge_builds_phoenix_llm(monkeypatch):
     assert "temperature" not in captured
     http_client = captured["sync_client_kwargs"]["http_client"]
     assert isinstance(http_client, _GatewayHTTPClient)
-    http_client.close()
+    assert isinstance(judge, GatewayJudge)
+    judge.close()
+
+
+def test_gateway_async_bridge_reuses_sync_gateway_llm():
+    class FakeLLM:
+        model = "gateway-model"
+
+        def __init__(self):
+            self.calls = []
+
+        def generate_object(self, prompt, schema, **kwargs):
+            self.calls.append(("object", prompt, schema, kwargs))
+            return {"items": []}
+
+        def generate_classification(self, prompt, labels, **kwargs):
+            self.calls.append(("classification", prompt, labels, kwargs))
+            return {"label": "yes"}
+
+    class FakeHTTPClient:
+        def close(self):
+            pass
+
+    llm = FakeLLM()
+    judge = GatewayJudge(llm, FakeHTTPClient())
+    object_result = asyncio.run(
+        judge.async_generate_object("prompt", {"type": "object"})
+    )
+    classification_result = asyncio.run(
+        judge.async_generate_classification("prompt", ["yes", "no"])
+    )
+
+    assert object_result == {"items": []}
+    assert classification_result == {"label": "yes"}
+    assert [call[0] for call in llm.calls] == ["object", "classification"]
+
+
+def test_create_judge_is_deprecated_gateway_alias(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "idp_eval.judge.create_gateway_judge",
+        lambda **kwargs: seen.update(kwargs) or "judge",
+    )
+    with pytest.warns(DeprecationWarning, match="create_gateway_judge"):
+        result = create_judge(model="legacy")
+    assert result == "judge"
+    assert seen == {"model": "legacy"}

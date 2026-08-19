@@ -1,8 +1,7 @@
 """Phoenix tracing registration.
 
-Judge construction lives in :mod:`idp_eval.judge` (see ``create_judge``). This
-module only owns Phoenix OpenTelemetry tracing, which is a separate concern from
-building the judge.
+Judge construction lives in :mod:`idp_eval.judges`. This module only owns
+Phoenix OpenTelemetry tracing, which is separate from building the judge.
 """
 
 from __future__ import annotations
@@ -16,7 +15,7 @@ def register_tracing(
 ) -> None:
     """Registers Phoenix OpenTelemetry tracing at application startup.
 
-    Call this once, early, and separately from ``create_judge``. No tracing code
+    Call this once, early, and separately from judge creation. No tracing code
     belongs in metric scoring logic.
 
     Configuration resolution is delegated to Phoenix's ``register`` (verified

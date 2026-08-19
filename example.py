@@ -5,13 +5,12 @@ startup, build the framework once, then evaluate cases.
 """
 
 from idp_eval import (
+    CoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
-    SourceCoverageEvaluator,
-    TaskCoverageEvaluator,
-    create_judge,
+    create_gateway_judge,
     register_tracing,
 )
 
@@ -31,21 +30,19 @@ def main() -> None:
     register_tracing(project_name="idp-eval")
 
     # 2. Configure the judge once (from args / env / optional YAML).
-    judge = create_judge()
+    judge = create_gateway_judge()
 
     # 3. Build the framework from evaluator classes + the shared judge.
     framework = EvaluationFramework(
         evaluators=[
+            CoverageEvaluator,
             FaithfulnessEvaluator,
-            SourceCoverageEvaluator,
-            TaskCoverageEvaluator,
             InstructionAdherenceEvaluator,
         ],
         judge=judge,
     )
 
-    # 4. Faithfulness/task_coverage: input is the task used to scope the context.
-    #    source_coverage ignores the task and covers the whole context.
+    # 4. Coverage reads context + output; faithfulness checks unsupported claims.
     case = EvaluationCase(
         input="Generate a feature summary from the provided source.",
         context=(
@@ -60,7 +57,7 @@ def main() -> None:
     _print(
         framework.evaluate(
             case,
-            metrics=["faithfulness", "source_coverage", "task_coverage"],
+            metrics=["faithfulness", "coverage"],
         )
     )
 

@@ -90,14 +90,17 @@ def calculate_coverage(items: list[dict]) -> float:
             ``partial``, or ``missing``.
 
     Returns:
-        Coverage score between ``0`` and ``1``. Returns ``1.0`` when there are
-        no task-relevant requirements to cover. Higher is better.
+        Coverage score between ``0`` and ``1``. Higher is better.
 
     Raises:
-        ValueError: If any item carries an unrecognized status.
+        ValueError: If ``items`` is empty or any item carries an unrecognized
+            status. The evaluator handles an empty judge result as
+            not-applicable before calling this helper.
     """
     if not items:
-        return 1.0
+        raise ValueError(
+            "At least one source item is required to calculate coverage."
+        )
 
     total = sum(coverage_status_score(item["status"]) for item in items)
     return total / len(items)

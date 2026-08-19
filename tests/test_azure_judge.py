@@ -278,13 +278,17 @@ def test_timeout_error_propagates_from_async_judge():
 def test_close_and_aclose_release_owned_resources():
     sync_llm = _FakeLLM(model="deployment", provider="azure")
     sync_credential = _FakeCredential()
-    AzureJudge(sync_llm, sync_credential, None).close()
+    sync_judge = AzureJudge(sync_llm, sync_credential, None)
+    sync_judge.close()
+    sync_judge.close()
     assert sync_llm._sync_client.closed == 1
     assert sync_credential.closed == 1
 
     async_llm = _FakeLLM(model="deployment", provider="azure")
     async_credential = _FakeCredential()
-    asyncio.run(AzureJudge(async_llm, async_credential, None).aclose())
+    async_judge = AzureJudge(async_llm, async_credential, None)
+    asyncio.run(async_judge.aclose())
+    asyncio.run(async_judge.aclose())
     assert async_llm._sync_client.closed == 1
     assert async_llm._async_client.closed == 1
     assert async_credential.closed == 1

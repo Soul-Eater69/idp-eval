@@ -1,9 +1,7 @@
-"""Core data model and evaluator interface for the idp eval framework.
+"""Core data model and evaluator interface for idp-eval.
 
-These types are intentionally generic. They carry no application-specific
-vocabulary (no Jira, no RAG, no test cases). A generated output is described by
-an ``input`` (task/request), optional explicit ``instructions``, authoritative
-``context``, and the generated ``output``.
+The model is domain-agnostic: a generated output is described by an ``input``,
+optional ``instructions``, authoritative ``context``, and the ``output``.
 """
 
 from __future__ import annotations

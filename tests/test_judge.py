@@ -12,7 +12,6 @@ import types
 import httpx
 import pytest
 
-from idp_eval import create_judge
 from idp_eval.judges import gateway as gateway_mod
 from idp_eval.judges.gateway import (
     GatewayJudge,
@@ -532,13 +531,57 @@ def test_gateway_async_bridge_reuses_sync_gateway_llm():
     assert [call[0] for call in llm.calls] == ["object", "classification"]
 
 
-def test_create_judge_is_deprecated_gateway_alias(monkeypatch):
-    seen = {}
-    monkeypatch.setattr(
-        "idp_eval.judge.create_gateway_judge",
-        lambda **kwargs: seen.update(kwargs) or "judge",
-    )
-    with pytest.warns(DeprecationWarning, match="create_gateway_judge"):
-        result = create_judge(model="legacy")
-    assert result == "judge"
-    assert seen == {"model": "legacy"}
+class _CloseCounter:
+    def __init__(self):
+        self.calls = 0
+
+    def close(self):
+        self.calls += 1
+
+
+class _AsyncCloseCounter:
+    def __init__(self):
+        self.calls = 0
+
+    async def close(self):
+        self.calls += 1
+
+
+class _OwnedGatewayTransport(_CloseCounter):
+    @property
+    def is_closed(self):
+        return self.calls > 0
+
+
+class _LifecycleLLM:
+    model = "gateway-model"
+
+    def __init__(self):
+        self._sync_client = _CloseCounter()
+        self._async_client = _AsyncCloseCounter()
+
+
+def test_gateway_close_is_idempotent_and_closes_sync_resources():
+    llm = _LifecycleLLM()
+    transport = _OwnedGatewayTransport()
+    judge = GatewayJudge(llm, transport)
+
+    judge.close()
+    judge.close()
+
+    assert llm._sync_client.calls == 1
+    assert llm._async_client.calls == 0
+    assert transport.calls == 1
+
+
+def test_gateway_aclose_is_idempotent_and_closes_all_resources():
+    llm = _LifecycleLLM()
+    transport = _OwnedGatewayTransport()
+    judge = GatewayJudge(llm, transport)
+
+    asyncio.run(judge.aclose())
+    asyncio.run(judge.aclose())
+
+    assert llm._sync_client.calls == 1
+    assert llm._async_client.calls == 1
+    assert transport.calls == 1

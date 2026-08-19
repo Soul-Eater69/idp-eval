@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 from dataclasses import dataclass, field
@@ -204,8 +205,10 @@ class _GatewayHTTPClient(httpx.Client):
         )
 
     def close(self) -> None:
-        self._gateway_client.close()
-        super().close()
+        if not self._gateway_client.is_closed:
+            self._gateway_client.close()
+        if not self.is_closed:
+            super().close()
 
 
 class GatewayJudge:
@@ -248,14 +251,33 @@ class GatewayJudge:
             **kwargs,
         )
 
+    def _close_sync_resources(self) -> None:
+        sync_client = getattr(self._llm, "_sync_client", None)
+        close = getattr(sync_client, "close", None)
+        if callable(close):
+            close()
+        if not self._http_client.is_closed:
+            self._http_client.close()
+
     def close(self) -> None:
+        """Close synchronous Phoenix and gateway resources."""
         if self._closed:
             return
-        self._http_client.close()
+        self._close_sync_resources()
         self._closed = True
 
     async def aclose(self) -> None:
-        self.close()
+        """Close asynchronous and synchronous resources."""
+        if self._closed:
+            return
+        async_client = getattr(self._llm, "_async_client", None)
+        close = getattr(async_client, "close", None)
+        if callable(close):
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+        self._close_sync_resources()
+        self._closed = True
 
     def __getattr__(self, name: str):
         return getattr(self._llm, name)
@@ -275,7 +297,7 @@ def create_gateway_judge(
     verify_ssl: bool | None = None,
     timeout: float | None = None,
 ) -> GatewayJudge:
-    """Creates a Phoenix LLM backed by the corporate IDP/Mule gateway.
+    """Create a Phoenix judge backed by the corporate IDP/Mule gateway.
 
     ``timeout`` is the client-side timeout. It cannot override a shorter timeout
     enforced by an upstream gateway.
@@ -297,14 +319,18 @@ def create_gateway_judge(
 
     from phoenix.evals import LLM
 
-    llm = LLM(
-        provider="openai",
-        client="openai",
-        model=config.model,
-        api_key="unused",
-        base_url=config.base_url.rstrip("/") + "/api/v1",
-        sync_client_kwargs={"http_client": gateway_http_client},
-    )
+    try:
+        llm = LLM(
+            provider="openai",
+            client="openai",
+            model=config.model,
+            api_key="unused",
+            base_url=config.base_url.rstrip("/") + "/api/v1",
+            sync_client_kwargs={"http_client": gateway_http_client},
+        )
+    except Exception:
+        gateway_http_client.close()
+        raise
     return GatewayJudge(llm, gateway_http_client)
 
 

@@ -9,7 +9,7 @@ output(s). Evaluation is never re-run for a second destination.
 from __future__ import annotations
 
 import asyncio
-from typing import Iterable, Union
+from typing import Iterable
 
 from idp_eval import tracing
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
@@ -22,7 +22,7 @@ from idp_eval.output import (
 
 # An entry may be an evaluator class (constructed with the shared judge) or an
 # already-constructed evaluator instance (backward-compatible).
-EvaluatorEntry = Union[type[Evaluator], Evaluator]
+EvaluatorEntry = type[Evaluator] | Evaluator
 
 # Default global cap on simultaneous judge calls in an async evaluation run.
 # This protects any configured backend from unbounded request fan-out.
@@ -335,19 +335,6 @@ class EvaluationFramework:
             for case in case_list
         ]
 
-    # Backward-compatible alias for the earlier name.
-    def evaluate_batch(
-        self,
-        cases: "Iterable[EvaluationCase]",
-        metrics: list[str] | None = None,
-        run_name: str | None = None,
-        dataset_name: str | None = None,
-    ) -> list[dict[str, EvaluationResult]]:
-        """Alias of :meth:`evaluate_many` (kept for existing callers)."""
-        return self.evaluate_many(
-            cases, metrics=metrics, run_name=run_name, dataset_name=dataset_name
-        )
-
     def evaluate_groups(
         self,
         groups: "Iterable[dict]",
@@ -358,17 +345,16 @@ class EvaluationFramework:
         """Convenience orchestration: fan grouped outputs into single cases.
 
         Each group is a mapping with an ``outputs`` list plus optional shared
-        ``input`` / ``context`` / ``instructions``, an optional ``group_id``, and
-        optional ``case_ids`` (aligned with ``outputs``). Every output becomes one
-        ordinary :class:`EvaluationCase` (``Theme -> [Epic1, Epic2]`` fans out to
-        two independent cases, one trace each); the fanned-out cases are then run
-        through :meth:`evaluate_many`. No evaluation logic is duplicated, and a
-        list output is never treated as multiple outputs.
+        ``input`` / ``context`` / ``instructions`` / ``metadata``, an optional
+        ``group_id``, and optional ``case_ids`` aligned with ``outputs``. Every
+        output becomes one ordinary :class:`EvaluationCase`; the resulting cases
+        are passed to :meth:`evaluate_many`. A list inside one output remains
+        part of that single structured output.
 
         Case ids: ``case_ids[i]`` if given, else ``f"{group_id}:{i}"`` when a
         ``group_id`` is present, else ``f"{group_index}:{i}"``. ``group_id`` is
-        carried on ``case.metadata`` (never injected into prompts); output objects
-        are not mutated.
+        carried on ``case.metadata`` and is never injected into prompts. Input
+        groups and output objects are not mutated.
 
         Returns:
             One result mapping per fanned-out case, in group-then-output order.
@@ -422,7 +408,9 @@ class EvaluationFramework:
 
         group_id = group.get("group_id")
         case_ids = group.get("case_ids")
-        if case_ids is not None and len(case_ids) != len(outputs):
+        if case_ids is not None and (
+            not isinstance(case_ids, list) or len(case_ids) != len(outputs)
+        ):
             raise ValueError(
                 "Group 'case_ids' length must match the number of 'outputs'."
             )
@@ -432,7 +420,12 @@ class EvaluationFramework:
             for field in ("input", "context", "instructions")
             if field in group
         }
-        metadata = {"group_id": group_id} if group_id is not None else None
+        source_metadata = group.get("metadata")
+        if source_metadata is not None and not isinstance(source_metadata, dict):
+            raise ValueError("Group 'metadata' must be a mapping when provided.")
+        metadata = dict(source_metadata or {})
+        if group_id is not None:
+            metadata["group_id"] = group_id
 
         cases: list[EvaluationCase] = []
         for output_index, output in enumerate(outputs):
@@ -446,7 +439,7 @@ class EvaluationFramework:
                 EvaluationCase(
                     output=output,
                     case_id=case_id,
-                    metadata=metadata,
+                    metadata=dict(metadata) if metadata else None,
                     **shared,
                 )
             )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -198,7 +199,7 @@ class AzureJudge:
         async_close = getattr(async_client, "close", None)
         if callable(async_close):
             result = async_close()
-            if result is not None:
+            if inspect.isawaitable(result):
                 await result
         sync_client = getattr(self._llm, "_sync_client", None)
         close = getattr(sync_client, "close", None)
@@ -227,7 +228,7 @@ def create_azure_judge(
     reasoning_effort: str | None = None,
     config_path: str | None = None,
 ) -> AzureJudge:
-    """Creates a Phoenix-compatible judge using direct Azure OpenAI."""
+    """Create a direct Azure OpenAI judge authenticated with Azure AD."""
     config = resolve_azure_judge_config(
         model=model,
         azure_endpoint=azure_endpoint,

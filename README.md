@@ -53,7 +53,7 @@ channels, and measurable targets while consolidating semantic redundancy.
 Material qualifiers are preserved.
 
 Headings, section labels, introductory phrases, structural instructions,
-meta-statements, and filler are not independent items. A business objective
+meta-statements, and filler are not independent items. A source objective
 counts only when it adds meaning not already represented by detailed items; an
 umbrella and equivalent children are not double-counted. Generic topical overlap
 does not earn partial credit—a concrete semantic component must be present.
@@ -86,28 +86,34 @@ from idp_eval import (
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessEvaluator,
-    InstructionAdherenceEvaluator,
-    create_gateway_judge,
+    create_azure_judge,
     register_tracing,
 )
 
 register_tracing(project_name="idp-eval")  # optional
-judge = create_gateway_judge()
+judge = create_azure_judge(
+    model="deployment-name",
+    azure_endpoint="https://example-resource.openai.azure.com",
+    tenant_id="tenant-id",
+    client_id="client-id",
+    client_secret="client-secret",
+    api_version="2024-12-01-preview",
+)
 
 framework = EvaluationFramework(
-    evaluators=[
-        CoverageEvaluator,
-        FaithfulnessEvaluator,
-        InstructionAdherenceEvaluator,
-    ],
     judge=judge,
+    evaluators=[CoverageEvaluator, FaithfulnessEvaluator],
 )
 
 case = EvaluationCase(
-    input="Summarize the supplied product information.",
-    context=source_context,
-    output=generated_output,
-    instructions="Use exactly three concise bullet points.",
+    context={
+        "customer_profile": {"region": "US", "tier": "enterprise"},
+        "requirements": ["Response time under 2 seconds", "99.9% availability"],
+    },
+    output={
+        "summary": "Proposed service configuration.",
+        "actions": ["Apply regional routing", "Add availability monitoring"],
+    },
 )
 results = framework.evaluate(case)
 print(results["coverage"].score)
@@ -116,7 +122,9 @@ print(results["coverage"].score)
 Evaluator classes receive the shared judge. Constructed instances also work,
 including `CoverageEvaluator(judge, verbose=True)`. Each evaluator validates
 only its required fields; extra fields are allowed. Structured dictionaries and
-lists are rendered deterministically.
+lists are rendered recursively and deterministically. Dictionary keys become
+readable labels; no domain-specific schema is required. Case metadata is never
+included in evaluator prompts.
 
 ## Bulk, grouped, and async evaluation
 
@@ -125,9 +133,15 @@ framework.evaluate_many([case1, case2, case3])
 
 framework.evaluate_groups([
     {
-        "context": shared_context,
-        "outputs": [output1, output2],
-        "group_id": "group-1",
+        "group_id": "request-1",
+        "context": {
+            "requirements": ["Response time under 2 seconds"],
+            "constraints": ["Use approved regions"],
+        },
+        "outputs": [
+            {"summary": "Option A", "actions": ["Add caching"]},
+            {"summary": "Option B", "actions": ["Scale workers"]},
+        ],
     }
 ])
 
@@ -136,7 +150,9 @@ await framework.a_evaluate_many(cases, max_concurrency=4)
 
 Grouped evaluation simply fans each output into an ordinary independent case.
 Async evaluation preserves order and uses one global semaphore to cap judge
-calls. Each coverage case makes one judge call.
+calls. A list stored in `case.output` remains one structured output; only the
+explicit `group["outputs"]` list creates multiple cases. Each coverage case makes
+one judge call.
 
 ## Judge backends
 
@@ -223,8 +239,7 @@ IDP_EVAL_AZURE_REASONING_EFFORT
 `IDP_EVAL_CONFIG` may point to YAML containing `judge` and/or `azure_judge`
 sections. TLS verification is on by default; disabling it is only for controlled
 development. `reasoning_effort` is sent only when configured. Temperature is
-never added. The older `create_judge()` remains a deprecated thin alias for the
-gateway constructor.
+never added.
 
 ## Tracing and output
 

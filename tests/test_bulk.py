@@ -1,12 +1,16 @@
-"""evaluate_many / evaluate_groups orchestration and structured values (no LLM)."""
+"""Bulk/group orchestration and structured values (no live LLM)."""
+
+import copy
 
 import pytest
 
 from idp_eval import (
     EvaluationCase,
     EvaluationFramework,
+    EvaluationResult,
     CoverageEvaluator,
     InstructionAdherenceEvaluator,
+    Evaluator,
 )
 
 openpyxl = pytest.importorskip("openpyxl")
@@ -47,6 +51,19 @@ class ReusableSourceJudge:
                 }
             ]
         }
+
+
+class CapturingEvaluator(Evaluator):
+    """Capture fanned-out cases without interpreting their structured data."""
+
+    name = "capture"
+
+    def __init__(self):
+        self.cases = []
+
+    def evaluate(self, case):
+        self.cases.append(case)
+        return EvaluationResult("capture", 1.0, "ok", "captured")
 
 
 def _read(path, sheet="evaluations"):
@@ -241,3 +258,87 @@ def test_group_case_ids_override_is_preserved(tmp_path):
     ])
     _, rows = _read(path)
     assert [r["case_id"] for r in rows] == ["custom-a", "custom-b"]
+
+
+def test_group_preserves_generic_structured_fields_and_metadata_without_mutation():
+    group = {
+        "group_id": "request-1",
+        "input": {"operation": "compare", "options": [1, 2]},
+        "context": {
+            "service_limits": {"max_latency": "2 seconds", "region": "US"},
+            "requirements": ["99.9% availability", False, None],
+        },
+        "instructions": ["Use concise sections", {"max_items": 3}],
+        "outputs": [
+            {"summary": "First", "actions": ["A", "B"]},
+            {"summary": "Second", "actions": [{"name": "C"}]},
+        ],
+        "metadata": {"source": "benchmark", "tags": ["smoke"]},
+    }
+    original = copy.deepcopy(group)
+    evaluator = CapturingEvaluator()
+
+    results = EvaluationFramework([evaluator]).evaluate_groups([group])
+
+    assert len(results) == 2
+    assert [case.case_id for case in evaluator.cases] == [
+        "request-1:0",
+        "request-1:1",
+    ]
+    assert all(case.input == group["input"] for case in evaluator.cases)
+    assert all(case.context == group["context"] for case in evaluator.cases)
+    assert all(case.instructions == group["instructions"] for case in evaluator.cases)
+    assert [case.output for case in evaluator.cases] == group["outputs"]
+    assert all(
+        case.metadata
+        == {"source": "benchmark", "tags": ["smoke"], "group_id": "request-1"}
+        for case in evaluator.cases
+    )
+    assert evaluator.cases[0].metadata is not evaluator.cases[1].metadata
+    assert group == original
+
+
+def test_group_without_group_id_uses_stable_fallback_case_ids():
+    evaluator = CapturingEvaluator()
+    groups = [
+        {"context": "first", "outputs": ["a", "b"]},
+        {"context": "second", "outputs": ["c"]},
+    ]
+
+    EvaluationFramework([evaluator]).evaluate_groups(groups)
+
+    assert [case.case_id for case in evaluator.cases] == ["0:0", "0:1", "1:0"]
+
+
+def test_group_metadata_is_not_rendered_into_coverage_prompt():
+    class PromptJudge(ReusableSourceJudge):
+        def __init__(self):
+            super().__init__()
+            self.prompts = []
+
+        def generate_object(self, prompt, schema):
+            self.prompts.append(prompt)
+            return super().generate_object(prompt, schema)
+
+    judge = PromptJudge()
+    EvaluationFramework([CoverageEvaluator(judge)]).evaluate_groups(
+        [
+            {
+                "context": {"requirements": ["Keep response concise"]},
+                "outputs": [{"summary": "Concise response"}],
+                "metadata": {"private_marker": "DO_NOT_RENDER"},
+            }
+        ]
+    )
+
+    prompt_text = repr(judge.prompts[0])
+    assert "DO_NOT_RENDER" not in prompt_text
+    assert "private_marker" not in prompt_text
+
+
+def test_group_rejects_non_mapping_metadata():
+    framework = EvaluationFramework([CapturingEvaluator()])
+    with pytest.raises(ValueError, match="metadata.*mapping"):
+        framework.evaluate_groups(
+            [{"context": "c", "outputs": ["o"], "metadata": ["not", "mapping"]}]
+        )

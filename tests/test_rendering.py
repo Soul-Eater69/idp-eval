@@ -107,6 +107,29 @@ def test_dict_with_nested_dict_containing_list():
     )
 
 
+def test_deeply_nested_mixed_generic_data():
+    value = {
+        "service_limits": {
+            "max_latency": "2 seconds",
+            "regions": ["US", "EU"],
+            "controls": [
+                {"enabled": True, "threshold": 3},
+                {"enabled": False, "note": None},
+            ],
+        }
+    }
+
+    rendered = render_value(value)
+
+    assert "Service Limits:" in rendered
+    assert "Max Latency: 2 seconds" in rendered
+    assert "Regions:" in rendered
+    assert "- US" in rendered and "- EU" in rendered
+    assert "Enabled: true" in rendered
+    assert "Threshold: 3" in rendered
+    assert "Enabled: false" in rendered
+
+
 # --- order & determinism ----------------------------------------------------
 
 

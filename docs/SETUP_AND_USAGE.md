@@ -90,8 +90,7 @@ not use an API key or the corporate gateway URL.
 `azure_judge` section for Azure. Keep secrets out of committed files. Setting
 `verify_ssl=False` is only for controlled development environments.
 
-Judge creation is separate from tracing and never adds temperature. The legacy
-`create_judge()` name is a deprecated gateway alias.
+Judge creation is separate from tracing and never adds temperature.
 
 Evaluator wiring does not depend on the backend:
 
@@ -178,6 +177,28 @@ is deterministic. Required fields are evaluator-specific:
 | `InstructionAdherenceEvaluator` | `instructions`, `output` |
 | retrieval evaluators | `input`, `retrieved_documents` |
 
+Structured values are rendered recursively for prompts. Dictionary keys become
+readable labels (`max_latency` becomes `Max Latency`), lists become bullets, and
+nested dictionaries retain their hierarchy. Metadata is retained for reporting
+but is never rendered into prompts.
+
+```python
+case = EvaluationCase(
+    context={
+        "service_limits": {
+            "max_latency": "2 seconds",
+            "regions": ["US", "EU"],
+        },
+        "requirements": ["99.9% availability"],
+    },
+    output={
+        "summary": "Recommended service configuration.",
+        "actions": ["Add regional routing", "Monitor availability"],
+    },
+    metadata={"source": "benchmark"},
+)
+```
+
 ## 6. Coverage
 
 Coverage asks how much materially important information from the full context is
@@ -249,18 +270,34 @@ framework.evaluate_many([case1, case2])
 
 framework.evaluate_groups([
     {
-        "context": shared_context,
-        "outputs": [output1, output2],
-        "group_id": "group-1",
+        "group_id": "request-1",
+        "input": {"operation": "compare options"},
+        "context": {
+            "requirements": ["Response time under 2 seconds"],
+            "constraints": ["Use approved regions"],
+        },
+        "instructions": ["Keep the summary concise"],
+        "outputs": [
+            {"summary": "Option A", "actions": ["Add caching"]},
+            {"summary": "Option B", "actions": ["Scale workers"]},
+        ],
+        "case_ids": ["request-1:a", "request-1:b"],
+        "metadata": {"source": "benchmark"},
     }
 ])
 
 await framework.a_evaluate_many(cases, max_concurrency=4)
+await framework.a_evaluate_groups(groups, max_concurrency=4)
 ```
 
 Groups fan out into ordinary independent cases; evaluator work is not shared.
-Async results preserve input order and a framework-level semaphore limits all
-concurrent judge calls.
+Shared `input`, `context`, `instructions`, and `metadata` are copied to each case.
+Explicit `case_ids` win, followed by IDs derived from `group_id`, then stable
+group/output indexes. Inputs are not mutated. Async results preserve order and a
+framework-level semaphore limits all concurrent judge calls.
+
+`case.output=[...]` is one structured output and one trace. Only a list under the
+group API's explicit `outputs` key creates multiple cases and traces.
 
 ## 9. Output destinations
 

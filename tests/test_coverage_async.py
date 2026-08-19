@@ -126,6 +126,22 @@ def test_native_async_judge_is_used_and_bounded_without_event_loop_nesting():
     assert judge.max_concurrent == 2
 
 
+def test_async_groups_preserve_order_and_global_concurrency_limit():
+    judge = ProbeJudge(delay=0.02)
+    groups = [
+        {"group_id": "g1", "context": "source", "outputs": ["GOOD", "BAD"]},
+        {"group_id": "g2", "context": "source", "outputs": ["GOOD", "GOOD"]},
+    ]
+
+    results = asyncio.run(
+        _framework(judge).a_evaluate_groups(groups, max_concurrency=2)
+    )
+
+    assert [result["coverage"].score for result in results] == [1.0, 0.0, 1.0, 1.0]
+    assert judge.calls == 4
+    assert judge.max_concurrent == 2
+
+
 @pytest.mark.parametrize("bad", [0, -1, 1.5, "4", True, None])
 def test_invalid_max_concurrency_rejected(bad):
     framework = _framework(ProbeJudge(delay=0))

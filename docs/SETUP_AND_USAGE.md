@@ -138,7 +138,7 @@ from idp_eval import (
     EvaluationFramework,
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
-    SourceCoverageEvaluator,
+    CoverageEvaluator,
     TaskCoverageEvaluator,
     create_judge,
 )
@@ -148,7 +148,7 @@ judge = create_judge()
 framework = EvaluationFramework(
     evaluators=[
         FaithfulnessEvaluator,
-        SourceCoverageEvaluator,
+        CoverageEvaluator(judge, mode="dag"),
         TaskCoverageEvaluator,
         InstructionAdherenceEvaluator,
     ],
@@ -250,18 +250,39 @@ instruction `followed` or `violated`. Python calculates `followed / total`.
 ## 7. Coverage Example
 
 Coverage measures how completely the output represents important information from
-the context. There are two explicit variants:
+the context. There are two evaluators:
 
-| Evaluator                | Metric name       | Scope                                                            |
-| ------------------------ | ----------------- | --------------------------------------------------------------- |
-| `SourceCoverageEvaluator`| `source_coverage` | One-call whole-source coverage for lower latency. |
-| `TaskCoverageEvaluator`  | `task_coverage`   | Task-scoped two-stage coverage with an output-isolated denominator. |
+| Evaluator               | Metric name    | Scope                                                              |
+| ----------------------- | -------------- | ----------------------------------------------------------------- |
+| `CoverageEvaluator`     | `coverage`     | Whole-source coverage (`context + output`, no `input`). One class, two modes. |
+| `TaskCoverageEvaluator` | `task_coverage`| Task-scoped two-stage coverage with an output-isolated denominator. |
 
-Both use the same Python-derived `covered`/`partial`/`missing` =
-`1.0/0.5/0.0` scoring. Source coverage identifies and classifies important
-source items in one call; task coverage first extracts a fixed task-relevant
-denominator without seeing the output, then classifies it. Coverage focuses on
-omissions — unsupported additions are evaluated separately by faithfulness.
+`CoverageEvaluator(judge, mode="dag", verbose=False)` is the public whole-source
+API. It carries the metric name `coverage` in **both** modes (the mode is recorded
+in `details["mode"]`, not in the metric name):
+
+- **`mode="dag"` (default, recommended).** Output-isolated, two-stage. Stage 1
+  sees the **context only** and extracts ~10 consolidated source items; Stage 2
+  classifies that fixed set against the output in one call
+  (`judge_call_count == 2`). The output can never influence the denominator. The
+  `~10` figure is a **semantic consolidation target**, not a hard cap and not a
+  Python truncation — the extractor may return fewer or more when the source
+  genuinely requires it, and never drops a materially distinct point to hit the
+  number.
+- **`mode="g_eval"`.** One call sees `context + output` and both identifies and
+  classifies the items (`judge_call_count == 1`). Lower latency / fewer calls; the
+  tradeoff is that the output is visible while the denominator is being identified.
+
+All variants share the same Python-derived `covered`/`partial`/`missing` =
+`1.0/0.5/0.0` scoring — the LLM never returns a number. Task coverage first
+extracts a fixed task-relevant denominator without seeing the output, then
+classifies it. Coverage focuses on omissions — unsupported additions are evaluated
+separately by faithfulness.
+
+`SourceCoverageEvaluator` is a **deprecated** thin alias that constructs
+`CoverageEvaluator` in `mode="g_eval"` and preserves the legacy metric/span name
+`source_coverage`. It emits a `DeprecationWarning`; new code should use
+`CoverageEvaluator(judge, mode="g_eval")`.
 
 ### Task coverage — `input` scopes which parts of the context are relevant
 
@@ -286,46 +307,64 @@ result = framework.evaluate(case)["task_coverage"]
 Only deployment (task-relevant) information becomes coverage items; the billing
 sentence is ignored.
 
-### Source coverage — the whole context defines what should be covered
+### Whole-source coverage — the whole context defines what should be covered
 
 ```python
 case = EvaluationCase(
-    context=document,          # no input required for source coverage
+    context=document,          # no input required for whole-source coverage
     output=summary,
 )
 
 framework = EvaluationFramework(
-    evaluators=[SourceCoverageEvaluator],
+    evaluators=[CoverageEvaluator(judge, mode="dag")],   # default mode
     judge=judge,
 )
-result = framework.evaluate(case)["source_coverage"]
+result = framework.evaluate(case)["coverage"]
 ```
 
-The one-call judge receives `context + output`, identifies materially important
-source items, and classifies each with two booleans. Python derives item statuses
-and the final score. Typical uses are summarization, document compression, and
-generic source-to-output transforms.
-
-This is faster and always uses one judge call, including a not-applicable result.
-The tradeoff is that the output is visible while the judge identifies the source
-denominator. Use task coverage when task scoping and an output-isolated, fixed
-denominator are required. Details use `source_item` / `total_items`; task coverage
-details use `requirement` / `total_requirements`.
+In the default DAG mode the extractor sees the **context only** and consolidates
+it into ~10 source items (the output-isolated denominator); a second call
+classifies each item against the output with two booleans, and Python derives the
+statuses and final score. Swap to `CoverageEvaluator(judge, mode="g_eval")` to do
+the same in one call when latency matters more than an output-isolated
+denominator. Typical uses are summarization, document compression, and generic
+source-to-output transforms. `coverage` details use `source_item` /
+`final_item_count`; task coverage details use `requirement` /
+`total_requirements`.
 
 ### 7a. Coverage performance and options
 
-- **Source coverage: one call.** The compact response contains source items and
-  two booleans per item. `verbose=True` requests concise reasons for
-  partial/missing items in that same call. The deterministic Python explanation
-  and score require no additional model request. Source details include
-  `final_item_count`, `judge_call_count=1`, `verbose`, `evaluate_ms`, and
-  `total_ms`.
+- **DAG mode: two calls.** Stage 1 (`coverage.extract`) consolidates the context
+  into ~10 items without the output; Stage 2 (`coverage.classify`) classifies that
+  fixed set in a single call (`judge_call_count == 2`). `verbose=False` keeps the
+  details compact and **omits the per-item array**; `verbose=True` includes
+  `items` (with concise reasons) and populates the `coverage_items` Excel sheet.
+  Deterministic Python scoring requires no extra model request.
 
-- **Source coverage tradeoff.** Its one request includes the full context and
-  output, so very large inputs may still approach a gateway timeout. One call
-  reduces sequential/model-output overhead; it does not guarantee a latency
-  bound. Because the output is visible during item identification, the
-  denominator is not output-isolated.
+- **DAG safety batching.** The single Stage-2 classify call is only split when the
+  denominator is unusually large: `> CLASSIFICATION_BATCH_THRESHOLD` (20) items are
+  processed in safety batches of `SAFETY_CLASSIFICATION_BATCH_SIZE` (10) purely to
+  reduce gateway-timeout risk. So 21 items → 3 batches → `judge_call_count == 4`
+  (1 extract + 3 classify). This never truncates or reweights the denominator, and
+  there is no normal user-facing batch-size option in DAG mode.
+
+- **G-Eval mode: one call.** A single request sees `context + output`, identifies
+  the source items, and classifies them (`judge_call_count == 1`, including a
+  not-applicable result). Its one request includes the full context and output, so
+  very large inputs may still approach a gateway timeout, and because the output is
+  visible during identification the denominator is not output-isolated.
+
+- **Coverage diagnostics.** `coverage` details expose `mode`, `final_item_count`,
+  the covered/partial/missing counts, `judge_call_count`, `batch_count`,
+  `extract_ms`, `classify_ms`, `total_ms`, and `verbose`.
+
+- **Grouped shared extraction (DAG).** For one shared context with N outputs,
+  `framework.evaluate_groups` / `a_evaluate_groups` extracts the source items
+  **once** and reuses that fixed denominator for each output's classification
+  (1 extraction + one classify per output). Grouped DAG results add
+  `shared_extraction=True` and `classification_calls`, and report
+  `judge_call_count` as the per-output classify count (not 2). G-Eval and
+  single-output groups fall back to the normal per-case path.
 
 - **Task coverage: two stages.** Stage 1 extracts every materially distinct,
   task-relevant item without the output. Stage 2 classifies that fixed set.
@@ -346,8 +385,10 @@ details use `requirement` / `total_requirements`.
 ### 7b. Async coverage evaluation
 
 Independent cases run concurrently under one global judge-concurrency limiter.
-Source coverage contributes one call per case. Task coverage keeps dependent
-extract-then-classify stages, while independent Stage-2 batches may overlap.
+G-Eval coverage contributes one call per case. DAG coverage and task coverage keep
+dependent extract-then-classify stages, while independent Stage-2 (safety) batches
+may overlap. In grouped DAG runs the shared extraction finishes first, then the
+per-output classifications overlap under the same limiter.
 
 ```python
 results = await framework.a_evaluate(case)                      # one case
@@ -467,7 +508,7 @@ every call.
 
 ```python
 framework = EvaluationFramework(
-    evaluators=[SourceCoverageEvaluator, FaithfulnessEvaluator],
+    evaluators=[CoverageEvaluator(judge, mode="dag"), FaithfulnessEvaluator],
     judge=judge,
 )
 
@@ -505,7 +546,7 @@ cases = [
 ]
 
 results = framework.evaluate_many(cases)                      # all configured
-subset = framework.evaluate_many(cases, metrics=["source_coverage", "faithfulness"])
+subset = framework.evaluate_many(cases, metrics=["coverage", "faithfulness"])
 ```
 
 Failure behavior is **fail fast**: the whole batch is validated for the selected
@@ -514,8 +555,7 @@ work on earlier cases. Invalid cases raise a case-aware `ValueError` (naming the
 `case_id`) rather than being skipped or coerced to not-applicable.
 
 For a source (Theme) with several generated outputs (Epics), `evaluate_groups`
-is a thin convenience that fans out to one case per output and reuses
-`evaluate_many`:
+(and its async twin `a_evaluate_groups`) fans out to one case per output:
 
 ```python
 results = framework.evaluate_groups([
@@ -529,6 +569,11 @@ This produces **three independent cases / traces** (`theme-1:0`, `theme-1:1`,
 never sent as one coverage unit. Case ids come from an optional `case_ids` list,
 else `f"{group_id}:{i}"`, else `f"{group_index}:{i}"`; `group_id` is carried on
 `case.metadata` and output objects are never mutated.
+
+When a group has **more than one** output and DAG-mode `CoverageEvaluator` is
+selected, the shared context's source items are extracted **once** and reused for
+each output's classification (1 extraction + one classify per output), scoped to
+that single group — items are never reused across groups. See §7a.
 
 ## 11. Reading Results
 
@@ -550,7 +595,7 @@ metric-specific rather than a generic high/medium/low bucket:
 
 | Metric | `score == 1.0` | `0 < score < 1` | `score == 0.0` | not applicable |
 |---|---|---|---|---|
-| `source_coverage`, `task_coverage` | `complete` | `incomplete` | `missing` | `not_applicable` |
+| `coverage`, `task_coverage` | `complete` | `incomplete` | `missing` | `not_applicable` |
 | `instruction_adherence` | `fully_followed` | `violations_present` | `violated` | `not_applicable` |
 | `faithfulness` | provided by Phoenix (e.g. `faithful` / `unfaithful`) — not derived here |
 
@@ -625,7 +670,7 @@ results are readable without inspecting JSON:
 | Sheet | One row per | Columns |
 |---|---|---|
 | `evaluations` | case + metric | `run_name`, `dataset_name`, `case_id`, `trace_id`, `metric`, `score`, `label`, `explanation`, `annotator_kind`, `timestamp`, `raw_details_json` |
-| `source_coverage_items` | one-call judged source item | identity cols + `item_id`, `source_item`, `meaningfully_present`, `fully_present`, `status`, `item_score`, `reason` |
+| `coverage_items` | judged source item (verbose only) | identity cols + `item_id`, `source_item`, `meaningfully_present`, `fully_present`, `status`, `item_score`, `reason` |
 | `task_coverage_items` | task-relevant requirement | identity cols + `item_id`, `requirement`, `meaningfully_present`, `fully_present`, `status`, `item_score`, `reason` |
 | `instruction_adherence_items` | instruction | identity cols + `instruction_id`, `instruction`, `status`, `item_score`, `reason` |
 | `retrieval_documents` | judged retrieved document | `run_name`, `dataset_name`, `case_id`, `trace_id`, `rank`, `document_id`, `relevance_score`, `relevance_label`, `explanation`, `retrieval_score` |
@@ -633,7 +678,9 @@ results are readable without inspecting JSON:
 The identity columns (`run_name`, `dataset_name`, `case_id`, `trace_id`,
 `metric`) are repeated on every detail row so you can filter or pivot a single
 sheet. Detail sheets appear only when a metric with a registered item layout is
-written. Faithfulness and custom code metrics have no item list, so they show up
+written. `coverage_items` is populated only when `CoverageEvaluator` runs with
+`verbose=True` (the compact default omits the per-item array). Faithfulness and
+custom code metrics have no item list, so they show up
 only in `evaluations`; their full `details` are preserved in the trailing
 `raw_details_json` column. Numeric scores are stored as numbers, and header rows
 are bold, frozen, and auto-filtered.
@@ -712,7 +759,7 @@ first judge call). Fields it does not require may be omitted or left `None`.
 
 | Evaluator | Required fields |
 |---|---|
-| `SourceCoverageEvaluator` | `context`, `output` |
+| `CoverageEvaluator` | `context`, `output` |
 | `TaskCoverageEvaluator` | `input`, `context`, `output` |
 | `FaithfulnessEvaluator` | `context`, `output` |
 | `InstructionAdherenceEvaluator` | `instructions`, `output` |
@@ -740,7 +787,7 @@ Received:
 
 This required-field contract is **consistent across entry points**: it is
 enforced identically whether you call an evaluator directly
-(`SourceCoverageEvaluator(judge).evaluate(case)`), via `framework.evaluate(case)`,
+(`CoverageEvaluator(judge).evaluate(case)`), via `framework.evaluate(case)`,
 or via `framework.evaluate_many(cases)` (which pre-validates the whole batch). In
 every case validation runs before the first judge call.
 
@@ -753,7 +800,7 @@ Distinguish two outcomes:
   not-applicable result (`score=None`, `label="not_applicable"`).
 
 **Extra fields are allowed.** A case may carry fields an evaluator does not use
-(so one case can run several metrics). Running `SourceCoverageEvaluator` on a case
+(so one case can run several metrics). Running `CoverageEvaluator` on a case
 that also has `input` and `instructions` is valid — it consumes only `context`
 and `output`. Validation applies only to the metrics selected for the call (§9).
 
@@ -764,10 +811,12 @@ and `output`. Validation applies only to the metrics selected for the call (§9)
 - An empty instruction *extraction* (instructions supplied but nothing checkable
   found) is a metric-defined not-applicable: `score=None`,
   `label="not_applicable"`, Stage 2 skipped.
-- Source coverage is not applicable when its one-call response identifies no
-  important items. Task coverage is not applicable when Stage 1 identifies no
-  task-relevant requirements; its classification stage is then skipped. Both
-  return `score=None`, `label="not_applicable"`.
+- Whole-source `coverage` is not applicable when no important source items are
+  identified (in DAG mode that means Stage 1 extracts nothing and Stage 2 is
+  skipped; in g_eval mode the single call identifies nothing). Task coverage is
+  not applicable when Stage 1 identifies no task-relevant requirements; its
+  classification stage is then skipped. All return `score=None`,
+  `label="not_applicable"`.
 - Unknown requested metric names raise `KeyError`.
 - Missing judge configuration raises `ValueError` listing missing field names,
   without exposing secret values.

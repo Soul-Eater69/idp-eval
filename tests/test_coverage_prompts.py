@@ -16,12 +16,12 @@ from idp_eval.prompts.coverage_extract import (
     COVERAGE_EXTRACT_SCHEMA,
     render_coverage_extract_prompt,
 )
-from idp_eval.prompts.source_coverage import (
-    SOURCE_COVERAGE_PROMPT,
-    SOURCE_COVERAGE_PROMPT_V1,
-    SOURCE_COVERAGE_SCHEMA_COMPACT,
-    SOURCE_COVERAGE_SCHEMA_VERBOSE,
-    render_source_coverage_prompt,
+from idp_eval.prompts.coverage import (
+    COVERAGE_EXTRACT_SCHEMA as COVERAGE_DAG_EXTRACT_SCHEMA,
+    COVERAGE_GEVAL_SCHEMA_COMPACT,
+    COVERAGE_GEVAL_SCHEMA_VERBOSE,
+    render_coverage_extract_prompt as render_coverage_dag_extract_prompt,
+    render_coverage_geval_prompt,
 )
 
 
@@ -152,46 +152,68 @@ def test_classify_compact_prompt_forbids_reason_verbose_requests_it():
     assert "reason" in verbose and "one-sentence" in verbose
 
 
-# --- one-call source coverage ----------------------------------------------
+# --- whole-source coverage: DAG Stage-1 (~10 target) ------------------------
 
 
-def test_source_prompt_is_one_call_context_plus_output():
-    assert SOURCE_COVERAGE_PROMPT is SOURCE_COVERAGE_PROMPT_V1
-    messages = render_source_coverage_prompt(
-        context="SOURCE_TEXT", output="OUTPUT_TEXT"
-    )
-    assert [message["role"] for message in messages] == ["system", "user"]
+def test_dag_extract_is_context_only_no_output():
+    messages = render_coverage_dag_extract_prompt(context="SOURCE_TEXT")
+    assert [m["role"] for m in messages] == ["system", "user"]
     user = messages[1]["content"]
     assert "[CONTEXT]\nSOURCE_TEXT" in user
-    assert "[OUTPUT]\nOUTPUT_TEXT" in user
-    assert "[INPUT]" not in user
+    assert "[OUTPUT]" not in user and "[INPUT]" not in user
 
 
-def test_source_prompt_preserves_items_and_forbids_numeric_score():
-    system = " ".join(SOURCE_COVERAGE_PROMPT[0]["content"].split())
-    assert "materially distinct" in system
-    assert "Consolidation is not summarization" in system
+def test_dag_extract_targets_about_ten_without_hard_cap():
+    system = " ".join(render_coverage_dag_extract_prompt(context="x")[0]["content"].split())
+    assert "approximately 10" in system
+    assert "NOT a hard maximum" in system
+    assert 'NOT "pick the top 10"' in system
+    # semantic consolidation, independence, and no dropping of distinct items
+    assert "Consolidate" in system
     assert "independently satisfiable" in system
-    assert "Never invent source content" in system
+    assert "Never drop a materially distinct" in system
+    assert "return more" in system  # may exceed 10 when necessary
+    # extraction is output-isolated and diagnostic-free
+    assert "NOT given the generated answer" in system
+    assert "must not grade" in system
+
+
+def test_dag_extract_schema_is_source_item_strings_only():
+    item = COVERAGE_DAG_EXTRACT_SCHEMA["properties"]["items"]["items"]
+    assert set(item["properties"]) == {"source_item"}
+    assert item["required"] == ["source_item"]
+
+
+def test_dag_extract_render_does_not_mutate_template():
+    from idp_eval.prompts.coverage import COVERAGE_EXTRACT_PROMPT
+
+    before = copy.deepcopy(COVERAGE_EXTRACT_PROMPT)
+    render_coverage_dag_extract_prompt(context="a")
+    assert COVERAGE_EXTRACT_PROMPT == before
+
+
+# --- whole-source coverage: G-Eval (one-call identify + classify) -----------
+
+
+def test_geval_prompt_is_one_call_context_plus_output_same_rubric():
+    messages = render_coverage_geval_prompt(context="SRC", output="OUT")
+    user = messages[1]["content"]
+    assert "[CONTEXT]\nSRC" in user and "[OUTPUT]\nOUT" in user
+    system = " ".join(messages[0]["content"].split())
+    # same source-item rubric as DAG Stage 1
+    assert "approximately 10" in system
+    assert "NOT a hard maximum" in system
+    assert "independently satisfiable" in system
+    # plus classification, and Python owns the score
+    assert "meaningfully_present" in system and "fully_present" in system
     assert "Do not return an aggregate score" in system
-    assert "maximum item count" in system
 
 
-def test_source_prompt_render_does_not_mutate_template():
-    before = copy.deepcopy(SOURCE_COVERAGE_PROMPT)
-    render_source_coverage_prompt(context="a", output="b")
-    assert SOURCE_COVERAGE_PROMPT == before
-
-
-def test_source_compact_and_verbose_schemas():
-    compact = SOURCE_COVERAGE_SCHEMA_COMPACT["properties"]["items"]["items"]
-    verbose = SOURCE_COVERAGE_SCHEMA_VERBOSE["properties"]["items"]["items"]
+def test_geval_compact_and_verbose_schemas():
+    compact = COVERAGE_GEVAL_SCHEMA_COMPACT["properties"]["items"]["items"]
+    verbose = COVERAGE_GEVAL_SCHEMA_VERBOSE["properties"]["items"]["items"]
     base = {"source_item", "meaningfully_present", "fully_present"}
     assert set(compact["properties"]) == base
-    assert compact["required"] == [
-        "source_item",
-        "meaningfully_present",
-        "fully_present",
-    ]
+    assert compact["required"] == ["source_item", "meaningfully_present", "fully_present"]
     assert set(verbose["properties"]) == base | {"reason"}
     assert "reason" in verbose["required"]

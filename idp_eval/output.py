@@ -318,8 +318,10 @@ class _ItemSheet:
 # metric's item list into a dedicated sheet. Metrics without an entry
 # (faithfulness, arbitrary custom metrics) appear only in the summary sheet.
 _ITEM_SHEETS: dict[str, _ItemSheet] = {
-    "source_coverage": _ItemSheet(
-        "source_coverage_items",
+    # Whole-source coverage. ``details["items"]`` is only present in verbose mode
+    # (compact results keep details lean), so this sheet fills for verbose runs.
+    "coverage": _ItemSheet(
+        "coverage_items",
         "items",
         (
             ("item_id", "id"),

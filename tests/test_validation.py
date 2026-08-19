@@ -10,7 +10,7 @@ from idp_eval import (
     EvaluationFramework,
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
-    SourceCoverageEvaluator,
+    CoverageEvaluator,
     TaskCoverageEvaluator,
 )
 
@@ -75,7 +75,7 @@ def _source_judge():
 
 
 def test_required_fields_are_declared():
-    assert SourceCoverageEvaluator.required_fields == ("context", "output")
+    assert CoverageEvaluator.required_fields == ("context", "output")
     assert TaskCoverageEvaluator.required_fields == ("input", "context", "output")
     assert FaithfulnessEvaluator.required_fields == ("context", "output")
     assert InstructionAdherenceEvaluator.required_fields == (
@@ -87,18 +87,18 @@ def test_required_fields_are_declared():
 
 
 def test_source_coverage_requires_context_and_output_only():
-    ev = SourceCoverageEvaluator(llm=object())
+    ev = CoverageEvaluator(llm=object())
     ev.validate_case(EvaluationCase(context="c", output="o"))  # no input needed
 
 
 def test_source_coverage_missing_context_fails():
-    ev = SourceCoverageEvaluator(llm=object())
+    ev = CoverageEvaluator(llm=object())
     with pytest.raises(ValueError, match="requires non-empty `context`"):
         ev.validate_case(EvaluationCase(output="o"))
 
 
 def test_source_coverage_missing_output_fails():
-    ev = SourceCoverageEvaluator(llm=object())
+    ev = CoverageEvaluator(llm=object())
     with pytest.raises(ValueError, match="requires non-empty `output`"):
         ev.validate_case(EvaluationCase(context="c"))
 
@@ -148,14 +148,14 @@ def test_instruction_adherence_requires_instructions_and_output():
 
 
 def test_empty_structures_count_as_missing():
-    ev = SourceCoverageEvaluator(llm=object())
+    ev = CoverageEvaluator(llm=object())
     for empty in [{}, [], "", "  ", None]:
         with pytest.raises(ValueError):
             ev.validate_case(EvaluationCase(context=empty, output="o"))
 
 
 def test_scalar_zero_and_false_are_present():
-    ev = SourceCoverageEvaluator(llm=object())
+    ev = CoverageEvaluator(llm=object())
     ev.validate_case(EvaluationCase(context=0, output=False))  # legitimate values
 
 
@@ -163,7 +163,7 @@ def test_scalar_zero_and_false_are_present():
 
 
 def test_extra_fields_do_not_fail_validation():
-    ev = SourceCoverageEvaluator(llm=object())
+    ev = CoverageEvaluator(llm=object())
     # input + instructions present but unused by source coverage -> still valid.
     ev.validate_case(
         EvaluationCase(input="task", context="c", output="o", instructions="rules")
@@ -190,14 +190,14 @@ def test_error_message_lists_present_and_missing():
 def test_direct_source_coverage_missing_context_errors_no_judge_call():
     judge = CountingJudge()
     with pytest.raises(ValueError, match="requires non-empty `context`"):
-        SourceCoverageEvaluator(judge).evaluate(EvaluationCase(output="o"))
+        CoverageEvaluator(judge, mode="g_eval").evaluate(EvaluationCase(output="o"))
     assert judge.calls == 0
 
 
 def test_direct_source_coverage_missing_output_errors_no_judge_call():
     judge = CountingJudge()
     with pytest.raises(ValueError, match="requires non-empty `output`"):
-        SourceCoverageEvaluator(judge).evaluate(EvaluationCase(context="c"))
+        CoverageEvaluator(judge, mode="g_eval").evaluate(EvaluationCase(context="c"))
     assert judge.calls == 0
 
 
@@ -244,7 +244,7 @@ def test_direct_and_framework_reject_the_same_case_identically():
 def _framework():
     return EvaluationFramework(
         evaluators=[
-            SourceCoverageEvaluator(_source_judge()),
+            CoverageEvaluator(_source_judge(), mode="g_eval", verbose=True),
             TaskCoverageEvaluator(object()),
             FaithfulnessEvaluator(object()),
         ]
@@ -261,9 +261,9 @@ def test_default_evaluate_fails_when_a_selected_metric_is_unsatisfied():
 def test_metric_subset_skips_validation_for_unselected():
     case = EvaluationCase(context="c", output="o")  # no input
     results = _framework().evaluate(
-        case, metrics=["source_coverage", "faithfulness"]
+        case, metrics=["coverage", "faithfulness"]
     )
-    assert set(results) == {"source_coverage", "faithfulness"}
+    assert set(results) == {"coverage", "faithfulness"}
 
 
 def test_unknown_metric_raises_clear_error():

@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from idp_eval import EvaluationCase, EvaluationFramework, SourceCoverageEvaluator
+from idp_eval import EvaluationCase, EvaluationFramework, CoverageEvaluator
 
 
 class ProbeJudge:
@@ -46,7 +46,7 @@ class ProbeJudge:
 
 
 def _framework(judge):
-    return EvaluationFramework(evaluators=[SourceCoverageEvaluator(judge)])
+    return EvaluationFramework(evaluators=[CoverageEvaluator(judge, mode="g_eval")])
 
 
 def _case(output, case_id):
@@ -60,8 +60,8 @@ def test_sync_and_async_each_use_one_call():
     async_result = asyncio.run(
         _framework(async_judge).a_evaluate(_case("GOOD", "a"))
     )
-    assert sync["source_coverage"].score == 1.0
-    assert async_result["source_coverage"].score == 1.0
+    assert sync["coverage"].score == 1.0
+    assert async_result["coverage"].score == 1.0
     assert sync_judge.calls == async_judge.calls == 1
 
 
@@ -69,7 +69,7 @@ def test_a_evaluate_many_preserves_order_and_scores():
     judge = ProbeJudge(delay=0)
     cases = [_case("GOOD", "c1"), _case("BAD", "c2"), _case("GOOD", "c3")]
     results = asyncio.run(_framework(judge).a_evaluate_many(cases))
-    assert [result["source_coverage"].score for result in results] == [1.0, 0.0, 1.0]
+    assert [result["coverage"].score for result in results] == [1.0, 0.0, 1.0]
     assert judge.calls == 3
 
 
@@ -130,11 +130,11 @@ def test_concurrent_cases_keep_separate_traces_and_one_stage_span(spans):
 
     finished = spans.get_finished_spans()
     roots = [span for span in finished if span.name == "idp_eval.evaluate"]
-    stages = [span for span in finished if span.name == "source_coverage.evaluate"]
+    stages = [span for span in finished if span.name == "coverage.evaluate"]
     assert len(roots) == len(stages) == 3
     assert len({span.context.trace_id for span in roots}) == 3
     assert not any(
-        span.name in {"source_coverage.extract", "source_coverage.classify"}
+        span.name in {"coverage.extract", "coverage.classify"}
         for span in finished
     )
 
@@ -144,7 +144,7 @@ def test_root_span_records_one_call_source_summary(spans):
     root = next(
         span for span in spans.get_finished_spans() if span.name == "idp_eval.evaluate"
     )
-    assert root.attributes["source_coverage.item_count"] == 1
-    assert root.attributes["source_coverage.judge_call_count"] == 1
-    assert root.attributes["source_coverage.verbose"] is False
-    assert "source_coverage.total_ms" in root.attributes
+    assert root.attributes["coverage.item_count"] == 1
+    assert root.attributes["coverage.judge_call_count"] == 1
+    assert root.attributes["coverage.verbose"] is False
+    assert "coverage.total_ms" in root.attributes

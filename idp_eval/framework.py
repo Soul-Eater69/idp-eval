@@ -184,12 +184,20 @@ class EvaluationFramework:
         for metric_name in selected:
             self._evaluators[metric_name].validate_case(case)
 
+    def _shared_extraction_metric(self, selected: list[str]) -> str | None:
+        """The selected metric (if any) that supports grouped shared extraction."""
+        for name in selected:
+            if getattr(self._evaluators[name], "uses_shared_extraction", False):
+                return name
+        return None
+
     def evaluate(
         self,
         case: EvaluationCase,
         metrics: list[str] | None = None,
         run_name: str | None = None,
         dataset_name: str | None = None,
+        shared_items: dict[str, list] | None = None,
     ) -> dict[str, EvaluationResult]:
         """Evaluates one case (one trace) with the selected metrics.
 
@@ -236,6 +244,11 @@ class EvaluationFramework:
                 ):
                     results[metric_name] = evaluator.evaluate_shared(
                         case, relevance_pass
+                    )
+                elif shared_items is not None and metric_name in shared_items:
+                    # Grouped reuse: classify the group's pre-extracted items.
+                    results[metric_name] = evaluator.evaluate_with_items(
+                        case, shared_items[metric_name]
                     )
                 else:
                     results[metric_name] = evaluator.evaluate(case)
@@ -370,15 +383,95 @@ class EvaluationFramework:
         carried on ``case.metadata`` (never injected into prompts); output objects
         are not mutated.
 
+        For ``mode="dag"`` coverage, when a group has a shared context and more
+        than one output, the source items are extracted **once** for the group and
+        reused for each output's classification (1 extraction + one classify per
+        output, not one extract+classify per output). ``details["shared_extraction"]``
+        marks the reused per-output results.
+
         Returns:
             One result mapping per fanned-out case, in group-then-output order.
         """
-        cases: list[EvaluationCase] = []
+        selected = self._select(metrics)
+        all_results: list[dict[str, EvaluationResult]] = []
         for group_index, group in enumerate(groups):
-            cases.extend(self._fan_out_group(group, group_index))
-        return self.evaluate_many(
-            cases, metrics=metrics, run_name=run_name, dataset_name=dataset_name
+            cases = self._fan_out_group(group, group_index)
+            for index, case in enumerate(cases):
+                try:
+                    self._validate_case(case, selected)
+                except ValueError as exc:
+                    label = case.case_id if case.case_id is not None else index
+                    raise ValueError(f"Case {label}: {exc}") from exc
+
+            shared_items = None
+            cov = self._shared_extraction_metric(selected)
+            if cov is not None and len(cases) > 1:
+                shared_items = {cov: self._evaluators[cov].extract_items(cases[0])}
+
+            for case in cases:
+                all_results.append(self.evaluate(
+                    case, metrics=metrics, run_name=run_name,
+                    dataset_name=dataset_name, shared_items=shared_items,
+                ))
+        return all_results
+
+    async def a_evaluate_groups(
+        self,
+        groups: "Iterable[dict]",
+        metrics: list[str] | None = None,
+        run_name: str | None = None,
+        dataset_name: str | None = None,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+    ) -> list[dict[str, EvaluationResult]]:
+        """Async grouped evaluation with shared DAG extraction reuse.
+
+        For each group with a shared context and >1 output, the coverage (dag)
+        source items are extracted **once** (that extraction finishes before the
+        group's classifications), then each output's classification runs
+        concurrently. All judge calls (extractions and classifications, across all
+        groups) are bounded by one shared ``asyncio.Semaphore(max_concurrency)``.
+        Each output keeps its own root ``idp_eval.evaluate`` trace; group 1's
+        extraction is never reused for group 2. Results are returned in
+        group-then-output order; persistence happens serially.
+        """
+        self._validate_max_concurrency(max_concurrency)
+        selected = self._select(metrics)
+        cov = self._shared_extraction_metric(selected)
+
+        group_cases: list[list[EvaluationCase]] = []
+        for group_index, group in enumerate(groups):
+            cases = self._fan_out_group(group, group_index)
+            for index, case in enumerate(cases):
+                try:
+                    self._validate_case(case, selected)
+                except ValueError as exc:
+                    label = case.case_id if case.case_id is not None else index
+                    raise ValueError(f"Case {label}: {exc}") from exc
+            group_cases.append(cases)
+
+        limiter = asyncio.Semaphore(max_concurrency)
+
+        async def process_group(cases):
+            shared_items = None
+            if cov is not None and len(cases) > 1:
+                # Extract once for the group before any classification.
+                items = await self._evaluators[cov].a_extract_items(cases[0], limiter)
+                shared_items = {cov: items}
+            return await asyncio.gather(*(
+                self._a_run_case(c, selected, run_name, dataset_name, limiter, shared_items)
+                for c in cases
+            ))
+
+        group_pairs = await asyncio.gather(
+            *(process_group(cases) for cases in group_cases)
         )
+
+        results_list: list[dict[str, EvaluationResult]] = []
+        for pairs in group_pairs:
+            for results, records in pairs:
+                self._publish(records, results)
+                results_list.append(results)
+        return results_list
 
     @staticmethod
     def _fan_out_group(group: dict, group_index: int) -> list[EvaluationCase]:
@@ -506,6 +599,7 @@ class EvaluationFramework:
         run_name: str | None,
         dataset_name: str | None,
         limiter: asyncio.Semaphore,
+        shared_items: dict[str, list] | None = None,
     ) -> tuple[dict[str, EvaluationResult], list[EvaluationRecord]]:
         """Runs one case's selected evaluators within its own root trace.
 
@@ -535,6 +629,12 @@ class EvaluationFramework:
                     # Deterministic: reads the shared judgments, no judge calls.
                     results[metric_name] = evaluator.evaluate_shared(
                         case, relevance_pass
+                    )
+                    continue
+                if shared_items is not None and metric_name in shared_items:
+                    # Grouped reuse: classify the group's pre-extracted items.
+                    results[metric_name] = await evaluator.a_evaluate_with_items(
+                        case, shared_items[metric_name], judge_limiter=limiter
                     )
                     continue
                 a_evaluate = getattr(evaluator, "a_evaluate", None)

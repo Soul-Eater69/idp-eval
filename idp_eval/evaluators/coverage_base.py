@@ -282,6 +282,15 @@ class _TwoStageCoverageEvaluator(Evaluator):
             response = self._llm.generate_object(prompt=prompt, schema=schema)
         return response.get("requirements", [])
 
+    def _plan_batches(self, requirements: list[dict]) -> list[list[dict]]:
+        """Splits the fixed item set into Stage-2 classification batches.
+
+        Default: fixed-size batches of ``classification_batch_size``. Subclasses
+        (e.g. whole-source coverage) may override to keep a single call for normal
+        sizes and only split unusually large item sets.
+        """
+        return _split_batches(requirements, self._classification_batch_size)
+
     def _run_classify(
         self, case: EvaluationCase, requirements: list[dict]
     ) -> tuple[list[dict], int]:
@@ -293,7 +302,7 @@ class _TwoStageCoverageEvaluator(Evaluator):
         """
         rendered_input = render_value(self._classify_input(case))
         rendered_output = render_value(case.output)
-        batches = _split_batches(requirements, self._classification_batch_size)
+        batches = self._plan_batches(requirements)
         batch_count = len(batches)
 
         if batch_count == 1:
@@ -338,7 +347,7 @@ class _TwoStageCoverageEvaluator(Evaluator):
         """Async Stage 2: independent batches overlap under the shared limiter."""
         rendered_input = render_value(self._classify_input(case))
         rendered_output = render_value(case.output)
-        batches = _split_batches(requirements, self._classification_batch_size)
+        batches = self._plan_batches(requirements)
         batch_count = len(batches)
 
         if batch_count == 1:

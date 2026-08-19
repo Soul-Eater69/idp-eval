@@ -10,7 +10,7 @@ from idp_eval import (
     EvaluationResult,
     InstructionAdherenceEvaluator,
     PersistenceError,
-    SourceCoverageEvaluator,
+    CoverageEvaluator,
     TaskCoverageEvaluator,
 )
 from idp_eval.output import (
@@ -201,31 +201,31 @@ def test_task_coverage_items_sheet(tmp_path):
     assert rows[0]["case_id"] == "gt-001" and rows[0]["metric"] == "task_coverage"
 
 
-def test_source_coverage_items_sheet(tmp_path):
+def test_coverage_items_sheet(tmp_path):
     path = tmp_path / "sc.xlsx"
     framework = EvaluationFramework(
-        evaluators=[SourceCoverageEvaluator(_source_judge())],
+        evaluators=[CoverageEvaluator(_source_judge(), mode="g_eval", verbose=True)],
         output="excel",
         excel_path=str(path),
     )
     framework.evaluate(CASE)
 
-    assert "source_coverage_items" in _sheet_names(path)
-    header, _ = _read_xlsx(path, "source_coverage_items")
+    assert "coverage_items" in _sheet_names(path)
+    header, _ = _read_xlsx(path, "coverage_items")
     assert header == (
         "run_name", "dataset_name", "case_id", "trace_id", "metric",
         "item_id", "source_item", "meaningfully_present", "fully_present",
         "status", "item_score", "reason",
     )
-    rows = _rows_as_dicts(path, "source_coverage_items")
+    rows = _rows_as_dicts(path, "coverage_items")
     assert rows[0]["source_item"] == "Keep the identity provider."
     assert rows[0]["status"] == "partial"
     assert rows[0]["item_score"] == 0.5
     details = json.loads(_rows_as_dicts(path, "evaluations")[0]["raw_details_json"])
     assert details["judge_call_count"] == 1
     assert details["final_item_count"] == 1
-    assert "evaluate_ms" in details and "total_ms" in details
-    assert "extract_ms" not in details and "classify_ms" not in details
+    assert details["mode"] == "g_eval"
+    assert "classify_ms" in details and "total_ms" in details
 
 
 def test_instruction_adherence_items_sheet(tmp_path):
@@ -281,17 +281,17 @@ def test_multiple_metrics_share_one_workbook(tmp_path):
 def test_multiple_cases_append_to_item_sheet(tmp_path):
     path = tmp_path / "append.xlsx"
     framework = EvaluationFramework(
-        evaluators=[SourceCoverageEvaluator(_source_judge())],
+        evaluators=[CoverageEvaluator(_source_judge(), mode="g_eval", verbose=True)],
         output="excel",
         excel_path=str(path),
     )
     framework.evaluate(EvaluationCase(case_id="c1", input="t", context="c", output="o"))
     # Second case reuses the SAME writer so rows accumulate in one workbook; a
     # fresh scripted judge answers the new case's two stages.
-    framework._evaluators["source_coverage"] = SourceCoverageEvaluator(_source_judge())
+    framework._evaluators["coverage"] = CoverageEvaluator(_source_judge(), mode="g_eval", verbose=True)
     framework.evaluate(EvaluationCase(case_id="c2", input="t", context="c", output="o"))
 
-    rows = _rows_as_dicts(path, "source_coverage_items")
+    rows = _rows_as_dicts(path, "coverage_items")
     assert [r["case_id"] for r in rows] == ["c1", "c2"]
 
 
@@ -352,12 +352,12 @@ def _stateless_source_judge(*, reasons):
 def test_excel_reason_blank_in_compact_mode(tmp_path):
     path = tmp_path / "compact.xlsx"
     framework = EvaluationFramework(
-        evaluators=[SourceCoverageEvaluator(_stateless_source_judge(reasons=False))],
+        evaluators=[CoverageEvaluator(_stateless_source_judge(reasons=False), mode="g_eval", verbose=True)],
         output="excel",
         excel_path=str(path),
     )
     framework.evaluate(EvaluationCase(context="c", output="o", case_id="k1"))
-    rows = _rows_as_dicts(path, "source_coverage_items")
+    rows = _rows_as_dicts(path, "coverage_items")
     assert [r["status"] for r in rows] == ["partial", "missing"]
     assert all(r["reason"] in (None, "") for r in rows)  # blank, not invented
 
@@ -366,8 +366,8 @@ def test_excel_reason_written_in_verbose_mode(tmp_path):
     path = tmp_path / "verbose.xlsx"
     framework = EvaluationFramework(
         evaluators=[
-            SourceCoverageEvaluator(
-                _stateless_source_judge(reasons=True), verbose=True
+            CoverageEvaluator(
+                _stateless_source_judge(reasons=True), mode="g_eval", verbose=True
             )
         ],
         output="excel",
@@ -376,7 +376,7 @@ def test_excel_reason_written_in_verbose_mode(tmp_path):
     framework.evaluate(EvaluationCase(context="c", output="o", case_id="k1"))
     summary = _rows_as_dicts(path, "evaluations")
     assert summary[0]["score"] == 0.25  # same score regardless of verbosity
-    rows = _rows_as_dicts(path, "source_coverage_items")
+    rows = _rows_as_dicts(path, "coverage_items")
     assert rows[0]["reason"] == "qualifier missing"
     assert rows[1]["reason"] == "SSO absent"
 
@@ -399,7 +399,7 @@ def test_async_evaluate_many_writes_per_case_rows(tmp_path):
 
     path = tmp_path / "async.xlsx"
     framework = EvaluationFramework(
-        evaluators=[SourceCoverageEvaluator(_AllCovered())],
+        evaluators=[CoverageEvaluator(_AllCovered(), mode="g_eval", verbose=True)],
         output="excel",
         excel_path=str(path),
     )
@@ -411,7 +411,7 @@ def test_async_evaluate_many_writes_per_case_rows(tmp_path):
 
     summary = _rows_as_dicts(path, "evaluations")
     assert [r["case_id"] for r in summary] == ["a1", "a2"]  # order preserved
-    item_rows = _rows_as_dicts(path, "source_coverage_items")
+    item_rows = _rows_as_dicts(path, "coverage_items")
     assert [r["case_id"] for r in item_rows] == ["a1", "a1", "a2", "a2"]
 
 

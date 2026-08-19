@@ -198,25 +198,36 @@ def test_task_coverage_stage_span_names(spans):
     assert "task_coverage.extract" in names and "task_coverage.classify" in names
 
 
-def test_source_coverage_stage_span_names(spans):
-    from idp_eval import SourceCoverageEvaluator
+def test_coverage_g_eval_stage_span_name(spans):
+    from idp_eval import CoverageEvaluator
 
     judge = ScriptedJudge(
-        {
-            "items": [
-                {
-                    "source_item": "a",
-                    "meaningfully_present": True,
-                    "fully_present": True,
-                }
-            ]
-        }
+        {"items": [{"source_item": "a", "meaningfully_present": True,
+                    "fully_present": True}]}
     )
-    EvaluationFramework(evaluators=[SourceCoverageEvaluator(judge)]).evaluate(CASE)
+    EvaluationFramework(evaluators=[CoverageEvaluator(judge, mode="g_eval")]).evaluate(CASE)
     names = _names(spans)
-    assert names.count("source_coverage.evaluate") == 1
-    assert "source_coverage.extract" not in names
-    assert "source_coverage.classify" not in names
+    assert names.count("coverage.evaluate") == 1  # one call
+    assert "coverage.extract" not in names and "coverage.classify" not in names
+    # No legacy source_coverage.* spans after the rename.
+    assert not any(n.startswith("source_coverage.") for n in names)
+
+
+def test_coverage_dag_stage_span_names(spans):
+    from idp_eval import CoverageEvaluator
+
+    judge = ScriptedJudge(
+        {"items": [{"source_item": "a"}, {"source_item": "b"}]},
+        {"requirements": [
+            {"id": "S1", "meaningfully_present": True, "fully_present": True},
+            {"id": "S2", "meaningfully_present": True, "fully_present": False},
+        ]},
+    )
+    EvaluationFramework(evaluators=[CoverageEvaluator(judge, mode="dag")]).evaluate(CASE)
+    names = _names(spans)
+    assert names.count("coverage.extract") == 1
+    assert names.count("coverage.classify") == 1
+    assert "coverage.classify.batch" not in names  # single classify call normally
 
 
 def test_supplemental_result_attributes_on_root_span(spans):

@@ -22,7 +22,7 @@ meaning. `instruction_adherence` reads `instructions` and never falls back to
 | Metric                  | Question                                      | Direction               | Better |
 | ----------------------- | --------------------------------------------- | ----------------------- | ------ |
 | `faithfulness`          | Is the output grounded in the context?        | `output -> context`     | higher |
-| `source_coverage`       | One-call whole-source coverage: how much important source information appears in the output? | `context + output` | higher |
+| `coverage`              | Whole-source coverage. Default DAG mode uses an output-isolated denominator; `g_eval` mode provides a lower-call one-pass alternative. | `context + output` | higher |
 | `task_coverage`         | Task-scoped two-stage coverage with an output-isolated denominator. | `input + context -> output` | higher |
 | `instruction_adherence` | Did the output obey the supplied explicit instructions? | `instructions -> output` | higher |
 | `relevance_at_{k}`      | What fraction of the top-K retrieved docs are relevant? (= Precision@K, binary) | `query -> retrieved docs` | higher |
@@ -31,7 +31,7 @@ meaning. `instruction_adherence` reads `instructions` and never falls back to
 Complementary questions:
 
 - **Faithfulness** — did the output **ADD** unsupported information?
-- **Source coverage** — did the output **OMIT** important information from the whole source?
+- **Coverage** — did the output **OMIT** important information from the whole source?
 - **Task coverage** — did the output **OMIT** source information relevant to the task?
 - **Instruction Adherence** — did the output **OBEY** the supplied explicit instructions?
 - **Relevance@K / nDCG@K** — are the **RETRIEVED** documents relevant, and well **RANKED**?
@@ -48,10 +48,30 @@ in Python — no extra LLM call). Both metrics **share one document-relevance pa
 path, and write a single shared `retrieval_documents` Excel sheet. See
 `docs/SETUP_AND_USAGE.md` §8a.
 
-`source_coverage` uses one itemized judge call for lower latency;
-`task_coverage` uses output-isolated extraction followed by classification for a
-fixed, task-scoped denominator. Both map `covered`/`partial`/`missing` to
-`1.0`/`0.5`/`0.0` and calculate the final score in Python. See
+### Coverage
+
+`CoverageEvaluator(judge, mode="dag")` (default) and `CoverageEvaluator(judge,
+mode="g_eval")` both answer whole-source coverage (`context + output`, no `input`)
+with metric name `coverage`:
+
+- **DAG** (default, recommended): output-isolated denominator. Stage 1 sees the
+  context only and extracts ~10 consolidated source items; Stage 2 classifies all
+  of them against the output in one call (`judge_call_count == 2`). The output
+  cannot influence the denominator. `~10` is a **semantic target** reached by
+  consolidation, never a hard truncation — it may return fewer or more when the
+  source requires it. An unusually large item set (> 20) is split into safety
+  batches only to reduce gateway-timeout risk.
+- **G-Eval** (`mode="g_eval"`): one call sees context + output and both identifies
+  and classifies the items (`judge_call_count == 1`). Lower latency / fewer calls;
+  the output is visible while identifying items.
+
+Both use the same source-item rubric and `covered`/`partial`/`missing` =
+`1.0`/`0.5`/`0.0` scoring computed in Python. For **grouped** evaluation
+(`framework.evaluate_groups` / `a_evaluate_groups`), DAG mode extracts one shared
+context's items **once** and reuses them for each output's classification (1
+extraction + one classify per output). `SourceCoverageEvaluator` is a deprecated
+alias for the g_eval one-call behavior. `task_coverage` is separate: it scopes by
+`input` and keeps its two-stage output-isolated denominator. See
 `docs/SETUP_AND_USAGE.md` §7.
 
 ### Scores vs. labels
@@ -63,7 +83,7 @@ thresholds:
 
 | Metric | `score == 1.0` | `0 < score < 1` | `score == 0.0` | not applicable |
 | ------ | -------------- | --------------- | -------------- | -------------- |
-| `source_coverage` / `task_coverage` | `complete` | `incomplete` | `missing` | `not_applicable` |
+| `coverage` / `task_coverage` | `complete` | `incomplete` | `missing` | `not_applicable` |
 | `instruction_adherence` | `fully_followed` | `violations_present` | `violated` | `not_applicable` |
 | `faithfulness` | Phoenix-provided label (e.g. `faithful` / `unfaithful`) — unchanged |
 
@@ -82,7 +102,7 @@ There is deliberately **no separate `hallucination` metric**.
 Faithfulness is **Phoenix built-in** (`FaithfulnessEvaluator`) and measures
 whether the output **adds unsupported information**.
 
-### Coverage
+### Task coverage (two-stage detail)
 
 Task coverage measures how completely the generated output represents the
 task-relevant information in the supplied context. It is a **two-stage** metric:
@@ -129,18 +149,15 @@ classification calls (never one call per requirement). This is intentional — i
 isolates the requirement denominator from the output and improves auditability and
 stability.
 
-Source coverage uses a separate one-call prompt receiving `context + output`. In
-that one response the judge identifies materially important source items and
-classifies them with the same binary rubric; Python still derives statuses and
-scores. This lowers latency, but the source denominator is not output-isolated.
+Whole-source `coverage` (see the [Coverage](#coverage) section above) follows the
+same rubric and scoring but is task-agnostic (`context + output`, no `input`). Its
+default `mode="dag"` is likewise two-stage/output-isolated; `mode="g_eval"` does it
+in one call. `CoverageEvaluator` uses `prompts/coverage.py`; `task_coverage` uses
+`prompts/coverage_extract.py` + `prompts/coverage_classify.py`.
 
 **Known limitation (v1):** deduplication is normalized-exact only, so semantic
 near-duplicates may remain distinct. See
 [Roadmap](#coverage-roadmap-not-yet-implemented).
-
-Uses two versioned Phoenix-style prompts: `prompts/coverage_extract.py`
-(`COVERAGE_EXTRACT_PROMPT_V1`) and `prompts/coverage_classify.py`
-(`COVERAGE_CLASSIFY_PROMPT_V1`).
 
 ### Instruction Adherence
 
@@ -174,7 +191,8 @@ meaningful instructions. Neither case is treated as a perfect or failing score.
 `EvaluationCase` fields have fixed meanings; each metric reads only what it needs:
 
 - **faithfulness** — `input` (task) + `context` + `output`, passed to Phoenix.
-- **coverage** — `input` (task, used to scope relevant context) + `context` + `output`.
+- **coverage** — `context` + `output` (whole-source; no `input`).
+- **task_coverage** — `input` (task, used to scope relevant context) + `context` + `output`.
 - **instruction_adherence** — `instructions` + `output`. Reads only the dedicated
   `instructions` field as its instruction source; never falls back to `input` or
   `context`.
@@ -196,7 +214,7 @@ from idp_eval import (
     EvaluationFramework,
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
-    SourceCoverageEvaluator,
+    CoverageEvaluator,
     TaskCoverageEvaluator,
     create_judge,
     register_tracing,
@@ -208,7 +226,7 @@ judge = create_judge()                       # configure the judge once
 framework = EvaluationFramework(
     evaluators=[
         FaithfulnessEvaluator,
-        SourceCoverageEvaluator,
+        CoverageEvaluator,
         TaskCoverageEvaluator,
         InstructionAdherenceEvaluator,
     ],
@@ -220,7 +238,7 @@ results = framework.evaluate(EvaluationCase(
     context=source_context,
     output=generated_output,
 ))
-# results["task_coverage"].score -> 0.75
+# results["coverage"].score -> 0.75
 ```
 
 You pass evaluator **classes** plus one shared `judge`; the framework constructs
@@ -254,7 +272,7 @@ case = EvaluationCase(
              "business_needs": ["Reduce onboarding time by 25%", "Retain IdP"]},
     output={"title": "Improve onboarding workflow", "success_criteria": ["..."]},
 )
-framework.evaluate(case)   # SourceCoverageEvaluator needs only context + output
+framework.evaluate(case)   # CoverageEvaluator needs only context + output
 ```
 
 A `list` in `output` is one structured output, **not** automatic bulk. For many
@@ -270,7 +288,7 @@ framework.evaluate_groups([
 ])   # fans out to 3 independent cases: theme-1:0, theme-1:1, theme-2:0
 ```
 
-Each evaluator declares its **required fields** (`SourceCoverageEvaluator`:
+Each evaluator declares its **required fields** (`CoverageEvaluator`:
 `context` + `output`; `TaskCoverageEvaluator`: `input` + `context` + `output`;
 `FaithfulnessEvaluator`: `context` + `output`; `InstructionAdherenceEvaluator`:
 `instructions` + `output`). Missing required content (`None`/`""`/`{}`/`[]`) for a
@@ -373,7 +391,8 @@ named child span. Nothing else is traced (no app/RAG/agent/tool spans yet).
 
 | Metric                  | Spans per case                                    |
 | ----------------------- | ------------------------------------------------- |
-| `source_coverage`       | `source_coverage.evaluate` (1)                    |
+| `coverage` (g_eval)     | `coverage.evaluate` (1)                           |
+| `coverage` (dag)        | `coverage.extract` + `coverage.classify` (2)      |
 | `task_coverage`         | `task_coverage.extract` + `.classify` (2)         |
 | `task_coverage` (no reqs)    | `task_coverage.extract` only (1 — Stage 2 skipped) |
 | `faithfulness`          | `faithfulness.evaluate` (1)                        |
@@ -454,7 +473,7 @@ sheets, so results are inspectable without reading JSON:
 | Sheet | One row per | Key columns |
 | ----- | ----------- | ----------- |
 | `evaluations` | case + metric | `run_name, dataset_name, case_id, trace_id, metric, score, label, explanation, annotator_kind, timestamp, raw_details_json` |
-| `source_coverage_items` | one-call judged source item | `item_id, source_item, meaningfully_present, fully_present, status, item_score, reason` |
+| `coverage_items` | verbose coverage source item | `item_id, source_item, meaningfully_present, fully_present, status, item_score, reason` |
 | `task_coverage_items` | task-relevant requirement | `item_id, requirement, meaningfully_present, fully_present, status, item_score, reason` |
 | `instruction_adherence_items` | instruction | `instruction_id, instruction, status, item_score, reason` |
 

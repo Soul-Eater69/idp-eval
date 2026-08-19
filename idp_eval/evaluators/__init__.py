@@ -9,10 +9,14 @@ from idp_eval.evaluators.retrieval import (
     NDCGAtKEvaluator,
     RelevanceAtKEvaluator,
 )
-from idp_eval.evaluators.source_coverage import SourceCoverageEvaluator
+from idp_eval.evaluators.source_coverage import (
+    CoverageEvaluator,
+    SourceCoverageEvaluator,
+)
 
 __all__ = [
     "FaithfulnessEvaluator",
+    "CoverageEvaluator",
     "TaskCoverageEvaluator",
     "SourceCoverageEvaluator",
     "InstructionAdherenceEvaluator",

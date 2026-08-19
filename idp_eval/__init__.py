@@ -31,6 +31,7 @@ Which ``EvaluationCase`` fields each metric reads:
 """
 
 from idp_eval.evaluators import (
+    CoverageEvaluator,
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
     NDCGAtKEvaluator,
@@ -57,6 +58,7 @@ __all__ = [
     "Evaluator",
     "EvaluationFramework",
     "FaithfulnessEvaluator",
+    "CoverageEvaluator",
     "TaskCoverageEvaluator",
     "SourceCoverageEvaluator",
     "InstructionAdherenceEvaluator",

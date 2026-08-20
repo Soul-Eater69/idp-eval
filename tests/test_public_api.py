@@ -14,6 +14,8 @@ def test_common_public_api_is_exported():
         "FaithfulnessEvaluator",
         "InstructionAdherenceEvaluator",
         "RelevanceAtKEvaluator",
+        "HitRateAtKEvaluator",
+        "MRRAtKEvaluator",
         "NDCGAtKEvaluator",
         "create_gateway_judge",
         "create_azure_judge",

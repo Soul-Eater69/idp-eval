@@ -214,7 +214,9 @@ from idp_eval import (
     EvaluationCase,
     EvaluationFramework,
     FaithfulnessEvaluator,
+    HitRateAtKEvaluator,
     InstructionAdherenceEvaluator,
+    MRRAtKEvaluator,
     NDCGAtKEvaluator,
     RelevanceAtKEvaluator,
 )
@@ -485,9 +487,44 @@ for the practical guide, including collection-level and per-item scope.
 
 ### Retrieval metrics
 
-`RelevanceAtKEvaluator(k)` and `NDCGAtKEvaluator(k)` judge ranked retrieval
-documents against the query in `input`. Relevance@K is binary Precision@K;
-nDCG@K is derived from the same relevance judgments.
+All retrieval evaluators require non-empty `input` plus a ranked
+`retrieved_documents` list; no generated output is required. List order is rank.
+One structured judge call classifies every needed document through the deepest
+selected effective K, then Python derives all four metrics:
+
+| Evaluator | Metric | Deterministic meaning |
+| --- | --- | --- |
+| `RelevanceAtKEvaluator(k)` | `relevance_at_{k}` | relevant count / effective K (binary Precision@K) |
+| `HitRateAtKEvaluator(k)` | `hit_rate_at_{k}` | 1.0 when any top-K document is relevant, otherwise 0.0 |
+| `MRRAtKEvaluator(k)` | `mrr_at_{k}` | reciprocal rank of the first relevant document, otherwise 0.0 |
+| `NDCGAtKEvaluator(k)` | `ndcg_at_{k}` | DCG divided by ideal DCG for the same relevance values |
+
+`effective_k = min(k, document_count)`. An empty list returns `not_applicable`
+for every selected retrieval metric without calling the judge; `None` or a
+non-list value fails validation. Documents may be strings or mappings using the
+default `text` key (configurable with `document_text_key`). Only the rendered
+query, document text, and rank reach the judge. `document_id`, retriever `score`,
+and metadata remain diagnostics.
+
+```python
+framework = EvaluationFramework(
+    judge=judge,
+    evaluators=[
+        RelevanceAtKEvaluator(k=5),
+        HitRateAtKEvaluator(k=5),
+        MRRAtKEvaluator(k=5),
+        NDCGAtKEvaluator(k=5),
+    ],
+)
+results = framework.evaluate(case)
+```
+
+Selecting `metrics=["relevance_at_5", "ndcg_at_5"]` still makes only one
+shared relevance call. Native async structured generation is preferred; the
+whole call consumes one slot from the framework's shared concurrency limit.
+Tracing emits one `retrieval.relevance.evaluate` stage beneath the case root,
+not one semantic judge span per document.
+See [`notebooks/retrieval_metrics_usage.ipynb`](../notebooks/retrieval_metrics_usage.ipynb).
 
 ## 8. Bulk, grouped, and async APIs
 

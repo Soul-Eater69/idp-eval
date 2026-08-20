@@ -362,18 +362,17 @@ _ITEM_SHEETS: dict[str, _ItemSheet] = {
     ),
 }
 
-# Retrieval metrics (relevance_at_k / ndcg_at_k) reuse the SAME per-document
-# relevance judgments, so their documents are written to one shared sheet, once
-# per case, rather than duplicated per metric. Detected structurally by a
-# ``documents`` list in details (a key no other metric uses).
+# Retrieval metrics reuse the SAME batched relevance judgments, so their
+# documents are written to one shared sheet once per case rather than duplicated
+# per metric. They are detected structurally by the ``documents`` detail list.
 _RETRIEVAL_DOCUMENTS_SHEET = "retrieval_documents"
 _RETRIEVAL_IDENTITY_COLUMNS = ("run_name", "dataset_name", "case_id", "trace_id")
 _RETRIEVAL_DOCUMENT_COLUMNS = (
     ("rank", "rank"),
     ("document_id", "document_id"),
+    ("relevant", "relevant"),
     ("relevance_score", "relevance_score"),
-    ("relevance_label", "relevance_label"),
-    ("explanation", "explanation"),
+    ("reason", "reason"),
     ("retrieval_score", "retrieval_score"),
 )
 
@@ -482,8 +481,8 @@ class ExcelEvaluationWriter:
 
         Retrieval records are recognized structurally by a non-empty ``documents``
         list of dicts with a ``rank`` (a shape unique to retrieval metrics), so
-        both ``relevance_at_k`` and ``ndcg_at_k`` map to one shared sheet without
-        duplicate rows or a metric column.
+        all retrieval metrics map to one shared sheet without duplicate rows or
+        a metric column.
         """
         details = record.details
         if not isinstance(details, dict):

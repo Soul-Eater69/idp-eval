@@ -3,7 +3,9 @@
 from idp_eval.evaluators import (
     CoverageEvaluator,
     FaithfulnessEvaluator,
+    HitRateAtKEvaluator,
     InstructionAdherenceEvaluator,
+    MRRAtKEvaluator,
     NDCGAtKEvaluator,
     RelevanceAtKEvaluator,
 )
@@ -25,6 +27,8 @@ __all__ = [
     "CoverageEvaluator",
     "InstructionAdherenceEvaluator",
     "RelevanceAtKEvaluator",
+    "HitRateAtKEvaluator",
+    "MRRAtKEvaluator",
     "NDCGAtKEvaluator",
     "create_gateway_judge",
     "create_azure_judge",

@@ -12,6 +12,8 @@ A reusable evaluation framework built on Arize Phoenix. Cases use generic
 | `faithfulness` | `context`, `output` | — | allowed; ignored for scoring |
 | `instruction_adherence` | `instructions`, `output` | `context` | allowed; ignored for scoring |
 | `relevance_at_{k}` | `input`, `retrieved_documents` | — | `input` is semantic |
+| `hit_rate_at_{k}` | `input`, `retrieved_documents` | — | `input` is semantic |
+| `mrr_at_{k}` | `input`, `retrieved_documents` | — | `input` is semantic |
 | `ndcg_at_{k}` | `input`, `retrieved_documents` | — | `input` is semantic |
 
 Coverage detects omissions from the source. Faithfulness separately detects
@@ -143,6 +145,7 @@ violation reasons. An empty judge-produced instruction set is
 | [`coverage_evaluator_usage.ipynb`](notebooks/coverage_evaluator_usage.ipynb) | Coverage-specific usage |
 | [`faithfulness_evaluator_usage.ipynb`](notebooks/faithfulness_evaluator_usage.ipynb) | Faithfulness-specific usage |
 | [`instruction_adherence_evaluator_usage.ipynb`](notebooks/instruction_adherence_evaluator_usage.ipynb) | Instruction Adherence-specific usage |
+| [`retrieval_metrics_usage.ipynb`](notebooks/retrieval_metrics_usage.ipynb) | Shared relevance judging and four deterministic retrieval metrics |
 
 The guides are backend-independent and use application-owned Azure
 configuration placeholders. The setup guide covers the equivalent gateway
@@ -506,9 +509,24 @@ framework.log_custom_evaluation(
 
 ## Retrieval metrics
 
-`RelevanceAtKEvaluator(k)` and `NDCGAtKEvaluator(k)` evaluate ranked
-`retrieved_documents` against `input`. Relevance@K is binary Precision@K;
-nDCG@K is computed deterministically from the same relevance judgments.
+Retrieval metrics judge ranked `retrieved_documents` against the query in
+`input`. One structured relevance call classifies all documents through the
+deepest selected effective K; Python reuses those binary judgments for every
+selected metric.
+
+| Metric | Meaning |
+| --- | --- |
+| Relevance@K | Fraction of retrieved top-K documents that are relevant; Precision@K under binary relevance |
+| Hit Rate@K | Whether at least one relevant result occurs in the top K |
+| MRR@K | Reciprocal rank of the first relevant result for this query |
+| nDCG@K | Quality of the overall relevant-document ordering |
+
+`effective_k = min(k, document_count)`, so fewer returned documents never add
+artificial irrelevant entries to the denominator. Document IDs, retriever
+similarity scores, and metadata remain diagnostics and are not sent to the
+judge. See the practical
+[`retrieval_metrics_usage.ipynb`](notebooks/retrieval_metrics_usage.ipynb)
+guide.
 
 ## Testing
 

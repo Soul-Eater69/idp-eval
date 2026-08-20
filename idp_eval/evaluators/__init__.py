@@ -6,6 +6,8 @@ from idp_eval.evaluators.instruction_adherence import (
     InstructionAdherenceEvaluator,
 )
 from idp_eval.evaluators.retrieval import (
+    HitRateAtKEvaluator,
+    MRRAtKEvaluator,
     NDCGAtKEvaluator,
     RelevanceAtKEvaluator,
 )
@@ -15,5 +17,7 @@ __all__ = [
     "CoverageEvaluator",
     "InstructionAdherenceEvaluator",
     "RelevanceAtKEvaluator",
+    "HitRateAtKEvaluator",
+    "MRRAtKEvaluator",
     "NDCGAtKEvaluator",
 ]

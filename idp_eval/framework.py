@@ -252,8 +252,8 @@ class EvaluationFramework:
             dataset_name,
             self._descriptive_input(case),
         ) as handle:
-            # One shared document-relevance pass for all selected retrieval
-            # metrics (judged once up to the deepest required rank).
+            # One batched relevance call for all selected retrieval metrics,
+            # judged once through the deepest requested effective K.
             retrieval = self._retrieval_metrics(selected)
             relevance_pass = None
             if retrieval:
@@ -667,8 +667,8 @@ class EvaluationFramework:
             dataset_name,
             self._descriptive_input(case),
         ) as handle:
-            # One shared document-relevance pass for all selected retrieval
-            # metrics; documents are judged concurrently under the same limiter.
+            # One batched relevance call for all selected retrieval metrics. The
+            # complete call consumes one slot from the shared judge limiter.
             retrieval = self._retrieval_metrics(selected)
             relevance_pass = None
             if retrieval:

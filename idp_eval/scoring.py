@@ -207,11 +207,8 @@ def instruction_adherence_label(score: float) -> str:
 
 # --- retrieval metrics ------------------------------------------------------
 #
-# Both retrieval metrics consume the SAME per-document relevance scores (one per
-# top-K document, in rank order). The LLM produces only per-document relevance;
-# these functions turn that into the metric numbers. The scores may be binary
-# (Phoenix's DocumentRelevanceEvaluator is binary today) or graded in ``[0, 1]``
-# — the math below works for both, so graded relevance needs no formula change.
+# All retrieval metrics consume the SAME binary per-document relevance scores
+# (one holistic LLM call, rank order preserved). Python owns every aggregate.
 
 
 def relevance_at_k(relevance_scores: list[float]) -> float:
@@ -228,6 +225,30 @@ def relevance_at_k(relevance_scores: list[float]) -> float:
     if not relevance_scores:
         raise ValueError("relevance_at_k requires at least one relevance score.")
     return sum(relevance_scores) / len(relevance_scores)
+
+
+def hit_rate_at_k(relevance_scores: list[float]) -> float:
+    """Returns 1.0 when any top-K document is relevant, otherwise 0.0."""
+    if not relevance_scores:
+        raise ValueError("hit_rate_at_k requires at least one relevance score.")
+    return 1.0 if any(score > 0 for score in relevance_scores) else 0.0
+
+
+def reciprocal_rank_at_k(relevance_scores: list[float]) -> float:
+    """Returns reciprocal rank of the first relevant document, or 0.0."""
+    if not relevance_scores:
+        raise ValueError(
+            "reciprocal_rank_at_k requires at least one relevance score."
+        )
+    first_rank = next(
+        (
+            rank
+            for rank, score in enumerate(relevance_scores, start=1)
+            if score > 0
+        ),
+        None,
+    )
+    return 0.0 if first_rank is None else 1.0 / first_rank
 
 
 def dcg(relevance_scores: list[float]) -> float:
@@ -274,6 +295,20 @@ def relevance_at_k_label(score: float) -> str:
     if score <= 0.0:
         return "none_relevant"
     return "partially_relevant"
+
+
+def hit_rate_at_k_label(score: float) -> str:
+    """Returns the binary Hit Rate label."""
+    return "hit" if score >= 1.0 else "miss"
+
+
+def mrr_at_k_label(first_relevant_rank: int | None) -> str:
+    """Labels per-query reciprocal rank without arbitrary score thresholds."""
+    if first_relevant_rank == 1:
+        return "first_result_relevant"
+    if first_relevant_rank is not None:
+        return "relevant_found"
+    return "no_relevant_result"
 
 
 def ndcg_at_k_label(score: float) -> str:

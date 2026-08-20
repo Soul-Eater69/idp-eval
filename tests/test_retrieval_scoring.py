@@ -6,8 +6,12 @@ import pytest
 
 from idp_eval.scoring import (
     dcg,
+    hit_rate_at_k,
+    hit_rate_at_k_label,
+    mrr_at_k_label,
     ndcg_at_k,
     ndcg_at_k_label,
+    reciprocal_rank_at_k,
     relevance_at_k,
     relevance_at_k_label,
 )
@@ -38,6 +42,49 @@ def test_relevance_at_k_labels():
     assert relevance_at_k_label(1.0) == "all_relevant"
     assert relevance_at_k_label(0.5) == "partially_relevant"
     assert relevance_at_k_label(0.0) == "none_relevant"
+
+
+# --- Hit Rate@K -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "scores,expected",
+    [([1], 1.0), ([0, 0, 1], 1.0), ([0, 0, 0], 0.0)],
+)
+def test_hit_rate_at_k(scores, expected):
+    assert hit_rate_at_k(scores) == expected
+
+
+def test_hit_rate_at_k_empty_raises():
+    with pytest.raises(ValueError, match="at least one relevance score"):
+        hit_rate_at_k([])
+
+
+def test_hit_rate_labels():
+    assert hit_rate_at_k_label(1.0) == "hit"
+    assert hit_rate_at_k_label(0.0) == "miss"
+
+
+# --- MRR@K (per-query reciprocal rank) -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "scores,expected",
+    [([1, 0, 1], 1.0), ([0, 0, 1], 1 / 3), ([0, 0, 0], 0.0)],
+)
+def test_reciprocal_rank_at_k(scores, expected):
+    assert reciprocal_rank_at_k(scores) == pytest.approx(expected)
+
+
+def test_reciprocal_rank_at_k_empty_raises():
+    with pytest.raises(ValueError, match="at least one relevance score"):
+        reciprocal_rank_at_k([])
+
+
+def test_mrr_labels():
+    assert mrr_at_k_label(1) == "first_result_relevant"
+    assert mrr_at_k_label(3) == "relevant_found"
+    assert mrr_at_k_label(None) == "no_relevant_result"
 
 
 # --- nDCG@K (binary v1; hand-calculated references) --------------------------

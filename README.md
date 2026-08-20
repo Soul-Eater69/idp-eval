@@ -81,14 +81,15 @@ independently checkable instructions and classifies each as `followed` or
 and computes the fraction followed.
 
 ```python
+instructions = """
+Generate exactly 3 options.
+Every option must contain a title.
+Do not include implementation details.
+Only use approved options from the supplied context.
+"""
+
 case = EvaluationCase(
-    instructions={
-        "count": "Generate exactly 3 items",
-        "requirements": [
-            "Each item must contain a title",
-            "Do not include implementation details",
-        ],
-    },
+    instructions=instructions,
     context={"approved_options": ["Option A", "Option B", "Option C"]},
     output=[
         {"title": "Option A"},
@@ -98,6 +99,9 @@ case = EvaluationCase(
 )
 result = InstructionAdherenceEvaluator(judge, verbose=True).evaluate(case)
 ```
+
+Plain multiline text is the common instruction shape. Dict, list, and nested
+structured instructions are also supported through `render_value()`.
 
 Count, range, universal (`each`/`every`/`all`), prohibition, structure, order,
 language, and style constraints are interpreted generically by the judge—there

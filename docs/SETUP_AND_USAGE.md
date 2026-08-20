@@ -369,14 +369,15 @@ instruction adherence = followed instructions / identified instructions
 ```
 
 ```python
+instructions = """
+Generate exactly 3 options.
+Every option must contain a title.
+Do not include implementation details.
+Only use approved options from the supplied context.
+"""
+
 case = EvaluationCase(
-    instructions={
-        "count": "Generate exactly 3 items",
-        "requirements": [
-            "Each item must contain a title",
-            "Do not include implementation details",
-        ],
-    },
+    instructions=instructions,
     context={"approved_options": ["Option A", "Option B", "Option C"]},
     output=[
         {"title": "Option A"},
@@ -386,6 +387,9 @@ case = EvaluationCase(
 )
 result = InstructionAdherenceEvaluator(judge, verbose=True).evaluate(case)
 ```
+
+Plain multiline text is the common instruction shape. Dict, list, and nested
+structured instructions are also supported through `render_value()`.
 
 The holistic judge sees the complete structured output, so exact/minimum/maximum
 counts, universal `each`/`every`/`all` requirements, prohibitions, required

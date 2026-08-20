@@ -18,15 +18,16 @@ from idp_eval.rendering import (
 
 # Content fields that may hold structured values and are rendered for prompts.
 _CONTENT_FIELDS = ("input", "context", "output", "instructions")
+_EVALUATION_SCOPES = ("combined", "individual", "both")
 
 
 @dataclass
 class EvaluationCase:
-    """A single generated output to evaluate.
+    """One generation to evaluate, optionally containing multiple outputs.
 
-    Represents exactly ONE logical evaluation unit. ``input`` and
-    ``instructions`` are distinct on purpose so the same case can be run through
-    every metric without any field changing meaning:
+    Represents one generation request. Scope expansion may produce multiple
+    logical evaluations, but ``input`` and ``instructions`` remain distinct so
+    every metric receives fields with consistent meaning:
 
     - ``input`` is the task/request/query when one exists. Retrieval metrics use
       it as the query; other metrics may not need it.
@@ -38,8 +39,9 @@ class EvaluationCase:
     The content fields (``input`` / ``context`` / ``output`` / ``instructions``)
     may be **structured values** — nested ``dict`` / ``list`` of scalars — not
     just strings; they are rendered to readable text per evaluator. A ``list``
-    output is a single structured output, not a request to evaluate many outputs
-    (use ``EvaluationFramework.evaluate_many`` / ``evaluate_groups`` for that).
+    output is one structured output by default. Set ``evaluation_scope`` to
+    ``"individual"`` to evaluate each top-level item independently or ``"both"``
+    to evaluate the list and every item.
     All content fields are optional at the model level; each evaluator declares
     which it actually requires.
 
@@ -57,6 +59,8 @@ class EvaluationCase:
             with a text field (default key ``"text"``) plus optional
             ``document_id`` and ``score`` (similarity) metadata. Used only by the
             retrieval evaluators; other metrics ignore it.
+        evaluation_scope: How a top-level list output is orchestrated:
+            ``"combined"`` (default), ``"individual"``, or ``"both"``.
     """
 
     input: StructuredValue = None
@@ -66,6 +70,7 @@ class EvaluationCase:
     case_id: str | None = None
     metadata: dict[str, Any] | None = None
     retrieved_documents: StructuredValue = None
+    evaluation_scope: str = "combined"
 
     def __post_init__(self) -> None:
         """Structural (Level 1) validation of the structured content fields."""
@@ -77,6 +82,12 @@ class EvaluationCase:
         validate_structured_value(
             self.retrieved_documents, "EvaluationCase.retrieved_documents"
         )
+        if self.evaluation_scope not in _EVALUATION_SCOPES:
+            allowed = ", ".join(repr(value) for value in _EVALUATION_SCOPES)
+            raise ValueError(
+                f"Unknown evaluation_scope {self.evaluation_scope!r}; allowed "
+                f"values are: {allowed}."
+            )
 
 
 @dataclass

@@ -2,7 +2,7 @@
 
 The tracing model is intentionally narrow (v1):
 
-    one EvaluationCase   -> one trace  (root span ``idp_eval.evaluate``)
+    one logical evaluation -> one trace  (root span ``idp_eval.evaluate``)
     one real judge call  -> one child span (e.g. ``coverage.evaluate``)
 
 Everything here degrades to a safe no-op when OpenTelemetry is not installed or
@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 _TRACER_NAME = "idp_eval"
+_MAX_INPUT_ATTRIBUTE_CHARS = 256
 
 
 def _trace_api():
@@ -64,6 +65,7 @@ def case_evaluation_span(
     case_id: str | None,
     run_name: str | None = None,
     dataset_name: str | None = None,
+    descriptive_input: str | None = None,
 ) -> Iterator[CaseSpanHandle]:
     """Opens the root span for evaluating one case.
 
@@ -74,6 +76,8 @@ def case_evaluation_span(
         case_id: Case identifier, attached as ``idp_eval.case_id`` when set.
         run_name: Optional benchmark run name (``idp_eval.run_name``).
         dataset_name: Optional dataset name (``idp_eval.dataset_name``).
+        descriptive_input: Optional rendered task/query. A bounded preview is
+            attached to the root span; it is never added to judge prompts here.
 
     Yields:
         A :class:`CaseSpanHandle` for the root span.
@@ -83,13 +87,21 @@ def case_evaluation_span(
         yield CaseSpanHandle(None)
         return
 
-    attributes: dict[str, str] = {}
+    attributes: dict[str, Any] = {}
     if case_id:
         attributes["idp_eval.case_id"] = case_id
     if run_name:
         attributes["idp_eval.run_name"] = run_name
     if dataset_name:
         attributes["idp_eval.dataset_name"] = dataset_name
+    if descriptive_input:
+        truncated = len(descriptive_input) > _MAX_INPUT_ATTRIBUTE_CHARS
+        attributes["idp_eval.input"] = (
+            descriptive_input[:_MAX_INPUT_ATTRIBUTE_CHARS]
+            if truncated
+            else descriptive_input
+        )
+        attributes["idp_eval.input_truncated"] = truncated
 
     tracer = trace.get_tracer(_TRACER_NAME)
     with tracer.start_as_current_span(

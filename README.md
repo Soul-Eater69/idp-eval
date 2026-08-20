@@ -6,13 +6,13 @@ A reusable evaluation framework built on Arize Phoenix. Cases use generic
 
 ## Metrics
 
-| Metric | Meaning | Required fields | Optional evidence |
+| Metric | Semantic fields | Optional evidence | Descriptive input |
 | --- | --- | --- | --- |
-| `coverage` | How much materially important source information reached the output? | `context`, `output` | — |
-| `faithfulness` | Are output claims supported by the authoritative source? | `context`, `output` | — |
-| `instruction_adherence` | Were explicit output instructions followed? | `instructions`, `output` | `context` |
-| `relevance_at_{k}` | What fraction of the top-K documents are relevant to the query? | `input`, `retrieved_documents` | — |
-| `ndcg_at_{k}` | How well are relevant documents ranked for the query? | `input`, `retrieved_documents` | — |
+| `coverage` | `context`, `output` | — | allowed; ignored for scoring |
+| `faithfulness` | `context`, `output` | — | allowed; ignored for scoring |
+| `instruction_adherence` | `instructions`, `output` | `context` | allowed; ignored for scoring |
+| `relevance_at_{k}` | `input`, `retrieved_documents` | — | `input` is semantic |
+| `ndcg_at_{k}` | `input`, `retrieved_documents` | — | `input` is semantic |
 
 Coverage detects omissions from the source. Faithfulness separately detects
 unsupported additions to the output.
@@ -197,6 +197,7 @@ framework = EvaluationFramework(
 )
 
 case = EvaluationCase(
+    input="Generate epics for the supplied business theme.",
     context={
         "customer_profile": {"region": "US", "tier": "enterprise"},
         "requirements": ["Response time under 2 seconds", "99.9% availability"],
@@ -215,7 +216,11 @@ including `CoverageEvaluator(judge, verbose=True)`. Each evaluator validates
 only its required fields; extra fields are allowed. Structured dictionaries and
 lists are rendered recursively and deterministically. Dictionary keys become
 readable labels; no domain-specific schema is required. Case metadata is never
-included in evaluator prompts.
+included in evaluator prompts. Optional `input` describes the task/query that
+produced the output and is useful in traces, reports, debugging, heterogeneous
+workloads, and retrieval evaluation. Merely being present on `EvaluationCase`
+does not make it evidence for every metric: Coverage, Faithfulness, and
+Instruction Adherence do not receive it in their judge prompts.
 
 ## Bulk, grouped, and async evaluation
 
@@ -245,9 +250,31 @@ results = await framework.a_evaluate_groups(groups, max_concurrency=4)
 
 Grouped evaluation simply fans each output into an ordinary independent case.
 Async evaluation preserves order, and the framework enforces the shared
-`max_concurrency` limit across judge calls. A list stored in `case.output`
-remains one structured output, case, and trace; only the explicit
-`group["outputs"]` list creates multiple cases and traces.
+`max_concurrency` limit across judge calls.
+
+For the common case where one generation contains multiple output objects, set
+`evaluation_scope` directly on the case:
+
+```python
+case = EvaluationCase(
+    input="Generate three options from the supplied source.",
+    context=source,
+    output=[option_a, option_b, option_c],
+    evaluation_scope="both",  # "combined" | "individual" | "both"
+)
+results = framework.evaluate(case)
+
+combined = results["combined"]
+first_option = results["individual"][0]
+```
+
+The default is `"combined"`, so a list remains one structured output and the
+normal flat `{metric: EvaluationResult}` return shape is unchanged. Individual
+scope returns `{"combined": None, "individual": [...]}`. Both scope evaluates
+the full list plus every top-level item and returns both sections. Each logical
+evaluation gets its own root trace; per-item IDs derive from the parent case ID
+as `case-id:0`, `case-id:1`, and so on. Only a non-empty top-level list can use
+`individual` or `both`; dictionaries are never guessed to contain many outputs.
 
 ## Judge backends
 
@@ -407,9 +434,16 @@ or update `GOLDEN_SET_PATH`. Never commit those values or the GT CSV.
 Tracing is evaluation-only:
 
 ```text
-one EvaluationCase = one idp_eval.evaluate root trace
+one logical combined or individual evaluation = one idp_eval.evaluate root trace
 one actual judge call = one evaluator stage span
 ```
+
+Thus a default/combined case creates one root trace, an individual three-item
+case creates three, and `evaluation_scope="both"` creates four. Scope expansion
+is metric-agnostic; every evaluator still receives one ordinary case at a time.
+When `case.input` is present, each root trace receives a bounded descriptive
+preview (`idp_eval.input`) and a truncation flag; full unbounded input is not
+copied into span attributes.
 
 Coverage produces:
 

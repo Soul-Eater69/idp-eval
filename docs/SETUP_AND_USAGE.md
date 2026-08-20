@@ -250,21 +250,39 @@ framework = EvaluationFramework(
 | `retrieved_documents` | ordered retrieval results |
 | `case_id` | optional correlation identifier |
 | `metadata` | optional non-prompt metadata |
+| `evaluation_scope` | `combined` (default), `individual`, or `both` for top-level list outputs |
 
 Fields accept strings or nested dictionaries/lists of scalar values. Rendering
 is deterministic. Required fields are evaluator-specific:
 
-| Evaluator | Required fields | Optional evidence |
-| --- | --- | --- |
-| `CoverageEvaluator` | `context`, `output` | — |
-| `FaithfulnessEvaluator` | `context`, `output` | — |
-| `InstructionAdherenceEvaluator` | `instructions`, `output` | `context` |
-| retrieval evaluators | `input`, `retrieved_documents` | — |
+| Evaluator | Semantic fields | Optional evidence | Descriptive input |
+| --- | --- | --- | --- |
+| `CoverageEvaluator` | `context`, `output` | — | allowed; ignored for scoring |
+| `FaithfulnessEvaluator` | `context`, `output` | — | allowed; ignored for scoring |
+| `InstructionAdherenceEvaluator` | `instructions`, `output` | `context` | allowed; ignored for scoring |
+| retrieval evaluators | `input`, `retrieved_documents` | — | `input` is semantic |
 
 For non-chat generation workflows, `input` may legitimately be `None` when no
 selected evaluator requires it. It is not a synonym for a system prompt.
 Applications that want to evaluate explicit system/developer output constraints
 may map those constraints into `instructions`.
+
+Available on `EvaluationCase` does not mean used by every metric. For example:
+
+```python
+case = EvaluationCase(
+    input="Generate three release recommendations.",
+    context=source,
+    instructions="Return exactly three recommendations.",
+    output=generated,
+)
+```
+
+Coverage evaluates `context + output`; Faithfulness evaluates
+`output + context`; Instruction Adherence evaluates `instructions + output`
+with optional context evidence. For those metrics, `input` remains descriptive
+for tracing and reporting and is not sent to the judge. Retrieval metrics use
+`input` semantically as their query.
 
 Structured values are rendered recursively for prompts. Dictionary keys become
 readable labels (`max_latency` becomes `Max Latency`), lists become bullets, and
@@ -475,9 +493,35 @@ Explicit `case_ids` win, followed by IDs derived from `group_id`, then stable
 group/output indexes. Inputs are not mutated. Async results preserve order, and
 the framework enforces the shared `max_concurrency` limit across all judge calls.
 
-`case.output=[a, b]` is one structured output, one `EvaluationCase`, and one
-trace. `group["outputs"]=[a, b]` creates two cases, evaluations, and traces. This
-distinction applies equally to coverage, faithfulness, and instruction adherence.
+By default, `case.output=[a, b]` is one structured output and one trace. For a
+single generation containing multiple output objects, orchestration can be
+selected directly:
+
+```python
+case = EvaluationCase(
+    input="Generate two options from the supplied source.",
+    context=source,
+    output=[option_a, option_b],
+    evaluation_scope="both",
+)
+results = framework.evaluate(case)
+
+combined_results = results["combined"]
+individual_results = results["individual"]
+```
+
+- `combined` preserves the existing flat metric-result mapping and evaluates the
+  whole list once.
+- `individual` returns `combined=None` plus one metric-result mapping per item.
+- `both` returns the whole-list result plus every item result.
+
+`individual` and `both` require a non-empty top-level list; dictionaries are not
+implicitly fanned out. Every expanded item receives the same input, context,
+instructions, metadata, and retrieved documents, and gets its own root trace.
+When the parent has a case ID, item IDs are `case-id:0`, `case-id:1`, and so on.
+This orchestration applies uniformly to coverage, faithfulness, instruction
+adherence, retrieval metrics, and custom evaluators. `evaluate_groups()` remains
+available for externally grouped records and explicit per-output IDs.
 
 ## 9. Output destinations
 
@@ -501,8 +545,10 @@ span. Excel can contain:
 | `instruction_adherence_items` | instruction item |
 | `retrieval_documents` | retrieval document |
 
-Nested details remain JSON on the summary sheet. Persistence failures retain
-computed results and never rerun evaluation.
+The `evaluations` summary includes the rendered descriptive `input` for each
+combined or individual case. Item-level sheets do not duplicate it. Nested
+details remain JSON on the summary sheet. Persistence failures retain computed
+results and never rerun evaluation.
 
 ## 10. Custom evaluation publishing
 

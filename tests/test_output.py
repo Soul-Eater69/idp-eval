@@ -141,6 +141,7 @@ def test_summary_sheet_and_compact_coverage_details(tmp_path):
         "run_name",
         "dataset_name",
         "case_id",
+        "input",
         "trace_id",
         "metric",
         "score",
@@ -154,10 +155,29 @@ def test_summary_sheet_and_compact_coverage_details(tmp_path):
     assert row["metric"] == "coverage"
     assert row["score"] == 0.25
     assert row["case_id"] == "gt-001"
+    assert row["input"] is None
     details = json.loads(row["raw_details_json"])
     assert details["judge_call_count"] == 1
     assert "items" not in details
     assert _sheet_names(path) == ["evaluations"]
+
+
+def test_summary_persists_rendered_descriptive_input_only_at_case_level(tmp_path):
+    path = tmp_path / "input.xlsx"
+    case = EvaluationCase(
+        case_id="input-1",
+        input={"task": "Generate recommendations", "count": 3},
+        context="ctx",
+        output="out",
+    )
+    EvaluationFramework(
+        evaluators=[CoverageEvaluator(_coverage_judge(), verbose=True)],
+        output="excel",
+        excel_path=str(path),
+    ).evaluate(case)
+    _, rows = _read(path)
+    assert rows[0]["input"] == "Task: Generate recommendations\n\nCount: 3"
+    assert "input" not in _read(path, "coverage_items")[0]
 
 
 def test_verbose_coverage_items_sheet(tmp_path):
@@ -363,6 +383,16 @@ def test_phoenix_annotation_mapping_and_metadata(monkeypatch):
         },
         "metadata": {"k": "v"},
     }
+
+
+def test_descriptive_input_is_not_duplicated_into_phoenix_annotation():
+    record = EvaluationRecord.from_result(
+        EvaluationResult("coverage", 1.0, "complete", "why"),
+        annotator_kind="LLM",
+        span_id="0123456789abcdef",
+        input="A potentially long generation task.",
+    )
+    assert "input" not in PhoenixEvaluationWriter._payload(record)
 
 
 @pytest.mark.parametrize("kind", ["LLM", "CODE", "HUMAN"])

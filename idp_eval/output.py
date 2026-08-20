@@ -46,6 +46,7 @@ class PersistenceError(RuntimeError):
 class EvaluationRecord:
     """One normalized (case + metric result) row for publishing.
 
+    ``input`` is the optional rendered task/query used for summary reporting.
     ``span_id`` targets the root ``idp_eval.evaluate`` span for native Phoenix
     annotations; it is required for Phoenix output and ``None`` when tracing is
     inactive. ``identifier`` is an optional upsert key for the Phoenix annotation
@@ -67,6 +68,7 @@ class EvaluationRecord:
     timestamp: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
+    input: str | None = None
 
     @classmethod
     def from_result(
@@ -75,6 +77,7 @@ class EvaluationRecord:
         *,
         annotator_kind: str,
         case_id: str | None = None,
+        input: str | None = None,
         run_name: str | None = None,
         dataset_name: str | None = None,
         trace_id: str | None = None,
@@ -89,6 +92,7 @@ class EvaluationRecord:
             explanation=result.explanation,
             annotator_kind=validate_annotator_kind(annotator_kind),
             case_id=case_id,
+            input=input,
             run_name=run_name,
             dataset_name=dataset_name,
             trace_id=trace_id,
@@ -280,6 +284,7 @@ _SUMMARY_COLUMNS = (
     "run_name",
     "dataset_name",
     "case_id",
+    "input",
     "trace_id",
     "metric",
     "score",
@@ -381,6 +386,7 @@ _WIDE_COLUMNS = frozenset(
         "source_item",
         "instruction",
         "claim",
+        "input",
         "raw_details_json",
     }
 )
@@ -420,6 +426,7 @@ class ExcelEvaluationWriter:
                     record.run_name,
                     record.dataset_name,
                     record.case_id,
+                    record.input,
                     record.trace_id,
                     record.metric,
                     record.score,

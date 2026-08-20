@@ -97,6 +97,20 @@ def test_query_and_document_sent_one_at_a_time(harness):
         assert "SHOULD_NOT_BE_SENT" not in json.dumps(record)  # no context/output
 
 
+def test_changing_input_changes_retrieval_query_semantics(harness):
+    evaluator = RelevanceAtKEvaluator(k=1, llm=object())
+    evaluator.evaluate(
+        EvaluationCase(input="first query", retrieved_documents=_docs("GOOD a"))
+    )
+    evaluator.evaluate(
+        EvaluationCase(input="second query", retrieved_documents=_docs("GOOD a"))
+    )
+    assert [record["input"] for record in harness.records] == [
+        "first query",
+        "second query",
+    ]
+
+
 def test_exact_phoenix_payload_contract(harness):
     # Exactly what the Phoenix DocumentRelevanceEvaluator receives, including that
     # retrieval metadata (id / similarity score / nested metadata) is NOT sent.

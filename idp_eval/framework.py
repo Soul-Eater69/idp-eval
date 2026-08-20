@@ -1,15 +1,15 @@
 """The evaluation framework: orchestrates evaluators, tracing, and output.
 
-The framework owns the case-level trace (one ``EvaluationCase`` -> one trace),
-runs the selected evaluators (whose real judge calls become child spans), and
-publishes the resulting :class:`EvaluationResult` objects once to the configured
+The framework expands an ``EvaluationCase`` according to its output scope, owns
+one trace per resulting logical evaluation, runs selected evaluators (whose real
+judge calls become child spans), and publishes each result once to the configured
 output(s). Evaluation is never re-run for a second destination.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Iterable
+from typing import Iterable, TypeAlias
 
 from idp_eval import tracing
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
@@ -19,6 +19,7 @@ from idp_eval.output import (
     build_writers,
     validate_annotator_kind,
 )
+from idp_eval.rendering import is_empty_value, render_value
 
 # An entry may be an evaluator class (constructed with the shared judge) or an
 # already-constructed evaluator instance (backward-compatible).
@@ -27,6 +28,12 @@ EvaluatorEntry = type[Evaluator] | Evaluator
 # Default global cap on simultaneous judge calls in an async evaluation run.
 # This protects any configured backend from unbounded request fan-out.
 DEFAULT_MAX_CONCURRENCY = 4
+
+EvaluationResults: TypeAlias = dict[str, EvaluationResult]
+ScopedEvaluationResults: TypeAlias = dict[
+    str, EvaluationResults | list[EvaluationResults] | None
+]
+EvaluationReturn: TypeAlias = EvaluationResults | ScopedEvaluationResults
 
 
 class EvaluationFramework:
@@ -190,8 +197,8 @@ class EvaluationFramework:
         metrics: list[str] | None = None,
         run_name: str | None = None,
         dataset_name: str | None = None,
-    ) -> dict[str, EvaluationResult]:
-        """Evaluates one case (one trace) with the selected metrics.
+    ) -> EvaluationReturn:
+        """Evaluates a case using its combined/individual/both output scope.
 
         Args:
             case: The case to evaluate.
@@ -202,7 +209,9 @@ class EvaluationFramework:
             dataset_name: Optional dataset name, attached likewise.
 
         Returns:
-            A mapping of metric name to its :class:`EvaluationResult`.
+            Combined scope returns the backward-compatible metric mapping.
+            Individual/both scopes return a mapping with ``combined`` and
+            ``individual`` entries.
 
         Raises:
             KeyError: If a requested metric name is not registered.
@@ -212,11 +221,36 @@ class EvaluationFramework:
                 fails; the computed results are preserved on the exception.
         """
         selected = self._select(metrics)
-        # Level 2 validation before any trace/judge work, for selected only.
-        self._validate_case(case, selected)
+        scope, planned_cases = self._scope_plan(case)
+        for planned_case in planned_cases:
+            self._validate_case(planned_case, selected)
+
+        results = [
+            self._evaluate_one(
+                planned_case,
+                selected,
+                run_name=run_name,
+                dataset_name=dataset_name,
+            )
+            for planned_case in planned_cases
+        ]
+        return self._shape_scope_results(scope, results)
+
+    def _evaluate_one(
+        self,
+        case: EvaluationCase,
+        selected: list[str],
+        *,
+        run_name: str | None,
+        dataset_name: str | None,
+    ) -> EvaluationResults:
+        """Runs one already-expanded ordinary case with one root trace."""
 
         with tracing.case_evaluation_span(
-            case.case_id, run_name, dataset_name
+            case.case_id,
+            run_name,
+            dataset_name,
+            self._descriptive_input(case),
         ) as handle:
             # One shared document-relevance pass for all selected retrieval
             # metrics (judged once up to the deepest required rank).
@@ -263,6 +297,64 @@ class EvaluationFramework:
 
         return results
 
+    @staticmethod
+    def _scope_plan(case: EvaluationCase) -> tuple[str, list[EvaluationCase]]:
+        """Expands one scoped case into ordinary evaluator-facing cases."""
+        scope = case.evaluation_scope
+        if scope == "combined":
+            return scope, [case]
+        if not isinstance(case.output, list) or not case.output:
+            raise ValueError(
+                f"evaluation_scope={scope!r} requires output to be a non-empty "
+                "list."
+            )
+
+        individual = [
+            EvaluationFramework._copy_case(
+                case,
+                output=output,
+                case_id=(
+                    f"{case.case_id}:{index}"
+                    if case.case_id is not None
+                    else None
+                ),
+            )
+            for index, output in enumerate(case.output)
+        ]
+        if scope == "individual":
+            return scope, individual
+        combined = EvaluationFramework._copy_case(
+            case, output=case.output, case_id=case.case_id
+        )
+        return scope, [combined, *individual]
+
+    @staticmethod
+    def _copy_case(
+        case: EvaluationCase, *, output, case_id: str | None
+    ) -> EvaluationCase:
+        """Copies shared fields into an evaluator-facing combined case."""
+        return EvaluationCase(
+            input=case.input,
+            context=case.context,
+            output=output,
+            instructions=case.instructions,
+            case_id=case_id,
+            metadata=dict(case.metadata) if case.metadata is not None else None,
+            retrieved_documents=case.retrieved_documents,
+            evaluation_scope="combined",
+        )
+
+    @staticmethod
+    def _shape_scope_results(
+        scope: str, results: list[EvaluationResults]
+    ) -> EvaluationReturn:
+        """Builds the public backward-compatible or scoped return shape."""
+        if scope == "combined":
+            return results[0]
+        if scope == "individual":
+            return {"combined": None, "individual": results}
+        return {"combined": results[0], "individual": results[1:]}
+
     def _build_records(
         self,
         case: EvaluationCase,
@@ -274,11 +366,13 @@ class EvaluationFramework:
         span_id: str | None,
     ) -> list[EvaluationRecord]:
         """Normalizes one case's results into publishable records (in order)."""
+        descriptive_input = self._descriptive_input(case)
         return [
             EvaluationRecord.from_result(
                 results[name],
                 annotator_kind=self._evaluators[name].annotator_kind,
                 case_id=case.case_id,
+                input=descriptive_input,
                 run_name=run_name,
                 dataset_name=dataset_name,
                 trace_id=trace_id,
@@ -287,19 +381,26 @@ class EvaluationFramework:
             for name in selected
         ]
 
+    @staticmethod
+    def _descriptive_input(case: EvaluationCase) -> str | None:
+        """Renders optional case input for traces/reports, never metric prompts."""
+        if is_empty_value(case.input):
+            return None
+        return render_value(case.input)
+
     def evaluate_many(
         self,
         cases: "Iterable[EvaluationCase]",
         metrics: list[str] | None = None,
         run_name: str | None = None,
         dataset_name: str | None = None,
-    ) -> list[dict[str, EvaluationResult]]:
-        """Evaluates many cases independently — one trace and result set each.
+    ) -> list[EvaluationReturn]:
+        """Evaluates many cases independently, honoring each output scope.
 
-        Each case keeps its own :class:`EvaluationCase` validation, its own root
-        ``idp_eval.evaluate`` trace, its own metric results, and its own output
-        rows/annotations. There is no batch-level root span; ``run_name`` /
-        ``dataset_name`` only group the per-case traces and rows via metadata.
+        Each expanded logical evaluation keeps its own root
+        ``idp_eval.evaluate`` trace, metric results, and output rows/annotations.
+        There is no batch-level root span; ``run_name`` / ``dataset_name`` only
+        group the traces and rows via metadata.
 
         Failure behavior is **fail fast**: the whole batch is validated for the
         selected evaluators *before any judge call*, so a malformed later case
@@ -320,7 +421,9 @@ class EvaluationFramework:
         # Pre-validate the entire batch before any judge work (fail fast).
         for index, case in enumerate(case_list):
             try:
-                self._validate_case(case, selected)
+                _, planned_cases = self._scope_plan(case)
+                for planned_case in planned_cases:
+                    self._validate_case(planned_case, selected)
             except ValueError as exc:
                 label = case.case_id if case.case_id is not None else f"index {index}"
                 raise ValueError(f"Case {label}: {exc}") from exc
@@ -454,8 +557,8 @@ class EvaluationFramework:
         run_name: str | None = None,
         dataset_name: str | None = None,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
-    ) -> dict[str, EvaluationResult]:
-        """Async counterpart of :meth:`evaluate` for one case (one trace).
+    ) -> EvaluationReturn:
+        """Async counterpart of :meth:`evaluate`, including output scope.
 
         Judge calls are bounded by a per-call global concurrency limiter.
         Evaluators without an async path run their synchronous ``evaluate`` in a
@@ -464,13 +567,23 @@ class EvaluationFramework:
         """
         self._validate_max_concurrency(max_concurrency)
         selected = self._select(metrics)
-        self._validate_case(case, selected)
+        scope, planned_cases = self._scope_plan(case)
+        for planned_case in planned_cases:
+            self._validate_case(planned_case, selected)
         limiter = asyncio.Semaphore(max_concurrency)
-        results, records = await self._a_run_case(
-            case, selected, run_name, dataset_name, limiter
+        pairs = await asyncio.gather(
+            *(
+                self._a_run_case(
+                    planned_case, selected, run_name, dataset_name, limiter
+                )
+                for planned_case in planned_cases
+            )
         )
-        self._publish(records, results)
-        return results
+        results_list: list[EvaluationResults] = []
+        for results, records in pairs:
+            self._publish(records, results)
+            results_list.append(results)
+        return self._shape_scope_results(scope, results_list)
 
     async def a_evaluate_many(
         self,
@@ -479,11 +592,11 @@ class EvaluationFramework:
         run_name: str | None = None,
         dataset_name: str | None = None,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
-    ) -> list[dict[str, EvaluationResult]]:
+    ) -> list[EvaluationReturn]:
         """Async counterpart of :meth:`evaluate_many`: cases run concurrently.
 
-        Each case is independent (own validation, own root ``idp_eval.evaluate``
-        trace, own results/rows/annotations). A single shared
+        Each expanded logical evaluation is independent (own validation, root
+        ``idp_eval.evaluate`` trace, and results/rows/annotations). A single shared
         ``asyncio.Semaphore(max_concurrency)`` caps total simultaneous judge calls
         across every case so a large batch never floods the configured backend.
 
@@ -496,26 +609,42 @@ class EvaluationFramework:
         case_list = list(cases)
         selected = self._select(metrics)
 
+        plans: list[tuple[str, list[EvaluationCase]]] = []
         for index, case in enumerate(case_list):
             try:
-                self._validate_case(case, selected)
+                plan = self._scope_plan(case)
+                for planned_case in plan[1]:
+                    self._validate_case(planned_case, selected)
+                plans.append(plan)
             except ValueError as exc:
                 label = case.case_id if case.case_id is not None else f"index {index}"
                 raise ValueError(f"Case {label}: {exc}") from exc
 
         limiter = asyncio.Semaphore(max_concurrency)
+        flat_cases = [case for _, cases in plans for case in cases]
         pairs = await asyncio.gather(
             *(
                 self._a_run_case(case, selected, run_name, dataset_name, limiter)
-                for case in case_list
+                for case in flat_cases
             )
         )
 
         # Ordered, serial persistence (writers are not concurrency-safe).
-        results_list: list[dict[str, EvaluationResult]] = []
+        flat_results: list[EvaluationResults] = []
         for results, records in pairs:
             self._publish(records, results)
-            results_list.append(results)
+            flat_results.append(results)
+
+        results_list: list[EvaluationReturn] = []
+        offset = 0
+        for scope, planned_cases in plans:
+            count = len(planned_cases)
+            results_list.append(
+                self._shape_scope_results(
+                    scope, flat_results[offset : offset + count]
+                )
+            )
+            offset += count
         return results_list
 
     async def _a_run_case(
@@ -533,7 +662,10 @@ class EvaluationFramework:
         because each is a separate task with its own OpenTelemetry context.
         """
         with tracing.case_evaluation_span(
-            case.case_id, run_name, dataset_name
+            case.case_id,
+            run_name,
+            dataset_name,
+            self._descriptive_input(case),
         ) as handle:
             # One shared document-relevance pass for all selected retrieval
             # metrics; documents are judged concurrently under the same limiter.
@@ -618,7 +750,10 @@ class EvaluationFramework:
             else (case.case_id if case is not None else None)
         )
         with tracing.case_evaluation_span(
-            resolved_case_id, run_name, dataset_name
+            resolved_case_id,
+            run_name,
+            dataset_name,
+            self._descriptive_input(case) if case is not None else None,
         ) as handle:
             tracing.annotate_current_span(
                 metric=result.metric,
@@ -634,6 +769,9 @@ class EvaluationFramework:
             result,
             annotator_kind=annotator_kind,
             case_id=resolved_case_id,
+            input=(
+                self._descriptive_input(case) if case is not None else None
+            ),
             run_name=run_name,
             dataset_name=dataset_name,
             trace_id=trace_id,

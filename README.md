@@ -110,6 +110,18 @@ returns item IDs, binary statuses, Python-assigned item scores, and concise
 violation reasons. An empty judge-produced instruction set is
 `not_applicable` after the one call; missing required case fields fail before it.
 
+## Metric usage notebooks
+
+| Metric | Required | Optional evidence | Meaning | Notebook |
+| --- | --- | --- | --- | --- |
+| Coverage | `context`, `output` | — | source information represented | [`coverage_evaluator_usage.ipynb`](notebooks/coverage_evaluator_usage.ipynb) |
+| Faithfulness | `context`, `output` | — | output claims supported by source | [`faithfulness_evaluator_usage.ipynb`](notebooks/faithfulness_evaluator_usage.ipynb) |
+| Instruction Adherence | `instructions`, `output` | `context` | explicit instructions followed | [`instruction_adherence_evaluator_usage.ipynb`](notebooks/instruction_adherence_evaluator_usage.ipynb) |
+
+These are small, backend-independent examples using application-owned Azure
+configuration placeholders. The setup guide covers the equivalent gateway
+configuration.
+
 ## Install
 
 ```bash
@@ -183,9 +195,10 @@ included in evaluator prompts.
 ## Bulk, grouped, and async evaluation
 
 ```python
-framework.evaluate_many([case1, case2, case3])
+framework.evaluate(case)
+framework.evaluate_many(cases)
 
-framework.evaluate_groups([
+groups = [
     {
         "group_id": "request-1",
         "context": {
@@ -197,16 +210,19 @@ framework.evaluate_groups([
             {"summary": "Option B", "actions": ["Scale workers"]},
         ],
     }
-])
+]
+framework.evaluate_groups(groups)
 
-await framework.a_evaluate_many(cases, max_concurrency=4)
+result = await framework.a_evaluate(case, max_concurrency=4)
+results = await framework.a_evaluate_many(cases, max_concurrency=4)
+results = await framework.a_evaluate_groups(groups, max_concurrency=4)
 ```
 
 Grouped evaluation simply fans each output into an ordinary independent case.
-Async evaluation preserves order and uses one global semaphore to cap judge
-calls. A list stored in `case.output` remains one structured output; only the
-explicit `group["outputs"]` list creates multiple cases. Each coverage case makes
-one judge call.
+Async evaluation preserves order, and the framework enforces the shared
+`max_concurrency` limit across judge calls. A list stored in `case.output`
+remains one structured output, case, and trace; only the explicit
+`group["outputs"]` list creates multiple cases and traces.
 
 ## Judge backends
 

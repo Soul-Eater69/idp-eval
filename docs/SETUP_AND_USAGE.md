@@ -339,7 +339,23 @@ With `verbose=True`, `details["items"]` adds stable IDs, source text, the
 binary judgments, Python-derived status and score, and reasons. Covered reasons
 are empty; partial/missing reasons are non-empty.
 
-## 7. Instruction adherence and other evaluators
+## 7. Metric-specific examples
+
+### Coverage
+
+Requires `context + output`; it ignores `input`, `instructions`, metadata, and
+retrieved documents. Structured dictionaries/lists are rendered recursively.
+Use `CoverageEvaluator(judge, verbose=True)` for item details. See
+[`notebooks/coverage_evaluator_usage.ipynb`](../notebooks/coverage_evaluator_usage.ipynb).
+
+### Faithfulness
+
+Requires `context + output`; it ignores `input`, `instructions`, metadata, and
+retrieved documents semantically. Structured values use the same renderer. Use
+`FaithfulnessEvaluator` with the shared framework judge. See
+[`notebooks/faithfulness_evaluator_usage.ipynb`](../notebooks/faithfulness_evaluator_usage.ipynb).
+
+### Instruction Adherence
 
 `InstructionAdherenceEvaluator(judge, verbose=False)` requires
 `instructions + output` and optionally uses `context` as supporting evidence.
@@ -389,10 +405,16 @@ evaluation uses the judge's native async method when available and otherwise
 bridges the same single call through a worker thread under the framework's
 global semaphore.
 
+See
+[`notebooks/instruction_adherence_evaluator_usage.ipynb`](../notebooks/instruction_adherence_evaluator_usage.ipynb)
+for the compact structured-data example.
+
 Faithfulness uses Phoenix's native evaluator and asks whether output claims are
 supported by authoritative context. Phoenix 3.4 structurally requires an
 `input` string, so the adapter supplies a neutral empty value rather than the
 case's task/query; faithfulness semantics use only rendered `context + output`.
+
+### Retrieval metrics
 
 `RelevanceAtKEvaluator(k)` and `NDCGAtKEvaluator(k)` judge ranked retrieval
 documents against the query in `input`. Relevance@K is binary Precision@K;
@@ -401,9 +423,10 @@ nDCG@K is derived from the same relevance judgments.
 ## 8. Bulk, grouped, and async APIs
 
 ```python
-framework.evaluate_many([case1, case2])
+result = framework.evaluate(case)
+results = framework.evaluate_many(cases)
 
-framework.evaluate_groups([
+groups = [
     {
         "group_id": "request-1",
         "input": {"operation": "compare options"},
@@ -419,20 +442,23 @@ framework.evaluate_groups([
         "case_ids": ["request-1:a", "request-1:b"],
         "metadata": {"source": "benchmark"},
     }
-])
+]
+results = framework.evaluate_groups(groups)
 
-await framework.a_evaluate_many(cases, max_concurrency=4)
-await framework.a_evaluate_groups(groups, max_concurrency=4)
+result = await framework.a_evaluate(case, max_concurrency=4)
+results = await framework.a_evaluate_many(cases, max_concurrency=4)
+results = await framework.a_evaluate_groups(groups, max_concurrency=4)
 ```
 
 Groups fan out into ordinary independent cases; evaluator work is not shared.
 Shared `input`, `context`, `instructions`, and `metadata` are copied to each case.
 Explicit `case_ids` win, followed by IDs derived from `group_id`, then stable
-group/output indexes. Inputs are not mutated. Async results preserve order and a
-framework-level semaphore limits all concurrent judge calls.
+group/output indexes. Inputs are not mutated. Async results preserve order, and
+the framework enforces the shared `max_concurrency` limit across all judge calls.
 
-`case.output=[...]` is one structured output and one trace. Only a list under the
-group API's explicit `outputs` key creates multiple cases and traces.
+`case.output=[a, b]` is one structured output, one `EvaluationCase`, and one
+trace. `group["outputs"]=[a, b]` creates two cases, evaluations, and traces. This
+distinction applies equally to coverage, faithfulness, and instruction adherence.
 
 ## 9. Output destinations
 

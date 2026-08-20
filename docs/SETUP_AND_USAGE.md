@@ -84,7 +84,9 @@ judge = create_azure_judge(
 
 Direct Azure uses `ClientSecretCredential` and the Cognitive Services bearer
 token scope. Token caching and refresh are handled by Azure Identity. It does
-not use an API key or the corporate gateway URL.
+not use an API key or the corporate gateway URL. `IDP_EVAL_AZURE_TIMEOUT`
+controls this direct client's timeout because requests do not traverse the
+corporate gateway.
 
 `IDP_EVAL_CONFIG` can point to YAML with a `judge` section for the gateway and an
 `azure_judge` section for Azure. Keep secrets out of committed files. Setting
@@ -98,6 +100,36 @@ Evaluator wiring does not depend on the backend:
 coverage = CoverageEvaluator(judge)
 framework = EvaluationFramework(judge=judge, evaluators=[coverage])
 ```
+
+## Comparing Gateway and Azure on the same evaluation case
+
+The repository includes a single-case latency smoke test using the production
+judge constructors and final `CoverageEvaluator`:
+
+1. Install or sync the project.
+2. Configure the gateway through environment variables or the optional YAML
+   `judge` section.
+3. Configure Azure through environment variables or the optional YAML
+   `azure_judge` section. Optional reasoning effort comes from
+   `IDP_EVAL_AZURE_REASONING_EFFORT` or the existing constructor configuration.
+4. Place your local `golden_set_augmented_tagged.csv` where the notebook expects
+   it, or update `GOLDEN_SET_PATH`.
+5. Open
+   [`notebooks/judge_backend_latency_comparison.ipynb`](../notebooks/judge_backend_latency_comparison.ipynb).
+6. Run the notebook from top to bottom.
+7. Inspect the comparison DataFrame and verbose item-level tables.
+8. Run the final cell to close both judge resources.
+
+The notebook measures `time.perf_counter()` around `framework.evaluate(case)`,
+so latency is the application-visible end-to-end evaluator time, including the
+judge call. It performs one evaluation per backend and is not a statistically
+meaningful performance benchmark. Each resolved model is printed because the
+gateway and Azure configurations may select different deployments.
+
+`IDP_EVAL_GATEWAY_TIMEOUT` is only the gateway client's timeout and cannot
+override a shorter upstream Mule timeout. In contrast,
+`IDP_EVAL_AZURE_TIMEOUT` controls the direct Azure client because that path does
+not traverse the corporate gateway.
 
 ## 3. Phoenix tracing
 

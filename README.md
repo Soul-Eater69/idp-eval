@@ -241,6 +241,23 @@ sections. TLS verification is on by default; disabling it is only for controlled
 development. `reasoning_effort` is sent only when configured. Temperature is
 never added.
 
+For direct comparisons, configure both backends and run the latency notebook.
+Gateway and Azure may use different deployment or model values, so the notebook
+prints each resolved model for auditability.
+
+## Gateway vs Azure latency smoke test
+
+[`notebooks/judge_backend_latency_comparison.ipynb`](notebooks/judge_backend_latency_comparison.ipynb)
+runs the same `EvaluationCase` once through `create_gateway_judge()` and
+`create_azure_judge()`. It compares end-to-end latency, coverage score, label,
+extracted item count, and verbose item-level decisions.
+
+This is a single-case smoke comparison, not a statistically meaningful
+performance benchmark. It intentionally uses the production constructors so it
+does not duplicate authentication or transport code. Provide your own local
+`golden_set_augmented_tagged.csv` or update `GOLDEN_SET_PATH` in the notebook;
+the GT CSV is not committed.
+
 ## Tracing and output
 
 Tracing is evaluation-only:

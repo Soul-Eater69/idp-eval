@@ -306,6 +306,33 @@ case = EvaluationCase(
 )
 ```
 
+### Selecting metrics per evaluation
+
+`framework.metrics` lists the configured metric names. Pass `metrics=[...]` to
+run only a configured subset; unknown names raise `KeyError` before judge work.
+Validation applies only to the selected metrics, so a case without
+`instructions` can still run Coverage or Faithfulness.
+
+```python
+framework.metrics
+
+results = framework.evaluate(
+    case,
+    metrics=["coverage", "faithfulness"],
+)
+
+results = await framework.a_evaluate(
+    case,
+    metrics=["coverage"],
+    max_concurrency=4,
+)
+```
+
+Metric selection also applies to `individual`/`both` output scopes and all bulk,
+grouped, and async methods. It never instantiates an evaluator that was not
+configured. See the recommended combined walkthrough in
+[`notebooks/core_metrics_together_usage.ipynb`](../notebooks/core_metrics_together_usage.ipynb).
+
 ## 6. Coverage
 
 Coverage asks how much materially important information from the full context is
@@ -358,6 +385,11 @@ binary judgments, Python-derived status and score, and reasons. Covered reasons
 are empty; partial/missing reasons are non-empty.
 
 ## 7. Metric-specific examples
+
+For a complete shared-judge example that runs all three core metrics, selects a
+subset per call, inspects verbose details, and combines scope with bulk/async
+evaluation, start with
+[`notebooks/core_metrics_together_usage.ipynb`](../notebooks/core_metrics_together_usage.ipynb).
 
 ### Coverage
 
@@ -449,7 +481,7 @@ global semaphore.
 
 See
 [`notebooks/instruction_adherence_evaluator_usage.ipynb`](../notebooks/instruction_adherence_evaluator_usage.ipynb)
-for the compact structured-data example.
+for the practical guide, including collection-level and per-item scope.
 
 ### Retrieval metrics
 

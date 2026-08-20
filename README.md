@@ -137,15 +137,17 @@ violation reasons. An empty judge-produced instruction set is
 
 ## Metric usage notebooks
 
-| Metric | Required | Optional evidence | Meaning | Notebook |
-| --- | --- | --- | --- | --- |
-| Coverage | `context`, `output` | — | source information represented | [`coverage_evaluator_usage.ipynb`](notebooks/coverage_evaluator_usage.ipynb) |
-| Faithfulness | `context`, `output` | — | output claims supported by source | [`faithfulness_evaluator_usage.ipynb`](notebooks/faithfulness_evaluator_usage.ipynb) |
-| Instruction Adherence | `instructions`, `output` | `context` | explicit instructions followed | [`instruction_adherence_evaluator_usage.ipynb`](notebooks/instruction_adherence_evaluator_usage.ipynb) |
+| Notebook | Purpose |
+| --- | --- |
+| [`core_metrics_together_usage.ipynb`](notebooks/core_metrics_together_usage.ipynb) | **Recommended:** configure multiple metrics and run all or selected subsets |
+| [`coverage_evaluator_usage.ipynb`](notebooks/coverage_evaluator_usage.ipynb) | Coverage-specific usage |
+| [`faithfulness_evaluator_usage.ipynb`](notebooks/faithfulness_evaluator_usage.ipynb) | Faithfulness-specific usage |
+| [`instruction_adherence_evaluator_usage.ipynb`](notebooks/instruction_adherence_evaluator_usage.ipynb) | Instruction Adherence-specific usage |
 
-These are small, backend-independent examples using application-owned Azure
+The guides are backend-independent and use application-owned Azure
 configuration placeholders. The setup guide covers the equivalent gateway
-configuration.
+configuration. Start with the combined guide when evaluating one generation
+with several metrics; use the metric-specific guides for focused audit details.
 
 ## Install
 

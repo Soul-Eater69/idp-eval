@@ -89,6 +89,7 @@ CASE = EvaluationCase(
     context="UNIQUE CONTEXT THAT MUST NOT REACH THIS METRIC",
     output={"recommendations": ["a", "b", "c"]},
     metadata={"secret_marker": "UNIQUE METADATA THAT MUST NOT REACH THIS METRIC"},
+    retrieved_documents=["UNIQUE RETRIEVAL DATA THAT MUST NOT REACH THIS METRIC"],
 )
 
 
@@ -321,7 +322,7 @@ def test_verbose_reason_contract_is_strict(response):
         ).evaluate(CASE)
 
 
-def test_prompt_contains_only_rendered_instructions_and_complete_output():
+def test_prompt_includes_optional_context_but_ignores_input_and_metadata():
     judge = ScriptedJudge(_response(("Use JSON.", "followed")))
     InstructionAdherenceEvaluator(judge).evaluate(CASE)
     user = judge.calls[0]["prompt"][1]["content"]
@@ -329,9 +330,43 @@ def test_prompt_contains_only_rendered_instructions_and_complete_output():
     assert "[INSTRUCTIONS]" in user and "[OUTPUT]" in user
     assert "Return exactly 3 recommendations" in user
     assert "Recommendations:" in user
+    assert "[CONTEXT — SUPPORTING EVIDENCE ONLY]" in user
+    assert CASE.context in user
     assert CASE.input not in user
-    assert CASE.context not in user
     assert CASE.metadata["secret_marker"] not in user
+    assert CASE.retrieved_documents[0] not in user
+
+
+def test_no_context_omits_context_block_and_still_uses_one_call():
+    judge = ScriptedJudge(_response(("Return JSON.", "followed")))
+    case = EvaluationCase(instructions="Return JSON.", output={"ok": True})
+    result = InstructionAdherenceEvaluator(judge).evaluate(case)
+    user = judge.calls[0]["prompt"][1]["content"]
+    assert "[CONTEXT" not in user
+    assert result.score == 1.0
+    assert len(judge.calls) == 1
+
+
+def test_structured_context_is_rendered_as_supporting_evidence():
+    judge = ScriptedJudge(
+        _response(("Address every requirement in the source.", "followed"))
+    )
+    case = EvaluationCase(
+        instructions="Address every requirement in the source.",
+        context={
+            "requirements": [
+                {"name": "Audit logging", "mandatory": True},
+                {"name": "Regional hosting", "mandatory": False},
+            ]
+        },
+        output=["Audit logging", "Regional hosting"],
+    )
+    InstructionAdherenceEvaluator(judge).evaluate(case)
+    user = judge.calls[0]["prompt"][1]["content"]
+    assert "Requirements:" in user
+    assert "Name: Audit logging" in user
+    assert "Mandatory: true" in user
+    assert len(judge.calls) == 1
 
 
 def test_structured_instructions_and_list_of_dicts_remain_one_case_and_call():
@@ -382,14 +417,24 @@ def test_prompt_contract_is_generic_strict_and_not_domain_specific():
     assert '"each", "every", and "all"' in normalized
     assert "exact/at-least/maximum counts" in normalized
     assert "prohibition" in normalized
+    assert "context, when supplied, is supporting evidence only" in normalized
+    assert "never turn contextual facts into new instructions" in normalized
+    assert "do not score source completeness unless an explicit instruction" in normalized
     assert all(word not in normalized for word in ("jira", "theme", "epic"))
 
 
 def test_prompt_renderer_does_not_mutate_global_templates():
     compact = copy.deepcopy(INSTRUCTION_ADHERENCE_PROMPT_COMPACT_V1)
     verbose = copy.deepcopy(INSTRUCTION_ADHERENCE_PROMPT_VERBOSE_V1)
-    render_instruction_adherence_prompt("Return JSON.", "{}")
-    render_instruction_adherence_prompt("Return JSON.", "{}", verbose=True)
+    render_instruction_adherence_prompt(
+        instructions="Return JSON.", output="{}"
+    )
+    render_instruction_adherence_prompt(
+        instructions="Return JSON.",
+        context="Source evidence.",
+        output="{}",
+        verbose=True,
+    )
     assert INSTRUCTION_ADHERENCE_PROMPT_COMPACT_V1 == compact
     assert INSTRUCTION_ADHERENCE_PROMPT_VERBOSE_V1 == verbose
     assert "{instructions}" in INSTRUCTION_ADHERENCE_PROMPT_COMPACT_V1[1]["content"]

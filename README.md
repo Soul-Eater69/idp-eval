@@ -6,13 +6,13 @@ A reusable evaluation framework built on Arize Phoenix. Cases use generic
 
 ## Metrics
 
-| Metric | Question | Required fields |
-| --- | --- | --- |
-| `coverage` | How much materially important source information is represented? | `context`, `output` |
-| `faithfulness` | Is the output grounded in the context? | `context`, `output` |
-| `instruction_adherence` | Did the output obey the explicit instructions? | `instructions`, `output` |
-| `relevance_at_{k}` | What fraction of the top-K retrieved documents are relevant? | `input`, `retrieved_documents` |
-| `ndcg_at_{k}` | How well are relevant documents ranked in the top K? | `input`, `retrieved_documents` |
+| Metric | Meaning | Required fields | Optional evidence |
+| --- | --- | --- | --- |
+| `coverage` | How much materially important source information reached the output? | `context`, `output` | — |
+| `faithfulness` | Are output claims supported by the authoritative source? | `context`, `output` | — |
+| `instruction_adherence` | Were explicit output instructions followed? | `instructions`, `output` | `context` |
+| `relevance_at_{k}` | What fraction of the top-K documents are relevant to the query? | `input`, `retrieved_documents` | — |
+| `ndcg_at_{k}` | How well are relevant documents ranked for the query? | `input`, `retrieved_documents` | — |
 
 Coverage detects omissions from the source. Faithfulness separately detects
 unsupported additions to the output.
@@ -62,11 +62,20 @@ Compact mode returns counts, one-call accounting, and timing. `verbose=True`
 also returns the item-level audit trail and concise reasons for partial or
 missing items. Covered items use an empty reason. Both modes score identically.
 
+## Faithfulness
+
+Faithfulness asks whether claims in the generated `output` are supported by the
+authoritative `context` (`output → context`). It uses Phoenix's built-in
+faithfulness evaluator and does not semantically use `input`, `instructions`,
+metadata, or retrieved documents. Structured context and output values are
+rendered through the same generic `render_value()` path.
+
 ## Instruction adherence
 
 `InstructionAdherenceEvaluator(judge, verbose=False)` is a one-call holistic
 judge. It sends the complete rendered `instructions` and complete rendered
-`output` in one structured request. The judge identifies materially distinct,
+`output` in one structured request, plus rendered `context` when present as
+optional supporting evidence. The judge identifies materially distinct,
 independently checkable instructions and classifies each as `followed` or
 `violated`; Python deduplicates exact normalized repeats, assigns stable IDs,
 and computes the fraction followed.
@@ -80,6 +89,7 @@ case = EvaluationCase(
             "Do not include implementation details",
         ],
     },
+    context={"approved_options": ["Option A", "Option B", "Option C"]},
     output=[
         {"title": "Option A"},
         {"title": "Option B"},
@@ -91,8 +101,10 @@ result = InstructionAdherenceEvaluator(judge, verbose=True).evaluate(case)
 
 Count, range, universal (`each`/`every`/`all`), prohibition, structure, order,
 language, and style constraints are interpreted generically by the judge—there
-is no domain-specific Python rule engine. The evaluator reads only
-`instructions + output`; it never falls back to `input`, `context`, or metadata.
+is no domain-specific Python rule engine. Context is evidence only: the judge
+must not infer new instructions from it or score source completeness unless an
+explicit instruction requires that. The evaluator ignores `input`, metadata,
+and retrieved documents.
 Compact mode returns counts, one-call accounting, and timing. Verbose mode also
 returns item IDs, binary statuses, Python-assigned item scores, and concise
 violation reasons. An empty judge-produced instruction set is

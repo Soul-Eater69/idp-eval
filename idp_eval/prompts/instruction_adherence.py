@@ -6,6 +6,11 @@ from __future__ import annotations
 _INSTRUCTION_ADHERENCE_CONTRACT_V1 = """\
 Evaluate whether the generated OUTPUT follows the explicit INSTRUCTIONS.
 
+CONTEXT, when supplied, is supporting evidence only. Identify and score only
+constraints contained in INSTRUCTIONS. Never turn contextual facts into new
+instructions, and do not score source completeness unless an explicit
+instruction requires completeness, source coverage, or source-grounded content.
+
 In one response:
 1. identify all materially distinct, independently checkable output instructions;
    and
@@ -57,7 +62,14 @@ _INSTRUCTION_ADHERENCE_USER_TEMPLATE_V1 = """\
 [BEGIN DATA]
 
 [INSTRUCTIONS]
-{instructions}
+{instructions}"""
+
+_INSTRUCTION_ADHERENCE_CONTEXT_TEMPLATE_V1 = """\
+
+[CONTEXT — SUPPORTING EVIDENCE ONLY]
+{context}"""
+
+_INSTRUCTION_ADHERENCE_OUTPUT_TEMPLATE_V1 = """\
 
 [OUTPUT]
 {output}
@@ -110,9 +122,13 @@ INSTRUCTION_ADHERENCE_SCHEMA_VERBOSE = _instruction_schema(include_reason=True)
 
 
 def render_instruction_adherence_prompt(
-    instructions: str, output: str, verbose: bool = False
+    *,
+    instructions: str,
+    output: str,
+    context: str | None = None,
+    verbose: bool = False,
 ) -> list[dict[str, str]]:
-    """Renders a fresh one-call instruction-adherence prompt."""
+    """Renders a fresh prompt with optional context as evidence only."""
     template = (
         INSTRUCTION_ADHERENCE_PROMPT_VERBOSE_V1
         if verbose
@@ -122,6 +138,13 @@ def render_instruction_adherence_prompt(
     for message in template:
         content = message["content"]
         if message["role"] == "user":
-            content = content.format(instructions=instructions, output=output)
+            content = content.format(instructions=instructions)
+            if context:
+                content += _INSTRUCTION_ADHERENCE_CONTEXT_TEMPLATE_V1.format(
+                    context=context
+                )
+            content += _INSTRUCTION_ADHERENCE_OUTPUT_TEMPLATE_V1.format(
+                output=output
+            )
         rendered.append({"role": message["role"], "content": content})
     return rendered

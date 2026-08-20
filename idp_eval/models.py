@@ -28,9 +28,12 @@ class EvaluationCase:
     ``instructions`` are distinct on purpose so the same case can be run through
     every metric without any field changing meaning:
 
-    - ``input`` is the task/request passed to Phoenix by ``faithfulness``.
-    - ``instructions`` is the explicit instruction text evaluated by
-      ``instruction_adherence``. It is never derived from ``input``.
+    - ``input`` is the task/request/query when one exists. Retrieval metrics use
+      it as the query; other metrics may not need it.
+    - ``context`` is authoritative source/reference evidence.
+    - ``instructions`` contains explicit behavioral/output constraints. It is
+      never derived from ``input``.
+    - ``output`` is the generated result being evaluated.
 
     The content fields (``input`` / ``context`` / ``output`` / ``instructions``)
     may be **structured values** — nested ``dict`` / ``list`` of scalars — not

@@ -19,7 +19,7 @@ from idp_eval.prompts.instruction_adherence import (
     INSTRUCTION_ADHERENCE_SCHEMA_VERBOSE,
     render_instruction_adherence_prompt,
 )
-from idp_eval.rendering import render_value
+from idp_eval.rendering import is_empty_value, render_value
 from idp_eval.scoring import (
     calculate_instruction_adherence,
     instruction_adherence_label,
@@ -64,9 +64,13 @@ class InstructionAdherenceEvaluator(Evaluator):
         return self._result_from_response(response, _elapsed_ms(started))
 
     def _prompt_and_schema(self, case: EvaluationCase) -> tuple[list[dict], dict]:
+        context = (
+            None if is_empty_value(case.context) else render_value(case.context)
+        )
         prompt = render_instruction_adherence_prompt(
             instructions=render_value(case.instructions),
             output=render_value(case.output),
+            context=context,
             verbose=self._verbose,
         )
         schema = (

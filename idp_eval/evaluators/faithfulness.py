@@ -1,14 +1,4 @@
-"""Faithfulness evaluator.
-
-For v1 this wraps Phoenix's existing ``FaithfulnessEvaluator`` so we get a
-grounding metric without writing our own implementation.
-
-Faithfulness is the metric we use to evaluate whether the generated output
-contains hallucinated / unsupported information relative to the authoritative
-context. Hallucination is the failure/problem being measured; faithfulness is
-the metric that detects it. There is deliberately no separate top-level
-``hallucination`` metric in v1. Higher is better.
-"""
+"""Faithfulness measures whether output is supported by authoritative context."""
 
 from __future__ import annotations
 
@@ -18,26 +8,12 @@ from idp_eval.rendering import render_value
 
 
 class FaithfulnessEvaluator(Evaluator):
-    """Grounding evaluation backed by Phoenix.
-
-    A thin adapter around Phoenix's built-in ``FaithfulnessEvaluator`` (imported
-    here as ``PhoenixFaithfulnessEvaluator``) that returns our common
-    ``EvaluationResult``.
-
-    Answers: is the generated output grounded in the provided context, or did it
-    ADD unsupported (hallucinated) information? Direction: ``output -> context``.
-    Higher is better.
-    """
+    """Thin Phoenix adapter for the ``output -> context`` grounding metric."""
 
     name = "faithfulness"
     required_fields = ("context", "output")
 
     def __init__(self, llm):
-        """Initializes the evaluator.
-
-        Args:
-            llm: A Phoenix ``LLM`` (or compatible) judge object.
-        """
         # Imported lazily so the rest of the framework (models, scoring) can be
         # used and tested without Phoenix installed. Aliased to avoid colliding
         # with our own class of the same name.
@@ -48,18 +24,18 @@ class FaithfulnessEvaluator(Evaluator):
         self._evaluator = PhoenixFaithfulnessEvaluator(llm=llm)
 
     def evaluate(self, case: EvaluationCase) -> EvaluationResult:
-        """Evaluates grounding for a single case.
-
-        Validates required fields first, so a missing ``context`` / ``output``
-        fails before the Phoenix judge call — consistent with the framework.
-        """
+        """Evaluates whether output claims are supported by context."""
         self.validate_case(case)
         with tracing.judge_span(
-            "faithfulness.evaluate", {"idp_eval.metric": self.name}
+            "faithfulness.evaluate",
+            {"idp_eval.metric": self.name, "idp_eval.stage": "evaluate"},
         ):
             result = self._evaluator.evaluate(
                 {
-                    "input": render_value(case.input),
+                    # Phoenix Evals 3.4 requires an input string structurally and
+                    # accepts empty text. Keep it neutral so case.input cannot
+                    # influence faithfulness semantics.
+                    "input": "",
                     "context": render_value(case.context),
                     "output": render_value(case.output),
                 }

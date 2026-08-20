@@ -6,6 +6,7 @@ from idp_eval import (
     CoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
+    FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
 )
 
@@ -112,6 +113,34 @@ def test_multiple_metrics_share_the_same_case_trace(spans):
         "instruction_adherence.evaluate",
     }
     assert all(span.parent.span_id == root.context.span_id for span in stages)
+
+
+def test_faithfulness_uses_one_evaluate_stage_with_standard_attributes(spans):
+    class PhoenixFaithfulness:
+        calls = 0
+
+        def evaluate(self, record):
+            self.calls += 1
+
+            class Result:
+                score = 1.0
+                label = "faithful"
+                explanation = "Supported."
+
+            return [Result()]
+
+    evaluator = object.__new__(FaithfulnessEvaluator)
+    evaluator._evaluator = PhoenixFaithfulness()
+    EvaluationFramework(evaluators=[evaluator]).evaluate(
+        EvaluationCase(context="source", output="answer")
+    )
+    finished = spans.get_finished_spans()
+    root = next(span for span in finished if span.name == "idp_eval.evaluate")
+    stage = next(span for span in finished if span.name == "faithfulness.evaluate")
+    assert evaluator._evaluator.calls == 1
+    assert stage.parent.span_id == root.context.span_id
+    assert stage.attributes["idp_eval.metric"] == "faithfulness"
+    assert stage.attributes["idp_eval.stage"] == "evaluate"
 
 
 def test_two_cases_create_two_independent_traces(spans):

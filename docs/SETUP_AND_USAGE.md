@@ -243,10 +243,10 @@ framework = EvaluationFramework(
 
 | Field | Meaning |
 | --- | --- |
-| `input` | task/request or retrieval query |
-| `context` | authoritative source information |
-| `output` | generated content being evaluated |
-| `instructions` | explicit instructions for the output |
+| `input` | task/request/query when one exists |
+| `context` | authoritative source/reference evidence |
+| `output` | generated result being evaluated |
+| `instructions` | explicit behavioral/output constraints |
 | `retrieved_documents` | ordered retrieval results |
 | `case_id` | optional correlation identifier |
 | `metadata` | optional non-prompt metadata |
@@ -254,12 +254,17 @@ framework = EvaluationFramework(
 Fields accept strings or nested dictionaries/lists of scalar values. Rendering
 is deterministic. Required fields are evaluator-specific:
 
-| Evaluator | Required fields |
-| --- | --- |
-| `CoverageEvaluator` | `context`, `output` |
-| `FaithfulnessEvaluator` | `context`, `output` |
-| `InstructionAdherenceEvaluator` | `instructions`, `output` |
-| retrieval evaluators | `input`, `retrieved_documents` |
+| Evaluator | Required fields | Optional evidence |
+| --- | --- | --- |
+| `CoverageEvaluator` | `context`, `output` | — |
+| `FaithfulnessEvaluator` | `context`, `output` | — |
+| `InstructionAdherenceEvaluator` | `instructions`, `output` | `context` |
+| retrieval evaluators | `input`, `retrieved_documents` | — |
+
+For non-chat generation workflows, `input` may legitimately be `None` when no
+selected evaluator requires it. It is not a synonym for a system prompt.
+Applications that want to evaluate explicit system/developer output constraints
+may map those constraints into `instructions`.
 
 Structured values are rendered recursively for prompts. Dictionary keys become
 readable labels (`max_latency` becomes `Max Latency`), lists become bullets, and
@@ -336,11 +341,12 @@ are empty; partial/missing reasons are non-empty.
 
 ## 7. Instruction adherence and other evaluators
 
-`InstructionAdherenceEvaluator(judge, verbose=False)` reads only the required
-`instructions + output` fields. It sends their full rendered values in one
-structured judge call. The judge identifies materially distinct, independently
-checkable output constraints and returns only `followed` or `violated`; Python
-deduplicates exact normalized repeats, assigns IDs, and computes:
+`InstructionAdherenceEvaluator(judge, verbose=False)` requires
+`instructions + output` and optionally uses `context` as supporting evidence.
+It sends their full rendered values in one structured judge call. The judge
+identifies materially distinct, independently checkable output constraints and
+returns only `followed` or `violated`; Python deduplicates exact normalized
+repeats, assigns IDs, and computes:
 
 ```text
 instruction adherence = followed instructions / identified instructions
@@ -355,6 +361,7 @@ case = EvaluationCase(
             "Do not include implementation details",
         ],
     },
+    context={"approved_options": ["Option A", "Option B", "Option C"]},
     output=[
         {"title": "Option A"},
         {"title": "Option B"},
@@ -367,8 +374,10 @@ result = InstructionAdherenceEvaluator(judge, verbose=True).evaluate(case)
 The holistic judge sees the complete structured output, so exact/minimum/maximum
 counts, universal `each`/`every`/`all` requirements, prohibitions, required
 fields, order, format, language, and style can be judged together. There is no
-domain-specific Python rule engine. The metric never reads or infers from
-`input`, `context`, or metadata.
+domain-specific Python rule engine. Context remains evidence only: contextual
+facts do not become instructions, and source completeness is not scored unless
+an explicit instruction requires it. The metric ignores `input`, metadata, and
+retrieved documents.
 
 Compact details contain instruction/followed/violated counts,
 `judge_call_count=1`, timing, and `verbose=False`. With `verbose=True`, the
@@ -381,7 +390,9 @@ bridges the same single call through a worker thread under the framework's
 global semaphore.
 
 Faithfulness uses Phoenix's native evaluator and asks whether output claims are
-supported by context.
+supported by authoritative context. Phoenix 3.4 structurally requires an
+`input` string, so the adapter supplies a neutral empty value rather than the
+case's task/query; faithfulness semantics use only rendered `context + output`.
 
 `RelevanceAtKEvaluator(k)` and `NDCGAtKEvaluator(k)` judge ranked retrieval
 documents against the query in `input`. Relevance@K is binary Precision@K;

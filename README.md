@@ -141,16 +141,17 @@ violation reasons. An empty judge-produced instruction set is
 
 | Notebook | Purpose |
 | --- | --- |
-| [`core_metrics_together_usage.ipynb`](notebooks/core_metrics_together_usage.ipynb) | **Recommended:** configure multiple metrics and run all or selected subsets |
+| [`core_metrics_together_usage.ipynb`](notebooks/core_metrics_together_usage.ipynb) | **Generation metrics:** configure Coverage, Faithfulness, and Instruction Adherence together |
 | [`coverage_evaluator_usage.ipynb`](notebooks/coverage_evaluator_usage.ipynb) | Coverage-specific usage |
 | [`faithfulness_evaluator_usage.ipynb`](notebooks/faithfulness_evaluator_usage.ipynb) | Faithfulness-specific usage |
 | [`instruction_adherence_evaluator_usage.ipynb`](notebooks/instruction_adherence_evaluator_usage.ipynb) | Instruction Adherence-specific usage |
-| [`retrieval_metrics_usage.ipynb`](notebooks/retrieval_metrics_usage.ipynb) | Shared relevance judging and four deterministic retrieval metrics |
+| [`retrieval_metrics_usage.ipynb`](notebooks/retrieval_metrics_usage.ipynb) | **Retrieval metrics:** shared relevance judging and four deterministic ranking metrics |
 
 The guides are backend-independent and use application-owned Azure
 configuration placeholders. The setup guide covers the equivalent gateway
-configuration. Start with the combined guide when evaluating one generation
-with several metrics; use the metric-specific guides for focused audit details.
+configuration. Start with the combined guide for generated outputs, the
+retrieval guide for ranked search results, and the metric-specific guides for
+focused audit details.
 
 ## Install
 

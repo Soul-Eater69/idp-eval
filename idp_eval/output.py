@@ -315,8 +315,8 @@ class _ItemSheet:
 
 
 # Small declarative registry (not per-metric if/else): each entry flattens one
-# metric's item list into a dedicated sheet. Metrics without an entry
-# (faithfulness, arbitrary custom metrics) appear only in the summary sheet.
+# metric's item list into a dedicated sheet. Arbitrary custom metrics appear
+# only in the summary sheet unless they define a repository-supported layout.
 _ITEM_SHEETS: dict[str, _ItemSheet] = {
     # Whole-source coverage. ``details["items"]`` is only present in verbose mode
     # (compact results keep details lean), so this sheet fills for verbose runs.
@@ -341,6 +341,17 @@ _ITEM_SHEETS: dict[str, _ItemSheet] = {
             ("instruction", "instruction"),
             ("status", "status"),
             ("item_score", "score"),
+            ("reason", "reason"),
+        ),
+    ),
+    "faithfulness": _ItemSheet(
+        "faithfulness_items",
+        "claims",
+        (
+            ("claim_id", "id"),
+            ("claim", "claim"),
+            ("status", "status"),
+            ("item_score", "item_score"),
             ("reason", "reason"),
         ),
     ),
@@ -369,6 +380,7 @@ _WIDE_COLUMNS = frozenset(
         "requirement",
         "source_item",
         "instruction",
+        "claim",
         "raw_details_json",
     }
 )
@@ -385,7 +397,7 @@ class ExcelEvaluationWriter:
     The workbook is created once and held in memory; each :meth:`write` appends
     rows to the open sheets and saves the file, so it stays current for
     single-case and batch runs (evaluators are never re-run). Metrics without a
-    registered layout (faithfulness, custom code metrics) appear only in the
+    registered layout (custom code metrics, for example) appear only in the
     summary; their full ``details`` remain available in ``raw_details_json``.
     Independent of Phoenix.
     """

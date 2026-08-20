@@ -351,9 +351,29 @@ Use `CoverageEvaluator(judge, verbose=True)` for item details. See
 ### Faithfulness
 
 Requires `context + output`; it ignores `input`, `instructions`, metadata, and
-retrieved documents semantically. Structured values use the same renderer. Use
-`FaithfulnessEvaluator` with the shared framework judge. See
+retrieved documents semantically. Structured values use `render_value()` and
+remain one evaluation case. Use `FaithfulnessEvaluator(judge, verbose=True)` for
+the complete claim audit. See
 [`notebooks/faithfulness_evaluator_usage.ipynb`](../notebooks/faithfulness_evaluator_usage.ipynb).
+
+The evaluator makes one structured judge call over rendered context and output.
+It identifies materially distinct factual output claims and labels each
+`supported` or `unsupported`. Python assigns stable IDs, removes normalized-exact
+duplicates, and computes:
+
+```text
+faithfulness = supported output claims / total factual output claims
+```
+
+Unsupported claims include contradictions, invented facts, unsupported
+specificity, changed qualifiers, and certainty stronger than context supports.
+Omitted context information is not unfaithful—it belongs to Coverage. Compact
+details contain claim counts, timing, `judge_call_count=1`, and `verbose=False`;
+verbose details add each claim, status, deterministic item score, and reason.
+If no checkable factual claims are identified, the result is `not_applicable`
+after that one call. Async evaluation uses native judge async generation when
+available, otherwise the same call runs in a worker thread under the framework's
+shared concurrency limit.
 
 ### Instruction Adherence
 
@@ -412,11 +432,6 @@ global semaphore.
 See
 [`notebooks/instruction_adherence_evaluator_usage.ipynb`](../notebooks/instruction_adherence_evaluator_usage.ipynb)
 for the compact structured-data example.
-
-Faithfulness uses Phoenix's native evaluator and asks whether output claims are
-supported by authoritative context. Phoenix 3.4 structurally requires an
-`input` string, so the adapter supplies a neutral empty value rather than the
-case's task/query; faithfulness semantics use only rendered `context + output`.
 
 ### Retrieval metrics
 

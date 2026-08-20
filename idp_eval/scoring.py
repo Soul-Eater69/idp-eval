@@ -23,6 +23,11 @@ INSTRUCTION_ADHERENCE_VALUES = {
     "violated": 0.0,
 }
 
+FAITHFULNESS_VALUES = {
+    "supported": 1.0,
+    "unsupported": 0.0,
+}
+
 
 def coverage_status_score(status: str) -> float:
     """Maps one coverage status to its deterministic numeric score.
@@ -135,6 +140,30 @@ def calculate_instruction_adherence(instructions: list[dict]) -> float:
             f"Unknown instruction-adherence status: {status!r}"
         ) from None
     return total / len(instructions)
+
+
+def faithfulness_status_score(status: str) -> float:
+    """Maps a claim support status to its deterministic numeric score."""
+    try:
+        return FAITHFULNESS_VALUES[status]
+    except KeyError:
+        raise ValueError(f"Unknown faithfulness status: {status!r}") from None
+
+
+def calculate_faithfulness(claims: list[dict]) -> float:
+    """Returns the fraction of factual output claims supported by context."""
+    if not claims:
+        raise ValueError(
+            "At least one factual claim is required to calculate faithfulness."
+        )
+    return sum(faithfulness_status_score(c["status"]) for c in claims) / len(
+        claims
+    )
+
+
+def faithfulness_label(score: float) -> str:
+    """Labels fully supported output as faithful, otherwise unfaithful."""
+    return "faithful" if score >= 1.0 else "unfaithful"
 
 
 def coverage_label(score: float) -> str:

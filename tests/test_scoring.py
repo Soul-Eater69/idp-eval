@@ -3,13 +3,33 @@
 import pytest
 
 from idp_eval.scoring import (
+    calculate_faithfulness,
     calculate_coverage,
     calculate_instruction_adherence,
     coverage_label,
     coverage_status_from_binary,
     coverage_status_score,
+    faithfulness_label,
+    faithfulness_status_score,
     instruction_adherence_label,
 )
+
+
+def test_faithfulness_scoring_and_labels():
+    assert faithfulness_status_score("supported") == 1.0
+    assert faithfulness_status_score("unsupported") == 0.0
+    assert (
+        calculate_faithfulness(
+            [{"status": "supported"}, {"status": "unsupported"}]
+        )
+        == 0.5
+    )
+    assert faithfulness_label(1.0) == "faithful"
+    assert faithfulness_label(0.5) == "unfaithful"
+    with pytest.raises(ValueError, match="At least one factual claim"):
+        calculate_faithfulness([])
+    with pytest.raises(ValueError, match="Unknown faithfulness status"):
+        faithfulness_status_score("partial")
 
 
 def test_coverage_score():

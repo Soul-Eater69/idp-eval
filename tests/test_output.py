@@ -9,6 +9,7 @@ from idp_eval import (
     EvaluationCase,
     EvaluationFramework,
     EvaluationResult,
+    FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
     PersistenceError,
 )
@@ -69,6 +70,25 @@ def _instruction_judge():
                 }
             ]
         },
+    )
+
+
+def _faithfulness_judge():
+    return Judge(
+        {
+            "claims": [
+                {
+                    "claim": "Cancellation takes 24 hours.",
+                    "status": "supported",
+                    "reason": "",
+                },
+                {
+                    "claim": "Refunds are instant.",
+                    "status": "unsupported",
+                    "reason": "Context says five days.",
+                },
+            ]
+        }
     )
 
 
@@ -194,6 +214,31 @@ def test_instruction_adherence_sheet_remains(tmp_path):
         excel_path=str(path),
     ).evaluate(case)
     assert "instruction_adherence_items" in _sheet_names(path)
+
+
+def test_verbose_faithfulness_items_sheet(tmp_path):
+    path = tmp_path / "faithfulness.xlsx"
+    EvaluationFramework(
+        evaluators=[FaithfulnessEvaluator(_faithfulness_judge(), verbose=True)],
+        output="excel",
+        excel_path=str(path),
+    ).evaluate(CASE)
+    assert _sheet_names(path) == ["evaluations", "faithfulness_items"]
+    header, rows = _read(path, "faithfulness_items")
+    assert header == (
+        "run_name",
+        "dataset_name",
+        "case_id",
+        "trace_id",
+        "metric",
+        "claim_id",
+        "claim",
+        "status",
+        "item_score",
+        "reason",
+    )
+    assert [row["claim_id"] for row in rows] == ["F1", "F2"]
+    assert [row["item_score"] for row in rows] == [1.0, 0.0]
 
 
 def test_multiple_cases_append_in_order(tmp_path):

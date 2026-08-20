@@ -1,8 +1,5 @@
 """Metric-aware required-field validation and subset selection (offline)."""
 
-import sys
-import types
-
 import pytest
 
 from idp_eval import (
@@ -12,27 +9,6 @@ from idp_eval import (
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
 )
-
-
-@pytest.fixture(autouse=True)
-def fake_phoenix(monkeypatch):
-    class FakeFaithfulnessEvaluator:
-        def __init__(self, llm):
-            self.llm = llm
-
-        def evaluate(self, record):
-            class _Result:
-                score, label, explanation = 1.0, "faithful", "Grounded."
-
-            return [_Result()]
-
-    phoenix_mod = types.ModuleType("phoenix")
-    evals_mod = types.ModuleType("phoenix.evals")
-    metrics_mod = types.ModuleType("phoenix.evals.metrics")
-    metrics_mod.FaithfulnessEvaluator = FakeFaithfulnessEvaluator
-    monkeypatch.setitem(sys.modules, "phoenix", phoenix_mod)
-    monkeypatch.setitem(sys.modules, "phoenix.evals", evals_mod)
-    monkeypatch.setitem(sys.modules, "phoenix.evals.metrics", metrics_mod)
 
 
 class CountingJudge:
@@ -50,6 +26,11 @@ class CountingJudge:
                 }
             ]
         }
+
+
+class FaithfulnessJudge:
+    def generate_object(self, prompt, schema):
+        return {"claims": [{"claim": "A", "status": "supported"}]}
 
 
 def test_required_fields_are_declared():
@@ -105,7 +86,7 @@ def _framework():
     return EvaluationFramework(
         evaluators=[
             CoverageEvaluator(CountingJudge()),
-            FaithfulnessEvaluator(object()),
+            FaithfulnessEvaluator(FaithfulnessJudge()),
             InstructionAdherenceEvaluator(object()),
         ]
     )

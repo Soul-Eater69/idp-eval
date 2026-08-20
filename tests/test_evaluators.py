@@ -1,8 +1,6 @@
 """Evaluator and framework tests using fakes (no real LLM calls)."""
 
 import asyncio
-import sys
-import types
 
 import pytest
 
@@ -44,45 +42,6 @@ class ScriptedJudge:
         return self._responses.pop(0)
 
 
-class _FakePhoenixResult:
-    """Mimics one entry of a Phoenix evaluator result."""
-
-    def __init__(self, score, label, explanation):
-        self.score = score
-        self.label = label
-        self.explanation = explanation
-
-
-@pytest.fixture(autouse=True)
-def fake_phoenix(monkeypatch):
-    """Installs a fake ``phoenix.evals.metrics`` so FaithfulnessEvaluator works.
-
-    Lets us exercise ``FaithfulnessEvaluator`` without installing Phoenix or making
-    real LLM calls.
-    """
-
-    class FakeFaithfulnessEvaluator:
-        def __init__(self, llm):
-            self.llm = llm
-            self.calls = 0
-            self.records = []
-
-        def evaluate(self, record):
-            self.calls += 1
-            self.record = record
-            self.records.append(record)
-            return [_FakePhoenixResult(1.0, "faithful", "Grounded in context.")]
-
-    phoenix_mod = types.ModuleType("phoenix")
-    evals_mod = types.ModuleType("phoenix.evals")
-    metrics_mod = types.ModuleType("phoenix.evals.metrics")
-    metrics_mod.FaithfulnessEvaluator = FakeFaithfulnessEvaluator
-
-    monkeypatch.setitem(sys.modules, "phoenix", phoenix_mod)
-    monkeypatch.setitem(sys.modules, "phoenix.evals", evals_mod)
-    monkeypatch.setitem(sys.modules, "phoenix.evals.metrics", metrics_mod)
-
-
 CASE = EvaluationCase(
     input="Summarize the invoice features from the provided source.",
     instructions="Keep it concise.",
@@ -102,6 +61,12 @@ def _coverage_judge():
                  "meaningfully_present": False, "fully_present": False},
             ]
         }
+    )
+
+
+def _faithfulness_judge():
+    return ScriptedJudge(
+        {"claims": [{"claim": "Users can view invoices.", "status": "supported"}]}
     )
 
 
@@ -146,34 +111,44 @@ def test_faithfulness_uses_only_context_and_output_semantically():
         metadata={"marker": "METADATA MUST BE IGNORED"},
         retrieved_documents=["RETRIEVAL MUST BE IGNORED"],
     )
-    evaluator = FaithfulnessEvaluator(llm=object())
+    judge = _faithfulness_judge()
+    evaluator = FaithfulnessEvaluator(llm=judge)
     result = evaluator.evaluate(case)
 
     assert result.metric == "faithfulness"
     assert result.score == 1.0
     assert result.label == "faithful"
-    assert result.explanation == "Grounded in context."
-    assert result.details is None
-    assert evaluator._evaluator.calls == 1
-    assert evaluator._evaluator.record == {
-        "input": "",
-        "context": "Policy:\n- Use approved regions\n- Encrypt records",
-        "output": "Summary: Use approved regions and encrypt records.",
-    }
+    assert result.explanation == (
+        "1 of 1 factual claims were supported; 0 were unsupported."
+    )
+    assert result.details["judge_call_count"] == 1
+    assert len(judge.calls) == 1
+    user = judge.calls[0]["prompt"][1]["content"]
+    assert "Policy:\n- Use approved regions\n- Encrypt records" in user
+    assert "Summary: Use approved regions and encrypt records." in user
+    for ignored in (
+        "INPUT MUST BE NEUTRALIZED",
+        "INSTRUCTIONS MUST BE IGNORED",
+        "METADATA MUST BE IGNORED",
+        "RETRIEVAL MUST BE IGNORED",
+    ):
+        assert ignored not in user
 
 
 @pytest.mark.parametrize("missing", ["context", "output"])
-def test_faithfulness_missing_required_field_fails_before_phoenix_call(missing):
-    evaluator = FaithfulnessEvaluator(llm=object())
+def test_faithfulness_missing_required_field_fails_before_judge_call(missing):
+    judge = _faithfulness_judge()
+    evaluator = FaithfulnessEvaluator(llm=judge)
     fields = {"context": "source", "output": "answer"}
     fields[missing] = None
     with pytest.raises(ValueError, match=f"requires non-empty `{missing}`"):
         evaluator.evaluate(EvaluationCase(**fields))
-    assert evaluator._evaluator.calls == 0
+    assert judge.calls == []
 
 
 def test_faithfulness_async_uses_framework_fallback_once():
-    evaluator = FaithfulnessEvaluator(llm=object())
+    judge = _faithfulness_judge()
+    evaluator = FaithfulnessEvaluator(llm=judge)
     result = asyncio.run(
         EvaluationFramework(evaluators=[evaluator]).a_evaluate(
             EvaluationCase(context="source", output="answer"),
@@ -181,13 +156,13 @@ def test_faithfulness_async_uses_framework_fallback_once():
         )
     )["faithfulness"]
     assert result.score == 1.0
-    assert evaluator._evaluator.calls == 1
+    assert len(judge.calls) == 1
 
 
 def test_framework_runs_all_metrics_by_default():
     framework = EvaluationFramework(
         evaluators=[
-            FaithfulnessEvaluator(llm=object()),
+            FaithfulnessEvaluator(llm=_faithfulness_judge()),
             CoverageEvaluator(llm=_coverage_judge()),
         ]
     )
@@ -206,7 +181,7 @@ def test_framework_runs_all_three_metrics():
     )
     framework = EvaluationFramework(
         evaluators=[
-            FaithfulnessEvaluator(llm=object()),
+            FaithfulnessEvaluator(llm=_faithfulness_judge()),
             CoverageEvaluator(llm=_coverage_judge()),
             InstructionAdherenceEvaluator(llm=instruction_judge),
         ]
@@ -219,7 +194,7 @@ def test_framework_runs_all_three_metrics():
 def test_framework_runs_selected_metrics():
     framework = EvaluationFramework(
         evaluators=[
-            FaithfulnessEvaluator(llm=object()),
+            FaithfulnessEvaluator(llm=_faithfulness_judge()),
             CoverageEvaluator(llm=_coverage_judge()),
         ]
     )

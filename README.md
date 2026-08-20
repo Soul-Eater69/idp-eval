@@ -64,11 +64,32 @@ missing items. Covered items use an empty reason. Both modes score identically.
 
 ## Faithfulness
 
-Faithfulness asks whether claims in the generated `output` are supported by the
-authoritative `context` (`output → context`). It uses Phoenix's built-in
-faithfulness evaluator and does not semantically use `input`, `instructions`,
-metadata, or retrieved documents. Structured context and output values are
-rendered through the same generic `render_value()` path.
+`FaithfulnessEvaluator(judge, verbose=False)` asks whether distinct factual
+claims in generated `output` are supported by authoritative `context`
+(`output → context`). One structured judge call identifies factual claims and
+classifies each as `supported` or `unsupported`; Python deduplicates normalized
+exact repeats, assigns stable `F1`, `F2`, ... IDs, and computes:
+
+```text
+faithfulness = supported output claims / total factual output claims
+```
+
+For example, if context says cancellation is allowed within 24 hours and refunds
+take 5 business days, output claiming "Cancellation is allowed within 24 hours"
+is supported while "Refunds are instant" is unsupported, producing `0.5`.
+
+Missing source facts do not reduce faithfulness: Coverage measures
+`context → output` omissions, Faithfulness measures unsupported
+`output → context` claims, and Instruction Adherence measures whether explicit
+`instructions → output` constraints were followed.
+
+The metric requires `context + output` and ignores `input`, `instructions`,
+metadata, and retrieved documents. Dict/list/nested values are rendered through
+`render_value()` and remain one case. Compact mode returns counts and timing;
+`verbose=True` adds the claim-level status, item score, and reason audit trail.
+A valid response with no checkable factual claims returns `not_applicable` after
+the single judge call. Async evaluation uses native judge async generation when
+available and otherwise uses the framework's shared-concurrency thread bridge.
 
 ## Instruction adherence
 

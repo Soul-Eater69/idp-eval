@@ -62,6 +62,42 @@ Compact mode returns counts, one-call accounting, and timing. `verbose=True`
 also returns the item-level audit trail and concise reasons for partial or
 missing items. Covered items use an empty reason. Both modes score identically.
 
+## Instruction adherence
+
+`InstructionAdherenceEvaluator(judge, verbose=False)` is a one-call holistic
+judge. It sends the complete rendered `instructions` and complete rendered
+`output` in one structured request. The judge identifies materially distinct,
+independently checkable instructions and classifies each as `followed` or
+`violated`; Python deduplicates exact normalized repeats, assigns stable IDs,
+and computes the fraction followed.
+
+```python
+case = EvaluationCase(
+    instructions={
+        "count": "Generate exactly 3 items",
+        "requirements": [
+            "Each item must contain a title",
+            "Do not include implementation details",
+        ],
+    },
+    output=[
+        {"title": "Option A"},
+        {"title": "Option B"},
+        {"title": "Option C"},
+    ],
+)
+result = InstructionAdherenceEvaluator(judge, verbose=True).evaluate(case)
+```
+
+Count, range, universal (`each`/`every`/`all`), prohibition, structure, order,
+language, and style constraints are interpreted generically by the judge—there
+is no domain-specific Python rule engine. The evaluator reads only
+`instructions + output`; it never falls back to `input`, `context`, or metadata.
+Compact mode returns counts, one-call accounting, and timing. Verbose mode also
+returns item IDs, binary statuses, Python-assigned item scores, and concise
+violation reasons. An empty judge-produced instruction set is
+`not_applicable` after the one call; missing required case fields fail before it.
+
 ## Install
 
 ```bash
@@ -329,6 +365,9 @@ idp_eval.evaluate
 └── coverage.evaluate
     └── native model span, when emitted by Phoenix instrumentation
 ```
+
+Instruction adherence similarly produces one
+`instruction_adherence.evaluate` child stage for its single judge call.
 
 Python scoring creates no extra spans. Phoenix native model instrumentation is
 reused, not duplicated.

@@ -46,10 +46,9 @@ def _coverage_judge(*, empty=False):
 
 def _instruction_judge():
     return Judge(
-        {"instructions": [{"instruction": "Be concise."}]},
         {
-            "answers": [
-                {"id": "I1", "status": "followed", "reason": "Concise."}
+            "instructions": [
+                {"instruction": "Be concise.", "status": "followed"}
             ]
         },
     )
@@ -110,8 +109,7 @@ def test_multiple_metrics_share_the_same_case_trace(spans):
     stages = [span for span in finished if span.name != "idp_eval.evaluate"]
     assert {span.name for span in stages} == {
         "coverage.evaluate",
-        "instruction_adherence.extract",
-        "instruction_adherence.classify",
+        "instruction_adherence.evaluate",
     }
     assert all(span.parent.span_id == root.context.span_id for span in stages)
 

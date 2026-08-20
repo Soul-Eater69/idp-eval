@@ -60,10 +60,13 @@ def _coverage_judge(*, reasons=True):
 
 def _instruction_judge():
     return Judge(
-        {"instructions": [{"instruction": "Use 3 bullets"}]},
         {
-            "answers": [
-                {"id": "I1", "status": "followed", "reason": "Three bullets."}
+            "instructions": [
+                {
+                    "instruction": "Use 3 bullets",
+                    "status": "followed",
+                    "reason": "",
+                }
             ]
         },
     )
@@ -184,7 +187,9 @@ def test_instruction_adherence_sheet_remains(tmp_path):
         case_id="i1", instructions="Use 3 bullets", output="- a\n- b\n- c"
     )
     EvaluationFramework(
-        evaluators=[InstructionAdherenceEvaluator(_instruction_judge())],
+        evaluators=[
+            InstructionAdherenceEvaluator(_instruction_judge(), verbose=True)
+        ],
         output="excel",
         excel_path=str(path),
     ).evaluate(case)

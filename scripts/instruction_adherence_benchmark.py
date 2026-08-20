@@ -1,9 +1,8 @@
-"""Development-only GT benchmark for two-stage instruction adherence.
+"""Development-only GT benchmark for one-call instruction adherence.
 
-The script isolates instruction extraction and fixed-GT classification, then
-optionally repeats the production end-to-end evaluator. A separate semantic
-diagnostic call compares each extraction with human GT without affecting scores.
-No model call occurs during import or unit tests.
+The script repeats the holistic production evaluator and optionally compares
+its returned instruction set with human-reviewed instructions through a separate
+diagnostic call. Importing this module and running unit tests makes no model call.
 """
 
 from __future__ import annotations
@@ -17,15 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from idp_eval.evaluators.instruction_adherence import (
-    InstructionAdherenceEvaluator,
-)
-from idp_eval.scoring import calculate_instruction_adherence
-from scripts.coverage_benchmark_utils import (
-    exact_set_summary,
-    mean,
-    numeric_stats,
-)
+from idp_eval.evaluators.instruction_adherence import InstructionAdherenceEvaluator
+from scripts.coverage_benchmark_utils import exact_set_summary, mean, numeric_stats
 
 DEFAULT_CASES_PATH = Path("instructions_gt.json")
 DEFAULT_OUTPUT_DIR = Path("benchmark_results")
@@ -41,15 +33,13 @@ def estimate_calls(
     end_to_end: bool,
     diagnostics: bool,
 ) -> dict[str, int]:
-    """Returns evaluator and diagnostic call counts before execution."""
-    extraction = num_cases * runs
-    classification = num_cases * runs
-    end_to_end_calls = num_cases * runs * 2 if end_to_end else 0
+    """Returns holistic evaluator and optional diagnostic call counts."""
+    evaluation = num_cases * runs
+    end_to_end_calls = num_cases * runs if end_to_end else 0
     diagnostic = num_cases * runs if diagnostics else 0
-    evaluator = extraction + classification + end_to_end_calls
+    evaluator = evaluation + end_to_end_calls
     return {
-        "extraction": extraction,
-        "classification": classification,
+        "evaluation": evaluation,
         "end_to_end": end_to_end_calls,
         "evaluator": evaluator,
         "diagnostic": diagnostic,
@@ -58,7 +48,7 @@ def estimate_calls(
 
 
 def instruction_text(value: str | list[str]) -> str:
-    """Converts the fixture's string/list form to the model's text field."""
+    """Converts the fixture's string/list form to one rendered instruction field."""
     if isinstance(value, str):
         return value
     if not isinstance(value, list) or not all(
@@ -100,21 +90,13 @@ def load_cases(path: str | Path) -> list[dict[str, Any]]:
 
 
 _MATCH_SYSTEM = """\
-You diagnose instruction extraction against human-reviewed GOLD INSTRUCTIONS.
-The EXTRACTED INSTRUCTIONS must be grounded only in the supplied ORIGINAL
-INSTRUCTIONS. Harmless semantic paraphrases count as matches. Different valid
-decompositions are acceptable, including one extracted item representing several
-closely related gold items or several extracted items representing one gold item.
-
-For every gold instruction, report whether its full material instruction appears
-somewhere in the extracted set and whether all material qualifiers are preserved.
-List the extracted ids that represent it.
-
-For every extracted instruction, report whether it is grounded in the original
-instructions, list represented gold ids, and identify a semantic duplicate by id
-or use an empty string. An instruction is grounded even when it is a redundant
-restatement; duplication is reported separately. Do not treat paraphrasing as an
-invention. Return every supplied gold id and extracted id exactly once.\
+You diagnose a one-call instruction-adherence result against human-reviewed GOLD
+INSTRUCTIONS. Harmless semantic paraphrases and different valid decompositions
+count as matches. For each gold instruction, report whether its full material
+instruction and status appear in the evaluated set and whether qualifiers are
+preserved. For each evaluated instruction, report whether it is grounded in the
+original instructions and identify semantic duplicates. Return every supplied
+gold id and evaluated id exactly once.\
 """
 
 _MATCH_SCHEMA = {
@@ -127,59 +109,60 @@ _MATCH_SCHEMA = {
                 "properties": {
                     "gold_id": {"type": "string"},
                     "represented": {"type": "boolean"},
-                    "extracted_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
+                    "evaluated_ids": {"type": "array", "items": {"type": "string"}},
                     "qualifier_preserved": {"type": "boolean"},
                     "reason": {"type": "string"},
                 },
                 "required": [
                     "gold_id",
                     "represented",
-                    "extracted_ids",
+                    "evaluated_ids",
                     "qualifier_preserved",
                     "reason",
                 ],
+                "additionalProperties": False,
             },
         },
-        "extracted_instructions": {
+        "evaluated_instructions": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
                     "grounded": {"type": "boolean"},
-                    "gold_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
+                    "gold_ids": {"type": "array", "items": {"type": "string"}},
                     "duplicate_of": {"type": "string"},
                     "reason": {"type": "string"},
                 },
-                "required": [
-                    "id",
-                    "grounded",
-                    "gold_ids",
-                    "duplicate_of",
-                    "reason",
-                ],
+                "required": ["id", "grounded", "gold_ids", "duplicate_of", "reason"],
+                "additionalProperties": False,
             },
         },
     },
-    "required": ["gold_instructions", "extracted_instructions"],
+    "required": ["gold_instructions", "evaluated_instructions"],
+    "additionalProperties": False,
 }
 
 
-def diagnose_extraction(
-    judge: Any,
-    case: dict[str, Any],
-    extracted: list[dict[str, str]],
+def diagnose_evaluation(
+    judge: Any, case: dict[str, Any], evaluated: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """Runs and validates one benchmark-only semantic GT diagnostic."""
     gold = [
-        {"id": item["id"], "instruction": item["instruction"]}
+        {
+            "id": item["id"],
+            "instruction": item["instruction"],
+            "status": item["status"],
+        }
         for item in case["gold_instructions"]
+    ]
+    compact = [
+        {
+            "id": item["id"],
+            "instruction": item["instruction"],
+            "status": item["status"],
+        }
+        for item in evaluated
     ]
     prompt = [
         {"role": "system", "content": _MATCH_SYSTEM},
@@ -187,12 +170,10 @@ def diagnose_extraction(
             "role": "user",
             "content": "\n\n".join(
                 [
-                    "[ORIGINAL INSTRUCTIONS]\n"
-                    + instruction_text(case["instructions"]),
-                    "[GOLD INSTRUCTIONS]\n"
-                    + json.dumps(gold, ensure_ascii=False),
-                    "[EXTRACTED INSTRUCTIONS]\n"
-                    + json.dumps(extracted, ensure_ascii=False),
+                    "[ORIGINAL INSTRUCTIONS]\n" + instruction_text(case["instructions"]),
+                    "[GOLD INSTRUCTIONS]\n" + json.dumps(gold, ensure_ascii=False),
+                    "[EVALUATED INSTRUCTIONS]\n"
+                    + json.dumps(compact, ensure_ascii=False),
                 ]
             ),
         },
@@ -201,65 +182,58 @@ def diagnose_extraction(
     if not isinstance(result, dict):
         raise ValueError("GT diagnostic response must be an object.")
     gold_rows = result.get("gold_instructions")
-    extracted_rows = result.get("extracted_instructions")
-    if not isinstance(gold_rows, list) or not isinstance(extracted_rows, list):
+    evaluated_rows = result.get("evaluated_instructions")
+    if not isinstance(gold_rows, list) or not isinstance(evaluated_rows, list):
         raise ValueError("GT diagnostic response lists are missing.")
 
     gold_ids = {item["id"] for item in gold}
-    extracted_ids = {item["id"] for item in extracted}
+    evaluated_ids = {item["id"] for item in compact}
     returned_gold = [item.get("gold_id") for item in gold_rows]
-    returned_extracted = [item.get("id") for item in extracted_rows]
+    returned_evaluated = [item.get("id") for item in evaluated_rows]
     if set(returned_gold) != gold_ids or len(returned_gold) != len(set(returned_gold)):
         raise ValueError("GT diagnostic returned invalid gold instruction ids.")
-    if set(returned_extracted) != extracted_ids or len(returned_extracted) != len(
-        set(returned_extracted)
+    if set(returned_evaluated) != evaluated_ids or len(returned_evaluated) != len(
+        set(returned_evaluated)
     ):
-        raise ValueError("GT diagnostic returned invalid extracted instruction ids.")
+        raise ValueError("GT diagnostic returned invalid evaluated instruction ids.")
     for row in gold_rows:
-        if any(item not in extracted_ids for item in row["extracted_ids"]):
-            raise ValueError("GT diagnostic referenced an unknown extracted id.")
-    for row in extracted_rows:
+        if any(item not in evaluated_ids for item in row["evaluated_ids"]):
+            raise ValueError("GT diagnostic referenced an unknown evaluated id.")
+    for row in evaluated_rows:
         if any(item not in gold_ids for item in row["gold_ids"]):
             raise ValueError("GT diagnostic referenced an unknown gold id.")
         duplicate = row["duplicate_of"]
-        if duplicate and (duplicate not in extracted_ids or duplicate == row["id"]):
+        if duplicate and (duplicate not in evaluated_ids or duplicate == row["id"]):
             raise ValueError("GT diagnostic returned invalid duplicate_of id.")
     return result
 
 
 def diagnostic_metrics(diagnostic: dict[str, Any]) -> dict[str, Any]:
-    """Computes transparent per-run extraction metrics from a diagnostic."""
+    """Computes transparent semantic-set diagnostics."""
     gold = diagnostic["gold_instructions"]
-    extracted = diagnostic["extracted_instructions"]
-    represented = [row["represented"] for row in gold]
-    grounded = [row["grounded"] for row in extracted]
-    qualifiers = [row["qualifier_preserved"] for row in gold]
+    evaluated = diagnostic["evaluated_instructions"]
     return {
-        "recall": mean([float(value) for value in represented]),
-        "precision": mean([float(value) for value in grounded]),
-        "qualifier_preservation": mean([float(value) for value in qualifiers]),
-        "duplicate_count": sum(bool(row["duplicate_of"]) for row in extracted),
-        "invented_count": sum(not value for value in grounded),
-        "missed_gold_ids": [
-            row["gold_id"] for row in gold if not row["represented"]
-        ],
-        "invented_extracted_ids": [
-            row["id"] for row in extracted if not row["grounded"]
-        ],
+        "recall": mean([float(row["represented"]) for row in gold]),
+        "precision": mean([float(row["grounded"]) for row in evaluated]),
+        "qualifier_preservation": mean(
+            [float(row["qualifier_preserved"]) for row in gold]
+        ),
+        "duplicate_count": sum(bool(row["duplicate_of"]) for row in evaluated),
+        "invented_count": sum(not row["grounded"] for row in evaluated),
+        "missed_gold_ids": [row["gold_id"] for row in gold if not row["represented"]],
+        "invented_evaluated_ids": [row["id"] for row in evaluated if not row["grounded"]],
     }
 
 
-def summarize_extraction_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
-    """Aggregates repeated extraction and semantic-diagnostic results."""
+def summarize_evaluation_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregates repeated one-call evaluation and diagnostic results."""
     texts = [
         [item["instruction"] for item in run["instructions"]] for run in runs
     ]
-    metrics = [
-        run["diagnostic_metrics"]
-        for run in runs
-        if run.get("diagnostic_metrics")
-    ]
+    metrics = [run["diagnostic_metrics"] for run in runs if run.get("diagnostic_metrics")]
+    scores = [run["score"] for run in runs if run["score"] is not None]
     return {
+        "score": numeric_stats(scores),
         "exact": exact_set_summary(texts),
         "precision": numeric_stats([item["precision"] for item in metrics]),
         "recall": numeric_stats([item["recall"] for item in metrics]),
@@ -268,16 +242,6 @@ def summarize_extraction_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "duplicate_count": sum(item["duplicate_count"] for item in metrics),
         "invented_count": sum(item["invented_count"] for item in metrics),
-        "missed_gold_ids": sorted(
-            {gold_id for item in metrics for gold_id in item["missed_gold_ids"]}
-        ),
-        "invented_extracted_ids": sorted(
-            {
-                extracted_id
-                for item in metrics
-                for extracted_id in item["invented_extracted_ids"]
-            }
-        ),
     }
 
 
@@ -291,65 +255,21 @@ def majority_status(statuses: list[str]) -> tuple[str | None, float | None]:
 
 
 def macro_f1(gold: list[str], predicted: list[str]) -> float | None:
-    """Returns macro F1 over statuses present in the human GT."""
+    """Returns macro F1 over statuses present in human GT."""
     labels = sorted(set(gold))
     if not labels or len(gold) != len(predicted):
         return None
     scores: list[float] = []
     for label in labels:
-        true_positive = sum(g == label and p == label for g, p in zip(gold, predicted))
-        false_positive = sum(g != label and p == label for g, p in zip(gold, predicted))
-        false_negative = sum(g == label and p != label for g, p in zip(gold, predicted))
-        denominator = 2 * true_positive + false_positive + false_negative
-        scores.append(2 * true_positive / denominator if denominator else 0.0)
+        tp = sum(g == label and p == label for g, p in zip(gold, predicted))
+        fp = sum(g != label and p == label for g, p in zip(gold, predicted))
+        fn = sum(g == label and p != label for g, p in zip(gold, predicted))
+        denominator = 2 * tp + fp + fn
+        scores.append(2 * tp / denominator if denominator else 0.0)
     return mean(scores)
 
 
-def summarize_classification_runs(
-    runs: list[dict[str, Any]],
-    gold_instructions: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Summarizes fixed-GT classification stability and accuracy."""
-    per_instruction: list[dict[str, Any]] = []
-    gold_statuses: list[str] = []
-    majority_statuses: list[str] = []
-    agreements: list[float] = []
-    for gold in gold_instructions:
-        statuses = [run["statuses"][gold["id"]] for run in runs]
-        majority, agreement = majority_status(statuses)
-        per_instruction.append(
-            {
-                "id": gold["id"],
-                "instruction": gold["instruction"],
-                "gold_status": gold["status"],
-                "status_per_run": statuses,
-                "majority_status": majority,
-                "agreement": agreement,
-                "majority_correct": majority == gold["status"],
-            }
-        )
-        if majority is not None:
-            gold_statuses.append(gold["status"])
-            majority_statuses.append(majority)
-        if agreement is not None:
-            agreements.append(agreement)
-    return {
-        "per_instruction": per_instruction,
-        "mean_agreement": mean(agreements),
-        "min_agreement": min(agreements) if agreements else None,
-        "majority_accuracy": mean(
-            [
-                float(gold == predicted)
-                for gold, predicted in zip(gold_statuses, majority_statuses)
-            ]
-        ),
-        "macro_f1": macro_f1(gold_statuses, majority_statuses),
-    }
-
-
 class CountingJudge:
-    """Counts successful and failed real model calls without changing behavior."""
-
     def __init__(self, judge: Any):
         self._judge = judge
         self.successful = 0
@@ -379,12 +299,8 @@ def _build_openai_judge() -> tuple[CountingJudge, str]:
 
 @contextmanager
 def _benchmark_span(
-    enabled: bool,
-    phase: str,
-    case_id: str,
-    run_number: int,
+    enabled: bool, phase: str, case_id: str, run_number: int
 ) -> Iterator[None]:
-    """Adds compact labels around isolated benchmark calls when tracing."""
     if not enabled:
         yield
         return
@@ -403,7 +319,6 @@ def _benchmark_span(
 
 
 def _flush_tracing(timeout_ms: int = 10000) -> bool:
-    """Best-effort bounded flush for manual traced benchmark runs."""
     try:
         from opentelemetry import trace
 
@@ -454,7 +369,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     if args.trace:
         register_tracing(project_name=args.project_name)
     judge, model = _build_openai_judge()
-    evaluator = InstructionAdherenceEvaluator(judge)
+    evaluator = InstructionAdherenceEvaluator(judge, verbose=True)
     framework = EvaluationFramework(
         evaluators=[evaluator], output="phoenix" if args.trace else None
     )
@@ -465,27 +380,25 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     for case in cases:
         eval_case = EvaluationCase(
             case_id=case["case_id"],
-            input="",
-            context="",
             output=case["output"],
-            instructions=instruction_text(case["instructions"]),
+            instructions=case["instructions"],
         )
-        extraction_runs: list[dict[str, Any]] = []
+        evaluation_runs: list[dict[str, Any]] = []
         for run_number in range(1, args.runs + 1):
             try:
                 with _benchmark_span(
-                    args.trace, "extraction", case["case_id"], run_number
+                    args.trace, "evaluation", case["case_id"], run_number
                 ):
-                    extracted = evaluator._extract_instructions(eval_case.instructions)
-            except Exception as exc:  # noqa: BLE001 - record and continue
-                _record_failure(
-                    failures, case["case_id"], "extraction", run_number, exc
-                )
+                    result = evaluator.evaluate(eval_case)
+            except Exception as exc:  # noqa: BLE001
+                _record_failure(failures, case["case_id"], "evaluation", run_number, exc)
                 continue
 
+            items = result.details.get("instructions", [])
             run: dict[str, Any] = {
                 "run": run_number,
-                "instructions": extracted,
+                "score": result.score,
+                "instructions": items,
                 "diagnostic": None,
                 "diagnostic_metrics": None,
             }
@@ -494,41 +407,14 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     with _benchmark_span(
                         args.trace, "gt_match", case["case_id"], run_number
                     ):
-                        diagnostic = diagnose_extraction(judge, case, extracted)
+                        diagnostic = diagnose_evaluation(judge, case, items)
                     run["diagnostic"] = diagnostic
                     run["diagnostic_metrics"] = diagnostic_metrics(diagnostic)
-                except Exception as exc:  # noqa: BLE001 - record and continue
+                except Exception as exc:  # noqa: BLE001
                     _record_failure(
                         failures, case["case_id"], "gt_match", run_number, exc
                     )
-            extraction_runs.append(run)
-
-        fixed = [
-            {"id": item["id"], "instruction": item["instruction"]}
-            for item in case["gold_instructions"]
-        ]
-        classification_runs: list[dict[str, Any]] = []
-        for run_number in range(1, args.runs + 1):
-            try:
-                with _benchmark_span(
-                    args.trace, "classification", case["case_id"], run_number
-                ):
-                    judgments = evaluator._classify_instructions(
-                        fixed, eval_case.output
-                    )
-                items = evaluator._build_items(fixed, judgments)
-                classification_runs.append(
-                    {
-                        "run": run_number,
-                        "statuses": {item["id"]: item["status"] for item in items},
-                        "items": items,
-                        "score": calculate_instruction_adherence(items),
-                    }
-                )
-            except Exception as exc:  # noqa: BLE001
-                _record_failure(
-                    failures, case["case_id"], "classification", run_number, exc
-                )
+            evaluation_runs.append(run)
 
         end_to_end_runs: list[dict[str, Any]] = []
         if args.end_to_end:
@@ -545,7 +431,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                             "run": run_number,
                             "score": result.score,
                             "instruction_count": result.details["instruction_count"],
-                            "items": result.details["instructions"],
+                            "items": result.details.get("instructions", []),
                         }
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -553,25 +439,15 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                         failures, case["case_id"], "end_to_end", run_number, exc
                     )
 
-        classification_scores = [run["score"] for run in classification_runs]
-        classification_summary = summarize_classification_runs(
-            classification_runs, case["gold_instructions"]
-        )
-        classification_stats = numeric_stats(classification_scores)
-        classification_stats["mae"] = mean(
-            [abs(score - case["gold_score"]) for score in classification_scores]
-        )
-        end_to_end_scores = [
-            run["score"] for run in end_to_end_runs if run["score"] is not None
-        ]
-        end_to_end_stats = numeric_stats(end_to_end_scores)
-        end_to_end_stats["bias"] = (
-            end_to_end_stats["mean"] - case["gold_score"]
-            if end_to_end_stats["mean"] is not None
+        e2e_scores = [row["score"] for row in end_to_end_runs if row["score"] is not None]
+        e2e_stats = numeric_stats(e2e_scores)
+        e2e_stats["bias"] = (
+            e2e_stats["mean"] - case["gold_score"]
+            if e2e_stats["mean"] is not None
             else None
         )
-        end_to_end_stats["mae"] = mean(
-            [abs(score - case["gold_score"]) for score in end_to_end_scores]
+        e2e_stats["mae"] = mean(
+            [abs(score - case["gold_score"]) for score in e2e_scores]
         )
         case_reports.append(
             {
@@ -580,18 +456,13 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 "description": case.get("description"),
                 "gold_score": case["gold_score"],
                 "gold_instructions": case["gold_instructions"],
-                "extraction": {
-                    "runs": extraction_runs,
-                    "summary": summarize_extraction_runs(extraction_runs),
-                },
-                "classification": {
-                    "runs": classification_runs,
-                    "summary": classification_summary,
-                    "score_stats": classification_stats,
+                "evaluation": {
+                    "runs": evaluation_runs,
+                    "summary": summarize_evaluation_runs(evaluation_runs),
                 },
                 "end_to_end": {
                     "runs": end_to_end_runs,
-                    "score_stats": end_to_end_stats,
+                    "score_stats": e2e_stats,
                 }
                 if args.end_to_end
                 else None,
@@ -599,7 +470,6 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     flush_succeeded = _flush_tracing() if args.trace else None
-    finished_at = datetime.now(timezone.utc)
     return {
         "config": {
             "model": model,
@@ -611,7 +481,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "project_name": args.project_name if args.trace else None,
             "dataset_name": args.dataset_name,
             "started_at": started_at.isoformat(),
-            "finished_at": finished_at.isoformat(),
+            "finished_at": datetime.now(timezone.utc).isoformat(),
             "trace_force_flush_succeeded": flush_succeeded,
         },
         "calls": {
@@ -626,19 +496,15 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Instruction-adherence GT stability benchmark."
+        description="One-call instruction-adherence GT stability benchmark."
     )
     parser.add_argument("--cases-file", default=str(DEFAULT_CASES_PATH))
     parser.add_argument("--cases", type=int)
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--end-to-end", action="store_true")
     parser.add_argument("--trace", action="store_true")
-    parser.add_argument(
-        "--project-name", default="instruction-adherence-gt-smoke"
-    )
-    parser.add_argument(
-        "--dataset-name", default="instruction-adherence-gt-v1"
-    )
+    parser.add_argument("--project-name", default="instruction-adherence-gt-smoke")
+    parser.add_argument("--dataset-name", default="instruction-adherence-gt-v1")
     parser.add_argument("--no-diagnostics", action="store_true")
     parser.add_argument("--out-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument("--yes", action="store_true")

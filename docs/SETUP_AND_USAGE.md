@@ -334,11 +334,51 @@ With `verbose=True`, `details["items"]` adds stable IDs, source text, the
 binary judgments, Python-derived status and score, and reasons. Covered reasons
 are empty; partial/missing reasons are non-empty.
 
-## 7. Other evaluators
+## 7. Instruction adherence and other evaluators
 
-Instruction adherence reads only `instructions + output`. It extracts fixed
-instructions and classifies each as `followed` or `violated`; Python computes
-the score. No instructions returns `not_applicable` without a judge call.
+`InstructionAdherenceEvaluator(judge, verbose=False)` reads only the required
+`instructions + output` fields. It sends their full rendered values in one
+structured judge call. The judge identifies materially distinct, independently
+checkable output constraints and returns only `followed` or `violated`; Python
+deduplicates exact normalized repeats, assigns IDs, and computes:
+
+```text
+instruction adherence = followed instructions / identified instructions
+```
+
+```python
+case = EvaluationCase(
+    instructions={
+        "count": "Generate exactly 3 items",
+        "requirements": [
+            "Each item must contain a title",
+            "Do not include implementation details",
+        ],
+    },
+    output=[
+        {"title": "Option A"},
+        {"title": "Option B"},
+        {"title": "Option C"},
+    ],
+)
+result = InstructionAdherenceEvaluator(judge, verbose=True).evaluate(case)
+```
+
+The holistic judge sees the complete structured output, so exact/minimum/maximum
+counts, universal `each`/`every`/`all` requirements, prohibitions, required
+fields, order, format, language, and style can be judged together. There is no
+domain-specific Python rule engine. The metric never reads or infers from
+`input`, `context`, or metadata.
+
+Compact details contain instruction/followed/violated counts,
+`judge_call_count=1`, timing, and `verbose=False`. With `verbose=True`, the
+`instructions` audit list adds stable IDs, statuses, scores (1.0 or 0.0), and
+concise reasons. Both modes score identically. A valid judge response with no
+checkable instructions returns `not_applicable` after one call; missing
+`instructions` or `output` fails validation before any judge work. Async
+evaluation uses the judge's native async method when available and otherwise
+bridges the same single call through a worker thread under the framework's
+global semaphore.
 
 Faithfulness uses Phoenix's native evaluator and asks whether output claims are
 supported by context.

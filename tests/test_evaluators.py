@@ -155,10 +155,9 @@ def test_framework_runs_all_metrics_by_default():
 
 def test_framework_runs_all_three_metrics():
     instruction_judge = ScriptedJudge(
-        {"instructions": [{"instruction": "Keep it concise."}]},
         {
-            "answers": [
-                {"id": "I1", "status": "followed", "reason": "Concise."}
+            "instructions": [
+                {"instruction": "Keep it concise.", "status": "followed"}
             ]
         },
     )

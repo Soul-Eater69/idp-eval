@@ -216,6 +216,7 @@ class AzureJudge:
 
 def create_azure_judge(
     *,
+    config: AzureJudgeConfig | None = None,
     model: str | None = None,
     azure_endpoint: str | None = None,
     tenant_id: str | None = None,
@@ -228,20 +229,43 @@ def create_azure_judge(
     reasoning_effort: str | None = None,
     config_path: str | None = None,
 ) -> AzureJudge:
-    """Create a direct Azure OpenAI judge authenticated with Azure AD."""
-    config = resolve_azure_judge_config(
-        model=model,
-        azure_endpoint=azure_endpoint,
-        tenant_id=tenant_id,
-        client_id=client_id,
-        client_secret=client_secret,
-        api_version=api_version,
-        timeout=timeout,
-        proxy_url=proxy_url,
-        verify_ssl=verify_ssl,
-        reasoning_effort=reasoning_effort,
-        config_path=config_path,
+    """Create a direct Azure OpenAI judge authenticated with Azure AD.
+
+    Pass either a fully resolved ``config`` or individual configuration values.
+    """
+    individual_values = (
+        model,
+        azure_endpoint,
+        tenant_id,
+        client_id,
+        client_secret,
+        api_version,
+        timeout,
+        proxy_url,
+        verify_ssl,
+        reasoning_effort,
+        config_path,
     )
+    if config is not None:
+        if any(value is not None for value in individual_values):
+            raise ValueError(
+                "Pass either `config` or individual judge configuration "
+                "arguments, not both."
+            )
+    else:
+        config = resolve_azure_judge_config(
+            model=model,
+            azure_endpoint=azure_endpoint,
+            tenant_id=tenant_id,
+            client_id=client_id,
+            client_secret=client_secret,
+            api_version=api_version,
+            timeout=timeout,
+            proxy_url=proxy_url,
+            verify_ssl=verify_ssl,
+            reasoning_effort=reasoning_effort,
+            config_path=config_path,
+        )
 
     from azure.identity import (
         ClientSecretCredential,

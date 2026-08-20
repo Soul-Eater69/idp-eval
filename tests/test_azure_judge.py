@@ -5,6 +5,7 @@ import copy
 
 import pytest
 
+from idp_eval.judges import azure as azure_mod
 from idp_eval.judges.azure import (
     AzureJudge,
     AzureJudgeConfig,
@@ -186,6 +187,35 @@ def test_create_azure_judge_uses_azure_ad_and_phoenix_native_provider(monkeypatc
     assert "api_key" not in llm.kwargs
     assert "temperature" not in llm.kwargs
     assert judge.model == "deployment-name"
+
+
+def test_create_azure_judge_uses_config_without_resolution(monkeypatch):
+    _patch_azure_construction(monkeypatch)
+    monkeypatch.setenv("IDP_EVAL_AZURE_MODEL", "ignored-env-model")
+    monkeypatch.setenv("IDP_EVAL_CONFIG", "/does/not/exist.yaml")
+    monkeypatch.setattr(
+        azure_mod,
+        "resolve_azure_judge_config",
+        lambda **kwargs: pytest.fail("config resolution must be skipped"),
+    )
+    config = AzureJudgeConfig(**FULL_CONFIG, timeout=215.0)
+    before = copy.deepcopy(config)
+
+    judge = create_azure_judge(config=config)
+    llm = _FakeLLM.constructed[0]
+
+    assert llm.kwargs["model"] == config.model
+    assert llm.kwargs["timeout"] == config.timeout
+    assert config == before
+    judge.close()
+
+
+def test_create_azure_judge_rejects_mixed_config():
+    with pytest.raises(ValueError, match="either `config`.*not both"):
+        create_azure_judge(
+            config=AzureJudgeConfig(**FULL_CONFIG),
+            timeout=30,
+        )
 
 
 def test_proxy_ssl_and_timeout_use_official_openai_http_clients(monkeypatch):

@@ -200,6 +200,39 @@ This explicitly configured backend connects directly to the approved Azure
 deployment using Azure AD client credentials. Optional `proxy_url` and
 `verify_ssl` settings support controlled network environments.
 
+Applications that already own configuration can pass a complete backend config
+object without using environment variables or YAML:
+
+```python
+from idp_eval import create_azure_judge, create_gateway_judge
+from idp_eval.judges import AzureJudgeConfig, GatewayJudgeConfig
+
+gateway_judge = create_gateway_judge(config=GatewayJudgeConfig(
+    model=app_settings.gateway_model,
+    base_url=app_settings.gateway_base_url,
+    app_id=app_settings.gateway_app_id,
+    idp_auth_url=app_settings.idp_auth_url,
+    idp_client_id=app_settings.idp_client_id,
+    idp_client_secret=app_settings.idp_client_secret,
+    idp_user=app_settings.idp_user,
+    idp_password=app_settings.idp_password,
+))
+
+azure_judge = create_azure_judge(config=AzureJudgeConfig(
+    model=app_settings.azure_model,
+    azure_endpoint=app_settings.azure_endpoint,
+    tenant_id=app_settings.tenant_id,
+    client_id=app_settings.client_id,
+    client_secret=app_settings.client_secret,
+    api_version=app_settings.api_version,
+    timeout=180,
+))
+```
+
+Environment variables and YAML are convenience sources, not requirements when
+a config object or complete explicit arguments are supplied. A config object
+cannot be combined with individual constructor configuration arguments.
+
 The evaluator and framework wiring is identical for either judge:
 
 ```python

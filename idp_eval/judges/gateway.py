@@ -285,6 +285,7 @@ class GatewayJudge:
 
 def create_gateway_judge(
     *,
+    config: GatewayJudgeConfig | None = None,
     model: str | None = None,
     base_url: str | None = None,
     app_id: str | None = None,
@@ -299,22 +300,43 @@ def create_gateway_judge(
 ) -> GatewayJudge:
     """Create a Phoenix judge backed by the corporate IDP/Mule gateway.
 
+    Pass either a fully resolved ``config`` or individual configuration values.
     ``timeout`` is the client-side timeout. It cannot override a shorter timeout
     enforced by an upstream gateway.
     """
-    config = resolve_gateway_judge_config(
-        model=model,
-        base_url=base_url,
-        app_id=app_id,
-        idp_auth_url=idp_auth_url,
-        idp_client_id=idp_client_id,
-        idp_client_secret=idp_client_secret,
-        idp_user=idp_user,
-        idp_password=idp_password,
-        config_path=config_path,
-        verify_ssl=verify_ssl,
-        timeout=timeout,
+    individual_values = (
+        model,
+        base_url,
+        app_id,
+        idp_auth_url,
+        idp_client_id,
+        idp_client_secret,
+        idp_user,
+        idp_password,
+        config_path,
+        verify_ssl,
+        timeout,
     )
+    if config is not None:
+        if any(value is not None for value in individual_values):
+            raise ValueError(
+                "Pass either `config` or individual judge configuration "
+                "arguments, not both."
+            )
+    else:
+        config = resolve_gateway_judge_config(
+            model=model,
+            base_url=base_url,
+            app_id=app_id,
+            idp_auth_url=idp_auth_url,
+            idp_client_id=idp_client_id,
+            idp_client_secret=idp_client_secret,
+            idp_user=idp_user,
+            idp_password=idp_password,
+            config_path=config_path,
+            verify_ssl=verify_ssl,
+            timeout=timeout,
+        )
     gateway_http_client = _GatewayHTTPClient(config)
 
     from phoenix.evals import LLM

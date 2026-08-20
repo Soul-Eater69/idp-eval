@@ -5,6 +5,7 @@ transport are mocked.
 """
 
 import asyncio
+import copy
 import json
 import sys
 import types
@@ -496,6 +497,41 @@ def test_create_gateway_judge_builds_phoenix_llm(monkeypatch):
     assert isinstance(http_client, _GatewayHTTPClient)
     assert isinstance(judge, GatewayJudge)
     judge.close()
+
+
+def test_create_gateway_judge_uses_config_without_resolution(monkeypatch):
+    captured: dict = {}
+
+    class FakeLLM:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    fake_evals = types.ModuleType("phoenix.evals")
+    fake_evals.LLM = FakeLLM
+    monkeypatch.setitem(sys.modules, "phoenix", types.ModuleType("phoenix"))
+    monkeypatch.setitem(sys.modules, "phoenix.evals", fake_evals)
+    monkeypatch.setenv("IDP_EVAL_MODEL", "ignored-env-model")
+    monkeypatch.setenv("IDP_EVAL_CONFIG", "/does/not/exist.yaml")
+    monkeypatch.setattr(
+        gateway_mod,
+        "resolve_gateway_judge_config",
+        lambda **kwargs: pytest.fail("config resolution must be skipped"),
+    )
+    monkeypatch.setattr(gateway_mod, "_get_idp_token", lambda cfg: "JWT")
+    config = _config(timeout=37.0)
+    before = copy.deepcopy(config)
+
+    judge = create_gateway_judge(config=config)
+
+    assert judge._http_client._config is config
+    assert captured["model"] == config.model
+    assert config == before
+    judge.close()
+
+
+def test_create_gateway_judge_rejects_mixed_config():
+    with pytest.raises(ValueError, match="either `config`.*not both"):
+        create_gateway_judge(config=_config(), model="other-model")
 
 
 def test_gateway_async_bridge_reuses_sync_gateway_llm():

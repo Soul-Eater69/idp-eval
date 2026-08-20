@@ -101,6 +101,45 @@ coverage = CoverageEvaluator(judge)
 framework = EvaluationFramework(judge=judge, evaluators=[coverage])
 ```
 
+### Application-owned configuration
+
+Applications may construct the concrete backend config from their own settings,
+secret store, or dependency-injection system and pass it directly. In this path
+idp-eval does not read environment variables or YAML and does not re-resolve or
+mutate the config object.
+
+```python
+from idp_eval import create_azure_judge, create_gateway_judge
+from idp_eval.judges import AzureJudgeConfig, GatewayJudgeConfig
+
+gateway_config = GatewayJudgeConfig(
+    model=app_settings.gateway_model,
+    base_url=app_settings.gateway_base_url,
+    app_id=app_settings.gateway_app_id,
+    idp_auth_url=app_settings.idp_auth_url,
+    idp_client_id=app_settings.idp_client_id,
+    idp_client_secret=app_settings.idp_client_secret,
+    idp_user=app_settings.idp_user,
+    idp_password=app_settings.idp_password,
+)
+gateway_judge = create_gateway_judge(config=gateway_config)
+
+azure_config = AzureJudgeConfig(
+    model=app_settings.azure_model,
+    azure_endpoint=app_settings.azure_endpoint,
+    tenant_id=app_settings.tenant_id,
+    client_id=app_settings.client_id,
+    client_secret=app_settings.client_secret,
+    api_version=app_settings.api_version,
+    timeout=180,
+)
+azure_judge = create_azure_judge(config=azure_config)
+```
+
+Pass either `config` or individual constructor configuration arguments, not
+both. Without `config`, the existing explicit argument > environment variable >
+optional YAML precedence remains unchanged.
+
 ## Comparing Gateway and Azure on the same evaluation case
 
 The repository includes a single-case latency smoke test using the production

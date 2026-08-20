@@ -89,16 +89,22 @@ from idp_eval import (
     create_azure_judge,
     register_tracing,
 )
+from idp_eval.judges import AzureJudgeConfig
 
 register_tracing(project_name="idp-eval")  # optional
-judge = create_azure_judge(
-    model="deployment-name",
-    azure_endpoint="https://example-resource.openai.azure.com",
-    tenant_id="tenant-id",
-    client_id="client-id",
-    client_secret="client-secret",
+azure_config = AzureJudgeConfig(
+    model="...",
+    azure_endpoint="...",
+    tenant_id="...",
+    client_id="...",
+    client_secret="...",
     api_version="2024-12-01-preview",
+    timeout=180,
+    proxy_url=None,
+    verify_ssl=True,
+    reasoning_effort=None,
 )
+judge = create_azure_judge(config=azure_config)
 
 framework = EvaluationFramework(
     judge=judge,
@@ -157,14 +163,17 @@ one judge call.
 ## Judge backends
 
 Evaluators receive the same Phoenix-compatible judge regardless of transport.
-Choose one explicit constructor.
+For imported applications, the recommended path is to construct the resolved
+backend config from the host application's settings/secrets layer and pass it
+directly.
 
 Corporate gateway:
 
 ```python
 from idp_eval import create_gateway_judge
+from idp_eval.judges import GatewayJudgeConfig
 
-judge = create_gateway_judge(
+gateway_config = GatewayJudgeConfig(
     model="...",
     base_url="...",
     app_id="...",
@@ -173,65 +182,78 @@ judge = create_gateway_judge(
     idp_client_secret="...",
     idp_user="...",
     idp_password="...",
+    verify_ssl=True,
+    timeout=90,
 )
+judge = create_gateway_judge(config=gateway_config)
 ```
 
 The standard corporate path preserves IDP authentication and Mule gateway
 translation. Its client timeout cannot override a shorter upstream gateway
 timeout.
 
+| `GatewayJudgeConfig` field | Meaning |
+| --- | --- |
+| `model` | Gateway model identifier |
+| `base_url` | Gateway base URL |
+| `app_id` | Gateway application identifier |
+| `idp_auth_url` | IDP authentication endpoint |
+| `idp_client_id` | IDP client identifier |
+| `idp_client_secret` | IDP client secret; keep outside source control |
+| `idp_user` | IDP account name |
+| `idp_password` | IDP account password; keep outside source control |
+| `verify_ssl` | TLS certificate verification |
+| `timeout` | Client-side request timeout |
+
 Direct Azure OpenAI:
 
 ```python
 from idp_eval import create_azure_judge
+from idp_eval.judges import AzureJudgeConfig
 
-judge = create_azure_judge(
-    model="...",                 # Azure deployment name
+azure_config = AzureJudgeConfig(
+    model="...",
     azure_endpoint="...",
     tenant_id="...",
     client_id="...",
     client_secret="...",
-    api_version="...",
+    api_version="2024-12-01-preview",
     timeout=180,
+    proxy_url=None,
+    verify_ssl=True,
+    reasoning_effort=None,
 )
+judge = create_azure_judge(config=azure_config)
 ```
 
 This explicitly configured backend connects directly to the approved Azure
 deployment using Azure AD client credentials. Optional `proxy_url` and
 `verify_ssl` settings support controlled network environments.
 
-Applications that already own configuration can pass a complete backend config
-object without using environment variables or YAML:
+| `AzureJudgeConfig` field | Meaning |
+| --- | --- |
+| `model` | Azure deployment name |
+| `azure_endpoint` | Azure OpenAI resource endpoint |
+| `tenant_id` | Azure tenant ID |
+| `client_id` | Application/service-principal client ID |
+| `client_secret` | Application/service-principal secret; keep outside source control |
+| `api_version` | Azure OpenAI API version |
+| `timeout` | Client-side request timeout |
+| `proxy_url` | Optional HTTP proxy |
+| `verify_ssl` | TLS certificate verification |
+| `reasoning_effort` | Optional model request option, sent only when configured |
 
-```python
-from idp_eval import create_azure_judge, create_gateway_judge
-from idp_eval.judges import AzureJudgeConfig, GatewayJudgeConfig
+Convenience alternatives remain available: individual constructor keyword
+arguments, environment variables, and optional YAML. Zero-argument calls such
+as `create_gateway_judge()` and `create_azure_judge()` resolve environment/YAML
+configuration when desired. Without `config=`, precedence remains **explicit
+argument > environment variable > optional YAML**. These sources are optional,
+not requirements. Do not mix `config=` with individual configuration arguments.
 
-gateway_judge = create_gateway_judge(config=GatewayJudgeConfig(
-    model=app_settings.gateway_model,
-    base_url=app_settings.gateway_base_url,
-    app_id=app_settings.gateway_app_id,
-    idp_auth_url=app_settings.idp_auth_url,
-    idp_client_id=app_settings.idp_client_id,
-    idp_client_secret=app_settings.idp_client_secret,
-    idp_user=app_settings.idp_user,
-    idp_password=app_settings.idp_password,
-))
-
-azure_judge = create_azure_judge(config=AzureJudgeConfig(
-    model=app_settings.azure_model,
-    azure_endpoint=app_settings.azure_endpoint,
-    tenant_id=app_settings.tenant_id,
-    client_id=app_settings.client_id,
-    client_secret=app_settings.client_secret,
-    api_version=app_settings.api_version,
-    timeout=180,
-))
-```
-
-Environment variables and YAML are convenience sources, not requirements when
-a config object or complete explicit arguments are supplied. A config object
-cannot be combined with individual constructor configuration arguments.
+> **Security:** Never commit real client secrets, passwords, tokens, endpoints,
+> or proxy URLs in notebooks, documentation examples, or config files. Keep
+> repository examples as placeholders and use the host application's
+> secret/configuration system in production.
 
 The evaluator and framework wiring is identical for either judge:
 
@@ -240,8 +262,7 @@ coverage = CoverageEvaluator(judge)
 framework = EvaluationFramework(judge=judge, evaluators=[coverage])
 ```
 
-Both backends resolve **explicit argument > environment variable > optional
-YAML**. Gateway variables:
+Gateway convenience variables:
 
 ```text
 IDP_EVAL_MODEL
@@ -254,7 +275,7 @@ IDP_EVAL_USER
 IDP_EVAL_PASSWORD
 ```
 
-Azure variables:
+Azure convenience variables:
 
 ```text
 IDP_EVAL_AZURE_MODEL
@@ -274,22 +295,23 @@ sections. TLS verification is on by default; disabling it is only for controlled
 development. `reasoning_effort` is sent only when configured. Temperature is
 never added.
 
-For direct comparisons, configure both backends and run the latency notebook.
+For direct comparisons, populate both config objects in the latency notebook.
 Gateway and Azure may use different deployment or model values, so the notebook
-prints each resolved model for auditability.
+prints each configured model for auditability.
 
 ## Gateway vs Azure latency smoke test
 
 [`notebooks/judge_backend_latency_comparison.ipynb`](notebooks/judge_backend_latency_comparison.ipynb)
-runs the same `EvaluationCase` once through `create_gateway_judge()` and
-`create_azure_judge()`. It compares end-to-end latency, coverage score, label,
-extracted item count, and verbose item-level decisions.
+runs the same `EvaluationCase` once through `create_gateway_judge(config=...)`
+and `create_azure_judge(config=...)`. It compares end-to-end latency, coverage
+score, label, extracted item count, and verbose item-level decisions.
 
 This is a single-case smoke comparison, not a statistically meaningful
-performance benchmark. It intentionally uses the production constructors so it
-does not duplicate authentication or transport code. Provide your own local
-`golden_set_augmented_tagged.csv` or update `GOLDEN_SET_PATH` in the notebook;
-the GT CSV is not committed.
+performance benchmark. It intentionally uses the production constructors and
+backend config objects so it does not duplicate authentication or transport
+code. Replace notebook placeholders locally—or wire values from the host
+application's settings—and provide your own `golden_set_augmented_tagged.csv`
+or update `GOLDEN_SET_PATH`. Never commit those values or the GT CSV.
 
 ## Tracing and output
 

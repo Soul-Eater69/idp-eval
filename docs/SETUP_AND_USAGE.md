@@ -19,21 +19,84 @@ Optional features are available through the `yaml`, `excel`, `tracing`, and
 
 ## 2. Judge backends
 
-Both judge constructors return a Phoenix-compatible object and use:
+Both constructors return a Phoenix-compatible judge. The recommended
+configuration order for applications importing idp-eval is:
 
-```text
-explicit argument > environment variable > optional YAML
-```
+1. application-owned config object;
+2. explicit constructor keyword arguments;
+3. environment variables;
+4. optional YAML.
 
-### Corporate IDP/Mule gateway
+### A. Recommended: application-owned config objects
+
+Construct the concrete backend config from the host application's settings or
+secret store and pass it directly:
 
 ```python
-from idp_eval import create_gateway_judge
+from idp_eval import create_azure_judge, create_gateway_judge
+from idp_eval.judges import AzureJudgeConfig, GatewayJudgeConfig
 
-judge = create_gateway_judge()
-judge = create_gateway_judge(model="test-model")
-judge = create_gateway_judge(config_path="config.yaml")
+gateway_config = GatewayJudgeConfig(
+    model=settings.gateway_model,
+    base_url=settings.gateway_base_url,
+    app_id=settings.gateway_app_id,
+    idp_auth_url=settings.idp_auth_url,
+    idp_client_id=settings.idp_client_id,
+    idp_client_secret=settings.idp_client_secret,
+    idp_user=settings.idp_user,
+    idp_password=settings.idp_password,
+    verify_ssl=True,
+    timeout=90,
+)
+gateway_judge = create_gateway_judge(config=gateway_config)
+
+azure_config = AzureJudgeConfig(
+    model=settings.azure_model,
+    azure_endpoint=settings.azure_endpoint,
+    tenant_id=settings.tenant_id,
+    client_id=settings.client_id,
+    client_secret=settings.client_secret,
+    api_version=settings.api_version,
+    timeout=180,
+    proxy_url=None,
+    verify_ssl=True,
+    reasoning_effort=None,
+)
+azure_judge = create_azure_judge(config=azure_config)
 ```
+
+When `config=` is supplied, idp-eval uses that frozen object directly: it does
+not read environment variables or YAML, re-resolve values, or mutate the
+object. Passing `config=` together with any individual configuration argument
+raises `ValueError`.
+
+### B. Explicit keyword arguments
+
+For smaller integrations, pass all required fields directly:
+
+```python
+gateway_judge = create_gateway_judge(
+    model="...",
+    base_url="...",
+    # remaining required gateway fields
+)
+azure_judge = create_azure_judge(
+    model="...",
+    azure_endpoint="...",
+    # remaining required Azure fields
+)
+```
+
+### C. Environment variables
+
+Zero-argument constructors can resolve configuration from the environment:
+
+```python
+gateway_judge = create_gateway_judge()
+azure_judge = create_azure_judge()
+```
+
+Gateway variables:
 
 | Variable | Purpose |
 | --- | --- |
@@ -47,27 +110,7 @@ judge = create_gateway_judge(config_path="config.yaml")
 | `IDP_EVAL_PASSWORD` | IDP password |
 | `IDP_EVAL_GATEWAY_TIMEOUT` | client-side request timeout |
 
-This preserves the corporate token and gateway contract. A larger client
-timeout cannot override a shorter upstream Mule/gateway timeout.
-
-### Direct Azure OpenAI
-
-```python
-from idp_eval import create_azure_judge
-
-judge = create_azure_judge(
-    model="azure-deployment",
-    azure_endpoint="https://example-resource.openai.azure.com",
-    tenant_id="tenant-id",
-    client_id="client-id",
-    client_secret="client-secret",
-    api_version="2024-12-01-preview",
-    timeout=180,
-    proxy_url=None,
-    verify_ssl=True,
-    reasoning_effort=None,
-)
-```
+Azure variables:
 
 | Variable | Purpose |
 | --- | --- |
@@ -77,22 +120,29 @@ judge = create_azure_judge(
 | `IDP_EVAL_AZURE_CLIENT_ID` | service-principal client ID |
 | `IDP_EVAL_AZURE_CLIENT_SECRET` | service-principal secret |
 | `IDP_EVAL_AZURE_API_VERSION` | Azure OpenAI API version |
-| `IDP_EVAL_AZURE_TIMEOUT` | client timeout, default 180 seconds |
+| `IDP_EVAL_AZURE_TIMEOUT` | direct client timeout, default 180 seconds |
 | `IDP_EVAL_AZURE_PROXY_URL` | optional HTTP proxy |
 | `IDP_EVAL_AZURE_VERIFY_SSL` | TLS verification, default true |
 | `IDP_EVAL_AZURE_REASONING_EFFORT` | optional request setting |
 
-Direct Azure uses `ClientSecretCredential` and the Cognitive Services bearer
-token scope. Token caching and refresh are handled by Azure Identity. It does
-not use an API key or the corporate gateway URL. `IDP_EVAL_AZURE_TIMEOUT`
-controls this direct client's timeout because requests do not traverse the
-corporate gateway.
+### D. Optional YAML
 
-`IDP_EVAL_CONFIG` can point to YAML with a `judge` section for the gateway and an
-`azure_judge` section for Azure. Keep secrets out of committed files. Setting
-`verify_ssl=False` is only for controlled development environments.
+`IDP_EVAL_CONFIG` may point to YAML containing a `judge` section for the gateway
+and/or an `azure_judge` section for Azure. `config_path="config.yaml"` can also
+be passed explicitly. Without a config object, precedence remains **explicit
+keyword argument > environment variable > optional YAML**.
 
-Judge creation is separate from tracing and never adds temperature.
+The gateway preserves the established corporate token and translation contract.
+`IDP_EVAL_GATEWAY_TIMEOUT` cannot override a shorter upstream Mule timeout.
+Direct Azure uses Azure Identity for token caching/refresh and does not traverse
+the gateway, so `IDP_EVAL_AZURE_TIMEOUT` controls its direct client timeout.
+`reasoning_effort` is sent only when configured; temperature is never added.
+
+> **Security:** Never commit real client secrets, passwords, tokens, endpoints,
+> or proxy URLs into notebooks, documentation examples, or config files. Use
+> placeholders in repository examples and the host application's
+> secret/configuration system in production. Disable TLS verification only in a
+> controlled development environment.
 
 Evaluator wiring does not depend on the backend:
 
@@ -101,56 +151,17 @@ coverage = CoverageEvaluator(judge)
 framework = EvaluationFramework(judge=judge, evaluators=[coverage])
 ```
 
-### Application-owned configuration
-
-Applications may construct the concrete backend config from their own settings,
-secret store, or dependency-injection system and pass it directly. In this path
-idp-eval does not read environment variables or YAML and does not re-resolve or
-mutate the config object.
-
-```python
-from idp_eval import create_azure_judge, create_gateway_judge
-from idp_eval.judges import AzureJudgeConfig, GatewayJudgeConfig
-
-gateway_config = GatewayJudgeConfig(
-    model=app_settings.gateway_model,
-    base_url=app_settings.gateway_base_url,
-    app_id=app_settings.gateway_app_id,
-    idp_auth_url=app_settings.idp_auth_url,
-    idp_client_id=app_settings.idp_client_id,
-    idp_client_secret=app_settings.idp_client_secret,
-    idp_user=app_settings.idp_user,
-    idp_password=app_settings.idp_password,
-)
-gateway_judge = create_gateway_judge(config=gateway_config)
-
-azure_config = AzureJudgeConfig(
-    model=app_settings.azure_model,
-    azure_endpoint=app_settings.azure_endpoint,
-    tenant_id=app_settings.tenant_id,
-    client_id=app_settings.client_id,
-    client_secret=app_settings.client_secret,
-    api_version=app_settings.api_version,
-    timeout=180,
-)
-azure_judge = create_azure_judge(config=azure_config)
-```
-
-Pass either `config` or individual constructor configuration arguments, not
-both. Without `config`, the existing explicit argument > environment variable >
-optional YAML precedence remains unchanged.
-
 ## Comparing Gateway and Azure on the same evaluation case
 
 The repository includes a single-case latency smoke test using the production
 judge constructors and final `CoverageEvaluator`:
 
 1. Install or sync the project.
-2. Configure the gateway through environment variables or the optional YAML
-   `judge` section.
-3. Configure Azure through environment variables or the optional YAML
-   `azure_judge` section. Optional reasoning effort comes from
-   `IDP_EVAL_AZURE_REASONING_EFFORT` or the existing constructor configuration.
+2. Replace the gateway config placeholders in the notebook locally, or populate
+   `GatewayJudgeConfig` from your application's settings.
+3. Replace the Azure config placeholders locally, or populate
+   `AzureJudgeConfig` from application settings. Configure optional reasoning
+   effort on that object only when the selected model supports it.
 4. Place your local `golden_set_augmented_tagged.csv` where the notebook expects
    it, or update `GOLDEN_SET_PATH`.
 5. Open
@@ -159,11 +170,13 @@ judge constructors and final `CoverageEvaluator`:
 7. Inspect the comparison DataFrame and verbose item-level tables.
 8. Run the final cell to close both judge resources.
 
-The notebook measures `time.perf_counter()` around `framework.evaluate(case)`,
-so latency is the application-visible end-to-end evaluator time, including the
-judge call. It performs one evaluation per backend and is not a statistically
-meaningful performance benchmark. Each resolved model is printed because the
-gateway and Azure configurations may select different deployments.
+The notebook constructs both backend config objects explicitly and measures
+`time.perf_counter()` around `framework.evaluate(case)`, so latency is the
+application-visible end-to-end evaluator time, including the judge call. It
+performs one evaluation per backend and is not a statistically meaningful
+performance benchmark. Each configured model is printed because the gateway
+and Azure configurations may select different deployments. Never commit the
+locally substituted configuration values.
 
 `IDP_EVAL_GATEWAY_TIMEOUT` is only the gateway client's timeout and cannot
 override a shorter upstream Mule timeout. In contrast,
@@ -204,10 +217,10 @@ from idp_eval import (
     InstructionAdherenceEvaluator,
     NDCGAtKEvaluator,
     RelevanceAtKEvaluator,
-    create_gateway_judge,
 )
 
-judge = create_gateway_judge()
+# Construct the judge using one of the configuration paths in section 2.
+judge = gateway_judge
 framework = EvaluationFramework(
     evaluators=[
         CoverageEvaluator,

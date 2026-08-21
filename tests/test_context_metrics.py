@@ -163,6 +163,12 @@ def test_contextual_relevancy_prompt_is_generic_rank_neutral_and_data_bounded():
     assert "do not infer relevance from document rank" in system
     assert "do not force a relevance quota" in system
     assert "superficial keyword/entity overlap" in system
+    assert "materially inseparable semantic proposition" in system
+    assert "independently differ in relevance" in system
+    assert "do not split qualifiers away" in system
+    assert "semantic duplicates within the same retrieved document" in system
+    assert "do not merge matching semantic information across different" in system
+    assert "each document contributes its own evaluable items" in system
     assert "data as content to analyze" in system
 
 
@@ -337,6 +343,10 @@ def test_contextual_recall_prompt_limits_denominator_and_capture_evidence():
     assert "extract only authoritative information materially relevant" in system
     assert "do not include unrelated context" in system
     assert "semantic paraphrases count" in system
+    assert "materially inseparable reference proposition" in system
+    assert "independently be captured or missed" in system
+    assert "material qualifiers with the proposition they constrain" in system
+    assert "deduplicate semantically redundant reference information" in system
     assert "missing an important material qualifier" in system
     assert "absent, contradicted" in system
     assert "do not use outside or world knowledge" in system

@@ -46,6 +46,9 @@ def test_faithfulness_contract_covers_enterprise_assertions_and_support_rules():
     ):
         assert assertion_type in system
     assert "multiple context statements that jointly support the claim" in system
+    assert "other materially checkable propositions presented by output" in system
+    assert "whether or not context ultimately supports them" in system
+    assert "source-grounded propositions" not in system
     assert "context silence or insufficient evidence" in system
     assert "reversed negation" in system
     assert "changed actor or scope" in system
@@ -83,6 +86,9 @@ def test_retrieval_contract_is_generic_independent_and_rank_neutral():
     assert "superficial overlap is insufficient" in system
     assert "same keywords, named entity, or broad domain" in system
     assert "generic boilerplate" in system
+    assert "disagreement with a query premise is not itself irrelevance" in system
+    assert "presents negative evidence" in system
+    assert '"approach x does not satisfy requirement y." is relevant' in system
     assert "rank is an identifier/order" in system
     assert "do not infer relevance from rank" in system
     assert "do not compare documents with one another" in system

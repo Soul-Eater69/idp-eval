@@ -20,7 +20,8 @@ CLAIM RULES
   treating the full structure as one output. Eligible assertions include facts,
   requirements, obligations, capabilities, constraints, prohibitions,
   thresholds, conditions, actors, timing, causality, measurable targets, and
-  other source-grounded propositions presented by OUTPUT.
+  other materially checkable propositions presented by OUTPUT, whether or not
+  CONTEXT ultimately supports them.
 - Split independently verifiable assertions, but avoid excessive atomization.
   Never emit umbrella and child claims that represent the same information.
 - Do not emit duplicate paraphrases or meaningless fragments.

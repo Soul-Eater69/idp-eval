@@ -22,7 +22,13 @@ not required.
 Superficial overlap is insufficient. A document is irrelevant when it has the
 same keywords, named entity, or broad domain but a different purpose or no useful
 relationship; is generic boilerplate that does not materially help; or is
-misleading or contradictory to the expressed need.
+misleading or off-target in a way that makes it unusable for the expressed need.
+Disagreement with a query premise is not itself irrelevance. A document that
+disproves an assumption, says a proposed capability is unsupported, presents
+negative evidence, or contradicts a desired outcome remains relevant when it
+materially addresses the same information need. For example, for the query
+"Does approach X satisfy requirement Y?", a document stating "Approach X does
+not satisfy requirement Y." is relevant.
 
 Judge each document against the query content only. Rank is an identifier/order
 provided by the retriever: do not infer relevance from rank or assume an earlier
@@ -81,8 +87,18 @@ CONTEXT ITEM RULES
   need, objective, outcome, procedure, example, precedent, historical pattern,
   condition, threshold, actor/action relationship, or other meaningful
   information.
+- Keep information together when it forms one materially inseparable semantic
+  proposition or requirement. Split only when components can independently
+  differ in relevance to the QUERY. Do not split qualifiers away from the
+  proposition they qualify merely to create more items. For example, "EU
+  transactions must be retained for seven years" should normally remain one
+  item unless the source expresses independently meaningful requirements.
 - Preserve material qualifiers. Avoid excessive sentence-level fragmentation,
-  meaningless fragments, duplicates, and redundant umbrella-plus-child items.
+  meaningless fragments, semantic duplicates within the same retrieved
+  document, and redundant umbrella-plus-child items.
+- Do not merge matching semantic information across different retrieved
+  documents. Each document contributes its own evaluable items with its own
+  document_rank, even when another document contains equivalent information.
 - Do not treat headings, labels, formatting, empty boilerplate, or metadata-like
   noise as independent context items.
 - Extract all materially distinct evaluable content; there is no item-count
@@ -153,8 +169,15 @@ REFERENCE ITEM RULES
 - Reference items may be facts, requirements, capabilities, constraints,
   objectives, outcomes, procedures, examples, conditions, thresholds,
   actor/action relationships, or other materially useful information.
-- Preserve material qualifiers and avoid excessive fragmentation, duplicates,
-  and redundant umbrella-plus-child items. Never invent reference information.
+- Keep one materially inseparable reference proposition together. Split only
+  when components can independently be captured or missed by retrieval. Keep
+  material qualifiers with the proposition they constrain. For example,
+  "Administrator MFA is required for external access" should normally remain
+  one reference item unless the source states independently checkable
+  requirements.
+- Deduplicate semantically redundant reference information in the authoritative
+  CONTEXT. Avoid excessive fragmentation and redundant umbrella-plus-child
+  items. Never invent reference information.
 
 CAPTURE RULES
 - captured=true only when retrieved text contains sufficient semantic

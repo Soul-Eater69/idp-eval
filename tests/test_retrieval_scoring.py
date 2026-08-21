@@ -5,6 +5,9 @@ import math
 import pytest
 
 from idp_eval.scoring import (
+    contextual_precision_at_k,
+    contextual_recall_score,
+    contextual_relevancy_score,
     dcg,
     hit_rate_at_k,
     hit_rate_at_k_label,
@@ -15,6 +18,45 @@ from idp_eval.scoring import (
     relevance_at_k,
     relevance_at_k_label,
 )
+
+
+@pytest.mark.parametrize(
+    "values,expected",
+    [
+        ([1, 1, 1], 1.0),
+        ([1, 0, 1, 0, 1], (1 + 2 / 3 + 3 / 5) / 3),
+        ([0, 0, 1], 1 / 3),
+        ([0, 0, 0], 0.0),
+    ],
+)
+def test_contextual_precision_at_k(values, expected):
+    assert contextual_precision_at_k(values) == pytest.approx(expected)
+
+
+def test_contextual_precision_rewards_earlier_results_with_same_relevant_count():
+    assert contextual_precision_at_k([1, 1, 0, 0]) > contextual_precision_at_k(
+        [0, 0, 1, 1]
+    )
+
+
+@pytest.mark.parametrize(
+    "helper",
+    [contextual_precision_at_k, contextual_relevancy_score, contextual_recall_score],
+)
+def test_context_scoring_helpers_reject_empty_values(helper):
+    with pytest.raises(ValueError, match="requires at least one"):
+        helper([])
+
+
+@pytest.mark.parametrize(
+    "helper,values,expected",
+    [
+        (contextual_relevancy_score, [True, True, False], 2 / 3),
+        (contextual_recall_score, [True, False, False], 1 / 3),
+    ],
+)
+def test_context_fraction_helpers(helper, values, expected):
+    assert helper(values) == pytest.approx(expected)
 
 
 # --- Relevance@K (== Precision@K under binary relevance) ---------------------

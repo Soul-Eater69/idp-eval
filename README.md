@@ -15,6 +15,9 @@ A reusable evaluation framework built on Arize Phoenix. Cases use generic
 | `hit_rate_at_{k}` | `input`, `retrieved_documents` | — | `input` is semantic |
 | `mrr_at_{k}` | `input`, `retrieved_documents` | — | `input` is semantic |
 | `ndcg_at_{k}` | `input`, `retrieved_documents` | — | `input` is semantic |
+| `contextual_relevancy` | `input`, `retrieved_documents` | — | `input` is semantic |
+| `contextual_precision_at_{k}` | `input`, `retrieved_documents` | — | `input` is semantic |
+| `contextual_recall` | `input`, `context`, `retrieved_documents` | — | `input` is semantic |
 
 Coverage detects omissions from the source. Faithfulness separately detects
 unsupported additions to the output.
@@ -145,7 +148,7 @@ violation reasons. An empty judge-produced instruction set is
 | [`coverage_evaluator_usage.ipynb`](notebooks/coverage_evaluator_usage.ipynb) | Coverage-specific usage |
 | [`faithfulness_evaluator_usage.ipynb`](notebooks/faithfulness_evaluator_usage.ipynb) | Faithfulness-specific usage |
 | [`instruction_adherence_evaluator_usage.ipynb`](notebooks/instruction_adherence_evaluator_usage.ipynb) | Instruction Adherence-specific usage |
-| [`retrieval_metrics_usage.ipynb`](notebooks/retrieval_metrics_usage.ipynb) | **Retrieval metrics:** shared relevance judging and four deterministic ranking metrics |
+| [`retrieval_metrics_usage.ipynb`](notebooks/retrieval_metrics_usage.ipynb) | **Retrieval metrics:** document ranking and retrieved-context quality |
 
 The guides are backend-independent and use application-owned Azure
 configuration placeholders. The setup guide covers the equivalent gateway
@@ -491,6 +494,8 @@ uses these sheets where applicable:
 | `coverage_items` | verbose coverage item judgments |
 | `instruction_adherence_items` | instruction judgments |
 | `retrieval_documents` | retrieval judgments |
+| `contextual_relevancy_items` | verbose retrieved-content item judgments |
+| `contextual_recall_items` | verbose reference-item capture judgments |
 
 Compact coverage results omit item rows by design. Persistence errors retain the
 computed results and never rerun evaluators.
@@ -508,26 +513,38 @@ framework.log_custom_evaluation(
 )
 ```
 
-## Retrieval metrics
+## Retrieval and context metrics
 
-Retrieval metrics judge ranked `retrieved_documents` against the query in
-`input`. One structured relevance call classifies all documents through the
-deepest selected effective K; Python reuses those binary judgments for every
-selected metric.
+These metrics distinguish document relevance, ranking quality, useful content
+inside retrieval, and completeness against an authoritative reference:
 
-| Metric | Meaning |
-| --- | --- |
-| Relevance@K | Fraction of retrieved top-K documents that are relevant; Precision@K under binary relevance |
-| Hit Rate@K | Whether at least one relevant result occurs in the top K |
-| MRR@K | Reciprocal rank of the first relevant result for this query |
-| nDCG@K | Quality of the overall relevant-document ordering |
+| Metric | Unit | Question | Required fields |
+| --- | --- | --- | --- |
+| Relevance@K | document | How many retrieved documents are relevant? | `input` + `retrieved_documents` |
+| Hit Rate@K | ranked list | Was any relevant document retrieved? | `input` + `retrieved_documents` |
+| MRR@K | ranked list | How early is the first relevant document? | `input` + `retrieved_documents` |
+| nDCG@K | ranked document | How close is the binary relevance order to ideal? | `input` + `retrieved_documents` |
+| Contextual Relevancy | context item | How much retrieved content is useful? | `input` + `retrieved_documents` |
+| Contextual Precision@K | ranked document | Are relevant documents ranked high? | `input` + `retrieved_documents` |
+| Contextual Recall | reference item | How much useful reference information was retrieved? | `input` + `context` + `retrieved_documents` |
+
+Relevance@K judges whole documents; Contextual Relevancy decomposes the text
+inside those documents into meaningful information units. Contextual
+Precision@K is AP-style ranking quality over the evaluated retrieval list,
+whereas nDCG discounts ranks and compares the order with an ideal ordering.
+Contextual Recall uses `context` as authoritative/gold reference information;
+it is not computable from query and retrieved documents alone.
+
+Relevance@K, Hit Rate@K, MRR@K, nDCG@K, and Contextual Precision@K reuse one
+document-relevance call through the deepest selected effective K. Contextual
+Relevancy and Contextual Recall each use one separate holistic call. Selecting
+all seven metrics therefore makes three semantic calls total, never one call per
+document. Python calculates every aggregate score.
 
 `effective_k = min(k, document_count)`, so fewer returned documents never add
-artificial irrelevant entries to the denominator. Document IDs, retriever
-similarity scores, and metadata remain diagnostics and are not sent to the
-judge. See the practical
-[`retrieval_metrics_usage.ipynb`](notebooks/retrieval_metrics_usage.ipynb)
-guide.
+artificial irrelevant entries. Document IDs, retriever similarity scores, and
+metadata remain diagnostics and are not sent to judges. See the practical
+[`retrieval_metrics_usage.ipynb`](notebooks/retrieval_metrics_usage.ipynb) guide.
 
 ## Testing
 

@@ -54,11 +54,11 @@ class EvaluationCase:
         metadata: Optional free-form metadata carried alongside the case. Never
             injected into evaluator prompts.
         retrieved_documents: Optional ordered list of retrieved documents for
-            Relevance@K, Hit Rate@K, MRR@K, and nDCG@K. **List order is the
-            retrieval rank.** Each entry is a document string or a mapping
-            with a text field (default key ``"text"``) plus optional
-            ``document_id`` and ``score`` (similarity) metadata. Used only by the
-            retrieval evaluators; other metrics ignore it.
+            retrieval and contextual retrieval metrics. **List order is the
+            retrieval rank.** Each entry is a document string or a mapping with
+            a text field (default key ``"text"``) plus optional ``document_id``
+            and ``score`` (similarity) metadata. Used only by retrieval
+            evaluators; other metrics ignore it.
         evaluation_scope: How a top-level list output is orchestrated:
             ``"combined"`` (default), ``"individual"``, or ``"both"``.
     """

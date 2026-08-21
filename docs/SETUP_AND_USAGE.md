@@ -210,6 +210,9 @@ package does not create duplicate model spans.
 
 ```python
 from idp_eval import (
+    ContextualPrecisionAtKEvaluator,
+    ContextualRecallEvaluator,
+    ContextualRelevancyEvaluator,
     CoverageEvaluator,
     EvaluationCase,
     EvaluationFramework,
@@ -262,7 +265,8 @@ is deterministic. Required fields are evaluator-specific:
 | `CoverageEvaluator` | `context`, `output` | — | allowed; ignored for scoring |
 | `FaithfulnessEvaluator` | `context`, `output` | — | allowed; ignored for scoring |
 | `InstructionAdherenceEvaluator` | `instructions`, `output` | `context` | allowed; ignored for scoring |
-| retrieval evaluators | `input`, `retrieved_documents` | — | `input` is semantic |
+| document retrieval evaluators and Contextual Relevancy | `input`, `retrieved_documents` | — | `input` is semantic |
+| `ContextualRecallEvaluator` | `input`, `context`, `retrieved_documents` | — | `input` is semantic |
 
 For non-chat generation workflows, `input` may legitimately be `None` when no
 selected evaluator requires it. It is not a synonym for a system prompt.
@@ -485,26 +489,38 @@ See
 [`notebooks/instruction_adherence_evaluator_usage.ipynb`](../notebooks/instruction_adherence_evaluator_usage.ipynb)
 for the practical guide, including collection-level and per-item scope.
 
-### Retrieval metrics
+### Retrieval and context metrics
 
-All retrieval evaluators require non-empty `input` plus a ranked
-`retrieved_documents` list; no generated output is required. List order is rank.
-One structured judge call classifies every needed document through the deepest
-selected effective K, then Python derives all four metrics:
+No generated output is required. List order in `retrieved_documents` is rank.
 
-| Evaluator | Metric | Deterministic meaning |
-| --- | --- | --- |
-| `RelevanceAtKEvaluator(k)` | `relevance_at_{k}` | relevant count / effective K (binary Precision@K) |
-| `HitRateAtKEvaluator(k)` | `hit_rate_at_{k}` | 1.0 when any top-K document is relevant, otherwise 0.0 |
-| `MRRAtKEvaluator(k)` | `mrr_at_{k}` | reciprocal rank of the first relevant document, otherwise 0.0 |
-| `NDCGAtKEvaluator(k)` | `ndcg_at_{k}` | DCG divided by ideal DCG for the same relevance values |
+| Evaluator | Unit | Question | Required fields |
+| --- | --- | --- | --- |
+| `RelevanceAtKEvaluator(k)` | document | How many retrieved documents are relevant? | `input`, `retrieved_documents` |
+| `HitRateAtKEvaluator(k)` | ranked list | Was any relevant document retrieved? | `input`, `retrieved_documents` |
+| `MRRAtKEvaluator(k)` | ranked list | How early is the first relevant document? | `input`, `retrieved_documents` |
+| `NDCGAtKEvaluator(k)` | ranked document | How close is the relevance order to ideal? | `input`, `retrieved_documents` |
+| `ContextualRelevancyEvaluator()` | context item | How much retrieved content is useful? | `input`, `retrieved_documents` |
+| `ContextualPrecisionAtKEvaluator(k)` | ranked document | Are relevant documents ranked high? | `input`, `retrieved_documents` |
+| `ContextualRecallEvaluator()` | reference item | How much useful reference information was retrieved? | `input`, `context`, `retrieved_documents` |
 
-`effective_k = min(k, document_count)`. An empty list returns `not_applicable`
-for every selected retrieval metric without calling the judge; `None` or a
-non-list value fails validation. Documents may be strings or mappings using the
-default `text` key (configurable with `document_text_key`). Only the rendered
-query, document text, and rank reach the judge. `document_id`, retriever `score`,
-and metadata remain diagnostics.
+Contextual Relevancy evaluates materially distinct information inside retrieved
+text, not the fraction of whole documents marked relevant. Contextual
+Precision@K accumulates precision at ranks containing relevant documents; it is
+AP-style ranking quality over the evaluated list and does not assume corpus-wide
+relevance labels. nDCG instead applies logarithmic rank discount and compares
+against the ideal ordering. Contextual Recall treats `context` as
+authoritative/gold information and asks how much query-relevant reference
+information appears somewhere in retrieval. It is distinct from Coverage,
+which compares authoritative context with generated output.
+
+`effective_k = min(k, document_count)`. For document ranking metrics and
+Contextual Relevancy, an empty list returns `not_applicable` without a judge
+call. Contextual Recall still makes its one holistic call so it can identify
+relevant reference items and return `0.0` when they exist but none were
+retrieved. `None` or a non-list value fails validation. Documents may be strings
+or mappings using the default `text` key (configurable with
+`document_text_key`). Only rendered semantic fields and document text reach the
+judge; `document_id`, retriever `score`, and metadata remain diagnostics.
 
 ```python
 framework = EvaluationFramework(
@@ -514,16 +530,22 @@ framework = EvaluationFramework(
         HitRateAtKEvaluator(k=5),
         MRRAtKEvaluator(k=5),
         NDCGAtKEvaluator(k=5),
+        ContextualPrecisionAtKEvaluator(k=5),
+        ContextualRelevancyEvaluator(),
+        ContextualRecallEvaluator(),
     ],
 )
 results = framework.evaluate(case)
 ```
 
-Selecting `metrics=["relevance_at_5", "ndcg_at_5"]` still makes only one
-shared relevance call. Native async structured generation is preferred; the
-whole call consumes one slot from the framework's shared concurrency limit.
-Tracing emits one `retrieval.relevance.evaluate` stage beneath the case root,
-not one semantic judge span per document.
+The four existing document metrics plus Contextual Precision share one relevance
+call through the deepest selected effective K. Contextual Relevancy and
+Contextual Recall each add one holistic call, so selecting all seven metrics
+makes three semantic calls total. Native async structured generation is
+preferred; each holistic call consumes one slot from the framework's shared
+concurrency limit. Tracing uses `retrieval.relevance.evaluate`,
+`contextual_relevancy.evaluate`, and `contextual_recall.evaluate` stages—not one
+span per document or item.
 See [`notebooks/retrieval_metrics_usage.ipynb`](../notebooks/retrieval_metrics_usage.ipynb).
 
 ## 8. Bulk, grouped, and async APIs
@@ -613,6 +635,8 @@ span. Excel can contain:
 | `coverage_items` | verbose coverage item |
 | `instruction_adherence_items` | instruction item |
 | `retrieval_documents` | retrieval document |
+| `contextual_relevancy_items` | verbose retrieved-content item |
+| `contextual_recall_items` | verbose reference-item capture judgment |
 
 The `evaluations` summary includes the rendered descriptive `input` for each
 combined or individual case. Item-level sheets do not duplicate it. Nested

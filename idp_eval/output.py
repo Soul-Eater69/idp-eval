@@ -360,6 +360,25 @@ _ITEM_SHEETS: dict[str, _ItemSheet] = {
             ("reason", "reason"),
         ),
     ),
+    "contextual_relevancy": _ItemSheet(
+        "contextual_relevancy_items",
+        "items",
+        (
+            ("document_rank", "document_rank"),
+            ("context_item", "context_item"),
+            ("relevant", "relevant"),
+            ("reason", "reason"),
+        ),
+    ),
+    "contextual_recall": _ItemSheet(
+        "contextual_recall_items",
+        "items",
+        (
+            ("reference_item", "reference_item"),
+            ("captured", "captured"),
+            ("reason", "reason"),
+        ),
+    ),
 }
 
 # Retrieval metrics reuse the SAME batched relevance judgments, so their
@@ -385,6 +404,8 @@ _WIDE_COLUMNS = frozenset(
         "source_item",
         "instruction",
         "claim",
+        "context_item",
+        "reference_item",
         "input",
         "raw_details_json",
     }

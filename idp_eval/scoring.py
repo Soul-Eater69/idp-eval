@@ -1,9 +1,9 @@
 """Deterministic scoring functions.
 
-The judge LLM classifies semantics (covered / partial / missing for coverage,
-followed / violated for instruction adherence, relevant / unrelated per document
-for retrieval). Python turns those classifications into numbers. Never ask the
-LLM to produce the final score directly.
+The judge LLM classifies semantics (coverage, instruction adherence, document or
+context-item relevance, and reference-item capture). Python turns those
+classifications into numbers. Never ask the LLM to produce the final score
+directly.
 """
 
 from __future__ import annotations
@@ -283,6 +283,51 @@ def ndcg_at_k(relevance_scores: list[float]) -> tuple[float, float, float]:
     return actual / ideal, actual, ideal
 
 
+def contextual_relevancy_score(relevance_values: list[bool | float]) -> float:
+    """Returns the fraction of retrieved context items judged relevant."""
+    if not relevance_values:
+        raise ValueError(
+            "contextual_relevancy_score requires at least one context item."
+        )
+    return sum(float(value) for value in relevance_values) / len(
+        relevance_values
+    )
+
+
+def contextual_precision_at_k(relevance_values: list[bool | float]) -> float:
+    """Returns AP-style ranking quality over an evaluated retrieval list.
+
+    Precision is accumulated only at ranks containing a relevant document and
+    divided by the number of relevant documents in the supplied top-K slice.
+    This is intentionally retrieval-list-local: it does not assume knowledge of
+    relevant documents elsewhere in the corpus.
+    """
+    if not relevance_values:
+        raise ValueError(
+            "contextual_precision_at_k requires at least one relevance value."
+        )
+    relevant_count = sum(value > 0 for value in relevance_values)
+    if relevant_count == 0:
+        return 0.0
+
+    relevant_seen = 0
+    accumulated_precision = 0.0
+    for rank, value in enumerate(relevance_values, start=1):
+        if value > 0:
+            relevant_seen += 1
+            accumulated_precision += relevant_seen / rank
+    return accumulated_precision / relevant_count
+
+
+def contextual_recall_score(captured_values: list[bool | float]) -> float:
+    """Returns the fraction of relevant reference items captured by retrieval."""
+    if not captured_values:
+        raise ValueError(
+            "contextual_recall_score requires at least one reference item."
+        )
+    return sum(float(value) for value in captured_values) / len(captured_values)
+
+
 def relevance_at_k_label(score: float) -> str:
     """Descriptive Relevance@K label derived from the fraction relevant.
 
@@ -322,3 +367,30 @@ def ndcg_at_k_label(score: float) -> str:
     if score <= 0.0:
         return "no_relevant_retrieved"
     return "suboptimal_ranking"
+
+
+def contextual_relevancy_label(score: float) -> str:
+    """Labels relevant retrieved-content fraction without arbitrary thresholds."""
+    if score >= 1.0:
+        return "fully_relevant"
+    if score <= 0.0:
+        return "irrelevant"
+    return "partially_relevant"
+
+
+def contextual_precision_at_k_label(score: float) -> str:
+    """Labels AP-style ranking quality without arbitrary thresholds."""
+    if score >= 1.0:
+        return "ideal_ranking"
+    if score <= 0.0:
+        return "no_relevant_retrieved"
+    return "suboptimal_ranking"
+
+
+def contextual_recall_label(score: float) -> str:
+    """Labels retrieval completeness without arbitrary thresholds."""
+    if score >= 1.0:
+        return "complete"
+    if score <= 0.0:
+        return "missing"
+    return "incomplete"

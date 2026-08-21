@@ -1,6 +1,9 @@
 """Public API for the idp-eval framework."""
 
 from idp_eval.evaluators import (
+    ContextualPrecisionAtKEvaluator,
+    ContextualRecallEvaluator,
+    ContextualRelevancyEvaluator,
     CoverageEvaluator,
     FaithfulnessEvaluator,
     HitRateAtKEvaluator,
@@ -26,6 +29,9 @@ __all__ = [
     "FaithfulnessEvaluator",
     "CoverageEvaluator",
     "InstructionAdherenceEvaluator",
+    "ContextualRelevancyEvaluator",
+    "ContextualPrecisionAtKEvaluator",
+    "ContextualRecallEvaluator",
     "RelevanceAtKEvaluator",
     "HitRateAtKEvaluator",
     "MRRAtKEvaluator",

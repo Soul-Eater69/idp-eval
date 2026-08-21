@@ -2,22 +2,35 @@
 
 For one evaluation case, the framework asks the configured judge to classify all
 needed ranked documents in one structured call. Relevance@K, Hit Rate@K, MRR@K,
-and nDCG@K then slice those shared judgments and calculate their scores in
-Python. The internal relevance pass is intentionally not part of the public API.
+nDCG@K, and Contextual Precision@K then slice those shared judgments and
+calculate their scores in Python. Contextual Relevancy and Contextual Recall use
+separate one-call semantic contracts because they evaluate different units. The
+internal relevance pass is intentionally not part of the public API.
 """
 
 from __future__ import annotations
 
 import asyncio
+import time
 
 from idp_eval import tracing
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
 from idp_eval.prompts.retrieval import (
+    CONTEXTUAL_RECALL_SCHEMA_V1,
+    CONTEXTUAL_RELEVANCY_SCHEMA_V1,
     RETRIEVAL_RELEVANCE_SCHEMA_V1,
+    render_contextual_recall_prompt,
+    render_contextual_relevancy_prompt,
     render_retrieval_relevance_prompt,
 )
 from idp_eval.rendering import render_value
 from idp_eval.scoring import (
+    contextual_precision_at_k,
+    contextual_precision_at_k_label,
+    contextual_recall_label,
+    contextual_recall_score,
+    contextual_relevancy_label,
+    contextual_relevancy_score,
     hit_rate_at_k,
     hit_rate_at_k_label,
     mrr_at_k_label,
@@ -29,6 +42,10 @@ from idp_eval.scoring import (
 )
 
 DEFAULT_DOCUMENT_TEXT_KEY = "text"
+
+
+def _elapsed_ms(started: float) -> float:
+    return (time.monotonic() - started) * 1000.0
 
 
 def _validate_k(k: int) -> None:
@@ -68,6 +85,29 @@ def _retrieval_score(document):
     if isinstance(document, dict):
         return document.get("score")
     return None
+
+
+def _validate_documents_list(case: EvaluationCase, evaluator_name: str) -> list:
+    documents = case.retrieved_documents
+    if documents is None or not isinstance(documents, list):
+        raise ValueError(
+            f"{evaluator_name} requires `retrieved_documents` as a list "
+            "(rank order); got "
+            f"{type(documents).__name__ if documents is not None else 'None'}."
+        )
+    return documents
+
+
+def _validate_document_text_key(document_text_key: str) -> None:
+    if not isinstance(document_text_key, str) or not document_text_key:
+        raise ValueError("document_text_key must be a non-empty string.")
+
+
+def _document_texts(documents: list, text_key: str) -> list[str]:
+    return [
+        _document_text(document, text_key, rank)
+        for rank, document in enumerate(documents, start=1)
+    ]
 
 
 def _validate_relevance_response(
@@ -267,8 +307,7 @@ class _RetrievalEvaluator(Evaluator):
         document_text_key: str = DEFAULT_DOCUMENT_TEXT_KEY,
     ):
         _validate_k(k)
-        if not isinstance(document_text_key, str) or not document_text_key:
-            raise ValueError("document_text_key must be a non-empty string.")
+        _validate_document_text_key(document_text_key)
         self._k = k
         self._llm = llm
         self._verbose = verbose
@@ -280,13 +319,7 @@ class _RetrievalEvaluator(Evaluator):
 
     def validate_case(self, case: EvaluationCase) -> None:
         super().validate_case(case)
-        documents = case.retrieved_documents
-        if documents is None or not isinstance(documents, list):
-            raise ValueError(
-                f"{type(self).__name__} requires `retrieved_documents` as a "
-                "list (rank order); got "
-                f"{type(documents).__name__ if documents is not None else 'None'}."
-            )
+        _validate_documents_list(case, type(self).__name__)
 
     def _documents(self, case: EvaluationCase) -> list:
         return case.retrieved_documents or []
@@ -499,6 +532,455 @@ class NDCGAtKEvaluator(_RetrievalEvaluator):
 
     def _empty_metric_details(self) -> dict:
         return {"relevance_scores": [], "dcg": 0.0, "idcg": 0.0}
+
+
+class ContextualPrecisionAtKEvaluator(_RetrievalEvaluator):
+    """AP-style ranking quality over shared top-K relevance judgments.
+
+    This metric evaluates only the returned top-K list. It does not assume
+    knowledge of relevant documents outside that list and is therefore not
+    corpus-level recall-aware Average Precision.
+    """
+
+    def __init__(self, k: int, llm=None, **kwargs):
+        super().__init__(k, llm, **kwargs)
+        self.name = f"contextual_precision_at_{k}"
+
+    def _score(self, judgments, effective_k, document_count):
+        scores = [judgment["relevance_score"] for judgment in judgments]
+        score = contextual_precision_at_k(scores)
+        relevant_count = int(sum(scores))
+        relevant_seen = 0
+        precision_at_relevant_ranks = []
+        for judgment in judgments:
+            if judgment["relevant"]:
+                relevant_seen += 1
+                precision_at_relevant_ranks.append(
+                    {
+                        "rank": judgment["rank"],
+                        "precision": relevant_seen / judgment["rank"],
+                    }
+                )
+        details = self._common_details(judgments, effective_k, document_count)
+        details.update(
+            {
+                "relevant_count": relevant_count,
+                "precision_at_relevant_ranks": precision_at_relevant_ranks,
+            }
+        )
+        return EvaluationResult(
+            metric=self.name,
+            score=score,
+            label=contextual_precision_at_k_label(score),
+            explanation=(
+                f"Contextual Precision@{self._k} = {score:.4g} across "
+                f"{relevant_count} relevant documents in the top {effective_k}."
+            ),
+            details=details,
+        )
+
+    def _empty_metric_details(self) -> dict:
+        return {"relevant_count": 0, "precision_at_relevant_ranks": []}
+
+
+class ContextualRelevancyEvaluator(Evaluator):
+    """Fraction of meaningful information units in retrieval that are useful."""
+
+    name = "contextual_relevancy"
+    required_fields = ("input",)
+
+    def __init__(
+        self,
+        llm=None,
+        *,
+        verbose: bool = False,
+        document_text_key: str = DEFAULT_DOCUMENT_TEXT_KEY,
+    ):
+        _validate_document_text_key(document_text_key)
+        self._llm = llm
+        self._verbose = verbose
+        self._document_text_key = document_text_key
+
+    def _bind_judge(self, judge) -> None:
+        if self._llm is None:
+            self._llm = judge
+
+    def validate_case(self, case: EvaluationCase) -> None:
+        super().validate_case(case)
+        _validate_documents_list(case, type(self).__name__)
+
+    def _prepare(self, case: EvaluationCase) -> tuple[list[dict], int]:
+        texts = _document_texts(
+            case.retrieved_documents or [], self._document_text_key
+        )
+        prompt = render_contextual_relevancy_prompt(
+            render_value(case.input), texts
+        )
+        return prompt, len(texts)
+
+    def evaluate(self, case: EvaluationCase) -> EvaluationResult:
+        self.validate_case(case)
+        if not case.retrieved_documents:
+            return self._empty_retrieval_result()
+        if self._llm is None:
+            raise ValueError(
+                "ContextualRelevancyEvaluator needs a judge; pass one to the "
+                "constructor or via EvaluationFramework(judge=...)."
+            )
+        started = time.monotonic()
+        prompt, document_count = self._prepare(case)
+        with tracing.judge_span(
+            "contextual_relevancy.evaluate",
+            {"idp_eval.metric": self.name, "idp_eval.stage": "evaluate"},
+        ):
+            response = self._llm.generate_object(
+                prompt=prompt, schema=CONTEXTUAL_RELEVANCY_SCHEMA_V1
+            )
+        return self._result_from_response(
+            response, document_count, _elapsed_ms(started)
+        )
+
+    async def a_evaluate(
+        self, case: EvaluationCase, *, judge_limiter: asyncio.Semaphore
+    ) -> EvaluationResult:
+        self.validate_case(case)
+        if not case.retrieved_documents:
+            return self._empty_retrieval_result()
+        if self._llm is None:
+            raise ValueError(
+                "ContextualRelevancyEvaluator needs a judge; pass one to the "
+                "constructor or via EvaluationFramework(judge=...)."
+            )
+        started = time.monotonic()
+        prompt, document_count = self._prepare(case)
+        async with judge_limiter:
+            with tracing.judge_span(
+                "contextual_relevancy.evaluate",
+                {"idp_eval.metric": self.name, "idp_eval.stage": "evaluate"},
+            ):
+                async_generate = getattr(
+                    self._llm, "async_generate_object", None
+                )
+                if callable(async_generate):
+                    response = await async_generate(
+                        prompt=prompt, schema=CONTEXTUAL_RELEVANCY_SCHEMA_V1
+                    )
+                else:
+                    response = await asyncio.to_thread(
+                        self._llm.generate_object,
+                        prompt=prompt,
+                        schema=CONTEXTUAL_RELEVANCY_SCHEMA_V1,
+                    )
+        return self._result_from_response(
+            response, document_count, _elapsed_ms(started)
+        )
+
+    def _validate_response(self, response: object, document_count: int) -> list[dict]:
+        if not isinstance(response, dict) or set(response) != {"items"}:
+            raise ValueError(
+                "Malformed contextual relevancy response: expected only an "
+                "`items` list."
+            )
+        raw_items = response["items"]
+        if not isinstance(raw_items, list):
+            raise ValueError(
+                "Malformed contextual relevancy response: `items` must be a list."
+            )
+        validated = []
+        expected_keys = {"document_rank", "context_item", "relevant", "reason"}
+        for index, item in enumerate(raw_items, start=1):
+            if not isinstance(item, dict) or set(item) != expected_keys:
+                raise ValueError(
+                    f"Malformed contextual relevancy item {index}: expected "
+                    f"exactly {sorted(expected_keys)}."
+                )
+            rank = item["document_rank"]
+            context_item = item["context_item"]
+            relevant = item["relevant"]
+            reason = item["reason"]
+            if (
+                isinstance(rank, bool)
+                or not isinstance(rank, int)
+                or not 1 <= rank <= document_count
+            ):
+                raise ValueError(
+                    f"Malformed contextual relevancy item {index}: "
+                    f"`document_rank` must be from 1 through {document_count}."
+                )
+            if not isinstance(context_item, str) or not context_item.strip():
+                raise ValueError(
+                    f"Malformed contextual relevancy item {index}: "
+                    "`context_item` must be a non-empty string."
+                )
+            if not isinstance(relevant, bool):
+                raise ValueError(
+                    f"Malformed contextual relevancy item {index}: `relevant` "
+                    "must be a boolean."
+                )
+            if not isinstance(reason, str) or not reason.strip():
+                raise ValueError(
+                    f"Malformed contextual relevancy item {index}: `reason` "
+                    "must be a non-empty string."
+                )
+            validated.append(
+                {
+                    "document_rank": rank,
+                    "context_item": " ".join(context_item.split()),
+                    "relevant": relevant,
+                    "reason": reason,
+                }
+            )
+        return validated
+
+    def _result_from_response(
+        self, response: object, document_count: int, total_ms: float
+    ) -> EvaluationResult:
+        items = self._validate_response(response, document_count)
+        relevant_count = sum(item["relevant"] for item in items)
+        details = {
+            "item_count": len(items),
+            "relevant_count": relevant_count,
+            "judge_call_count": 1,
+            "total_ms": total_ms,
+            "verbose": self._verbose,
+        }
+        if self._verbose:
+            details["items"] = items
+        self._set_trace_attributes(len(items), relevant_count, 1, total_ms)
+        if not items:
+            return EvaluationResult(
+                metric=self.name,
+                score=None,
+                label="not_applicable",
+                explanation=(
+                    "No materially evaluable context items were identified."
+                ),
+                details=details,
+            )
+        score = contextual_relevancy_score(
+            [item["relevant"] for item in items]
+        )
+        return EvaluationResult(
+            metric=self.name,
+            score=score,
+            label=contextual_relevancy_label(score),
+            explanation=(
+                f"{relevant_count} of {len(items)} retrieved context items are "
+                "relevant to the information need."
+            ),
+            details=details,
+        )
+
+    def _empty_retrieval_result(self) -> EvaluationResult:
+        details = {
+            "item_count": 0,
+            "relevant_count": 0,
+            "judge_call_count": 0,
+            "total_ms": 0.0,
+            "verbose": self._verbose,
+        }
+        if self._verbose:
+            details["items"] = []
+        self._set_trace_attributes(0, 0, 0, 0.0)
+        return EvaluationResult(
+            metric=self.name,
+            score=None,
+            label="not_applicable",
+            explanation="No documents were retrieved for the information need.",
+            details=details,
+        )
+
+    def _set_trace_attributes(
+        self, item_count: int, relevant_count: int, calls: int, total_ms: float
+    ) -> None:
+        tracing.set_current_span_attributes(
+            {
+                "contextual_relevancy.item_count": item_count,
+                "contextual_relevancy.relevant_count": relevant_count,
+                "contextual_relevancy.judge_call_count": calls,
+                "contextual_relevancy.total_ms": total_ms,
+            }
+        )
+
+
+class ContextualRecallEvaluator(Evaluator):
+    """Fraction of query-relevant reference items captured by retrieval."""
+
+    name = "contextual_recall"
+    required_fields = ("input", "context")
+
+    def __init__(
+        self,
+        llm=None,
+        *,
+        verbose: bool = False,
+        document_text_key: str = DEFAULT_DOCUMENT_TEXT_KEY,
+    ):
+        _validate_document_text_key(document_text_key)
+        self._llm = llm
+        self._verbose = verbose
+        self._document_text_key = document_text_key
+
+    def _bind_judge(self, judge) -> None:
+        if self._llm is None:
+            self._llm = judge
+
+    def validate_case(self, case: EvaluationCase) -> None:
+        super().validate_case(case)
+        _validate_documents_list(case, type(self).__name__)
+
+    def _prepare(self, case: EvaluationCase) -> list[dict]:
+        texts = _document_texts(
+            case.retrieved_documents or [], self._document_text_key
+        )
+        return render_contextual_recall_prompt(
+            render_value(case.input), render_value(case.context), texts
+        )
+
+    def evaluate(self, case: EvaluationCase) -> EvaluationResult:
+        self.validate_case(case)
+        if self._llm is None:
+            raise ValueError(
+                "ContextualRecallEvaluator needs a judge; pass one to the "
+                "constructor or via EvaluationFramework(judge=...)."
+            )
+        started = time.monotonic()
+        prompt = self._prepare(case)
+        with tracing.judge_span(
+            "contextual_recall.evaluate",
+            {"idp_eval.metric": self.name, "idp_eval.stage": "evaluate"},
+        ):
+            response = self._llm.generate_object(
+                prompt=prompt, schema=CONTEXTUAL_RECALL_SCHEMA_V1
+            )
+        return self._result_from_response(response, _elapsed_ms(started))
+
+    async def a_evaluate(
+        self, case: EvaluationCase, *, judge_limiter: asyncio.Semaphore
+    ) -> EvaluationResult:
+        self.validate_case(case)
+        if self._llm is None:
+            raise ValueError(
+                "ContextualRecallEvaluator needs a judge; pass one to the "
+                "constructor or via EvaluationFramework(judge=...)."
+            )
+        started = time.monotonic()
+        prompt = self._prepare(case)
+        async with judge_limiter:
+            with tracing.judge_span(
+                "contextual_recall.evaluate",
+                {"idp_eval.metric": self.name, "idp_eval.stage": "evaluate"},
+            ):
+                async_generate = getattr(
+                    self._llm, "async_generate_object", None
+                )
+                if callable(async_generate):
+                    response = await async_generate(
+                        prompt=prompt, schema=CONTEXTUAL_RECALL_SCHEMA_V1
+                    )
+                else:
+                    response = await asyncio.to_thread(
+                        self._llm.generate_object,
+                        prompt=prompt,
+                        schema=CONTEXTUAL_RECALL_SCHEMA_V1,
+                    )
+        return self._result_from_response(response, _elapsed_ms(started))
+
+    def _validate_response(self, response: object) -> list[dict]:
+        if not isinstance(response, dict) or set(response) != {"items"}:
+            raise ValueError(
+                "Malformed contextual recall response: expected only an `items` "
+                "list."
+            )
+        raw_items = response["items"]
+        if not isinstance(raw_items, list):
+            raise ValueError(
+                "Malformed contextual recall response: `items` must be a list."
+            )
+        validated = []
+        expected_keys = {"reference_item", "captured", "reason"}
+        for index, item in enumerate(raw_items, start=1):
+            if not isinstance(item, dict) or set(item) != expected_keys:
+                raise ValueError(
+                    f"Malformed contextual recall item {index}: expected exactly "
+                    f"{sorted(expected_keys)}."
+                )
+            reference_item = item["reference_item"]
+            captured = item["captured"]
+            reason = item["reason"]
+            if not isinstance(reference_item, str) or not reference_item.strip():
+                raise ValueError(
+                    f"Malformed contextual recall item {index}: `reference_item` "
+                    "must be a non-empty string."
+                )
+            if not isinstance(captured, bool):
+                raise ValueError(
+                    f"Malformed contextual recall item {index}: `captured` must "
+                    "be a boolean."
+                )
+            if not isinstance(reason, str) or not reason.strip():
+                raise ValueError(
+                    f"Malformed contextual recall item {index}: `reason` must be "
+                    "a non-empty string."
+                )
+            validated.append(
+                {
+                    "reference_item": " ".join(reference_item.split()),
+                    "captured": captured,
+                    "reason": reason,
+                }
+            )
+        return validated
+
+    def _result_from_response(
+        self, response: object, total_ms: float
+    ) -> EvaluationResult:
+        items = self._validate_response(response)
+        captured_count = sum(item["captured"] for item in items)
+        details = {
+            "reference_item_count": len(items),
+            "captured_count": captured_count,
+            "missing_count": len(items) - captured_count,
+            "judge_call_count": 1,
+            "total_ms": total_ms,
+            "verbose": self._verbose,
+        }
+        if self._verbose:
+            details["items"] = items
+        self._set_trace_attributes(len(items), captured_count, total_ms)
+        if not items:
+            return EvaluationResult(
+                metric=self.name,
+                score=None,
+                label="not_applicable",
+                explanation=(
+                    "No query-relevant reference items were identified in context."
+                ),
+                details=details,
+            )
+        score = contextual_recall_score([item["captured"] for item in items])
+        return EvaluationResult(
+            metric=self.name,
+            score=score,
+            label=contextual_recall_label(score),
+            explanation=(
+                f"Retrieval captured {captured_count} of {len(items)} relevant "
+                "reference items."
+            ),
+            details=details,
+        )
+
+    def _set_trace_attributes(
+        self, item_count: int, captured_count: int, total_ms: float
+    ) -> None:
+        tracing.set_current_span_attributes(
+            {
+                "contextual_recall.item_count": item_count,
+                "contextual_recall.captured_count": captured_count,
+                "contextual_recall.judge_call_count": 1,
+                "contextual_recall.total_ms": total_ms,
+            }
+        )
 
 
 def _first_relevant_rank(judgments: list[dict]) -> int | None:

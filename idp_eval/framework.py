@@ -9,7 +9,10 @@ output(s). Evaluation is never re-run for a second destination.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Iterable, TypeAlias
+
+from tqdm.auto import tqdm
 
 from idp_eval import tracing
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
@@ -388,12 +391,140 @@ class EvaluationFramework:
             return None
         return render_value(case.input)
 
+    @staticmethod
+    def _progress_case_label(case: EvaluationCase, index: int) -> str:
+        """Returns a safe progress identifier without rendering case content."""
+        return case.case_id if case.case_id is not None else f"index {index}"
+
+    @staticmethod
+    def _progress_metric_results(
+        results: EvaluationReturn, metric: str
+    ) -> list[EvaluationResult]:
+        """Collects one metric's results from combined or scoped output."""
+        direct = results.get(metric)
+        if isinstance(direct, EvaluationResult):
+            return [direct]
+
+        collected: list[EvaluationResult] = []
+        combined = results.get("combined")
+        if isinstance(combined, dict):
+            combined_result = combined.get(metric)
+            if isinstance(combined_result, EvaluationResult):
+                collected.append(combined_result)
+        individual = results.get("individual")
+        if isinstance(individual, list):
+            for item_results in individual:
+                item_result = item_results.get(metric)
+                if isinstance(item_result, EvaluationResult):
+                    collected.append(item_result)
+        return collected
+
+    @staticmethod
+    def _progress_score(result: EvaluationResult) -> str:
+        """Formats a normalized result compactly, including not-applicable."""
+        score = "None" if result.score is None else f"{result.score:.3f}"
+        label = "None" if result.label is None else result.label
+        return f"{score} ({label})"
+
+    @classmethod
+    def _progress_metric_summary(
+        cls, results: EvaluationReturn, selected: list[str]
+    ) -> str:
+        """Formats every selected metric without exposing evaluator payloads."""
+        summaries: list[str] = []
+        for metric in selected:
+            values = [
+                cls._progress_score(result)
+                for result in cls._progress_metric_results(results, metric)
+            ]
+            rendered = values[0] if len(values) == 1 else f"[{'; '.join(values)}]"
+            summaries.append(f"{metric}={rendered}")
+        return " | ".join(summaries)
+
+    @staticmethod
+    def _progress_error(exc: Exception) -> str:
+        """Builds a bounded error summary and suppresses likely secret text."""
+        error_type = type(exc).__name__
+        message = " ".join(str(exc).split())
+        sensitive_markers = (
+            "authorization",
+            "bearer ",
+            "api key",
+            "api_key",
+            "client_secret",
+            "password",
+            "token",
+        )
+        if not message or any(
+            marker in message.lower() for marker in sensitive_markers
+        ):
+            return error_type
+        if len(message) > 160:
+            message = f"{message[:157]}..."
+        return f"{error_type}: {message}"
+
+    @staticmethod
+    def _progress_elapsed(seconds: float) -> str:
+        """Formats total wall time for the final progress summary."""
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        rounded = int(round(seconds))
+        minutes, seconds_part = divmod(rounded, 60)
+        hours, minutes_part = divmod(minutes, 60)
+        if hours:
+            return f"{hours}h {minutes_part}m {seconds_part}s"
+        return f"{minutes_part}m {seconds_part}s"
+
+    @classmethod
+    def _write_progress_success(
+        cls,
+        progress,
+        *,
+        completed: int,
+        total: int,
+        case: EvaluationCase,
+        index: int,
+        duration: float,
+        results: EvaluationReturn,
+        selected: list[str],
+    ) -> None:
+        """Writes one case completion line without corrupting the bar."""
+        metrics = cls._progress_metric_summary(results, selected)
+        suffix = f" | {metrics}" if metrics else ""
+        tqdm.write(
+            f"✓ [{completed}/{total}] "
+            f"case={cls._progress_case_label(case, index)} "
+            f"completed in {duration:.1f}s{suffix}",
+            file=progress.fp,
+        )
+
+    @classmethod
+    def _write_progress_failure(
+        cls,
+        progress,
+        *,
+        position: int,
+        total: int,
+        case: EvaluationCase,
+        index: int,
+        duration: float,
+        exc: Exception,
+    ) -> None:
+        """Writes one bounded failure line before preserving the exception."""
+        tqdm.write(
+            f"✗ [{position}/{total}] "
+            f"case={cls._progress_case_label(case, index)} "
+            f"failed after {duration:.1f}s: {cls._progress_error(exc)}",
+            file=progress.fp,
+        )
+
     def evaluate_many(
         self,
         cases: "Iterable[EvaluationCase]",
         metrics: list[str] | None = None,
         run_name: str | None = None,
         dataset_name: str | None = None,
+        show_progress: bool = False,
     ) -> list[EvaluationReturn]:
         """Evaluates many cases independently, honoring each output scope.
 
@@ -409,6 +540,10 @@ class EvaluationFramework:
 
         Returns:
             One result mapping per case, in input order.
+
+        Args:
+            show_progress: When true, display one tqdm progress update and a
+                compact metric summary per original input case.
 
         Raises:
             KeyError: If a requested metric was not configured.
@@ -428,15 +563,63 @@ class EvaluationFramework:
                 label = case.case_id if case.case_id is not None else f"index {index}"
                 raise ValueError(f"Case {label}: {exc}") from exc
 
-        return [
-            self.evaluate(
-                case,
-                metrics=metrics,
-                run_name=run_name,
-                dataset_name=dataset_name,
-            )
-            for case in case_list
-        ]
+        if not show_progress:
+            return [
+                self.evaluate(
+                    case,
+                    metrics=metrics,
+                    run_name=run_name,
+                    dataset_name=dataset_name,
+                )
+                for case in case_list
+            ]
+
+        total = len(case_list)
+        batch_started = time.perf_counter()
+        progress = tqdm(total=total, desc="Evaluating cases", unit="case")
+        results_list: list[EvaluationReturn] = []
+        try:
+            for index, case in enumerate(case_list):
+                case_started = time.perf_counter()
+                try:
+                    results = self.evaluate(
+                        case,
+                        metrics=metrics,
+                        run_name=run_name,
+                        dataset_name=dataset_name,
+                    )
+                except Exception as exc:
+                    self._write_progress_failure(
+                        progress,
+                        position=int(progress.n) + 1,
+                        total=total,
+                        case=case,
+                        index=index,
+                        duration=time.perf_counter() - case_started,
+                        exc=exc,
+                    )
+                    raise
+                results_list.append(results)
+                progress.update(1)
+                self._write_progress_success(
+                    progress,
+                    completed=int(progress.n),
+                    total=total,
+                    case=case,
+                    index=index,
+                    duration=time.perf_counter() - case_started,
+                    results=results,
+                    selected=selected,
+                )
+        finally:
+            progress.close()
+
+        tqdm.write(
+            f"Evaluation complete: {total}/{total} cases in "
+            f"{self._progress_elapsed(time.perf_counter() - batch_started)}",
+            file=progress.fp,
+        )
+        return results_list
 
     def evaluate_groups(
         self,
@@ -592,6 +775,7 @@ class EvaluationFramework:
         run_name: str | None = None,
         dataset_name: str | None = None,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+        show_progress: bool = False,
     ) -> list[EvaluationReturn]:
         """Async counterpart of :meth:`evaluate_many`: cases run concurrently.
 
@@ -603,7 +787,9 @@ class EvaluationFramework:
         Failure behavior mirrors :meth:`evaluate_many`: the whole batch is
         validated up front (fail fast, case-aware error). Results are returned in
         input order; persistence happens serially after evaluation to avoid
-        concurrent writer mutation.
+        concurrent writer mutation. When ``show_progress`` is true, progress
+        advances as original input cases finish while return ordering remains
+        unchanged.
         """
         self._validate_max_concurrency(max_concurrency)
         case_list = list(cases)
@@ -622,12 +808,106 @@ class EvaluationFramework:
 
         limiter = asyncio.Semaphore(max_concurrency)
         flat_cases = [case for _, cases in plans for case in cases]
-        pairs = await asyncio.gather(
-            *(
-                self._a_run_case(case, selected, run_name, dataset_name, limiter)
-                for case in flat_cases
+
+        if not show_progress:
+            pairs = await asyncio.gather(
+                *(
+                    self._a_run_case(
+                        case, selected, run_name, dataset_name, limiter
+                    )
+                    for case in flat_cases
+                )
             )
-        )
+        else:
+            total = len(case_list)
+            batch_started = time.perf_counter()
+            progress = tqdm(total=total, desc="Evaluating cases", unit="case")
+            output_file = progress.fp
+            case_started = [time.perf_counter() for _ in case_list]
+            case_offsets: list[int] = []
+            owner_indices: list[int] = []
+            remaining: list[int] = []
+            offset = 0
+            for owner_index, (_, planned_cases) in enumerate(plans):
+                case_offsets.append(offset)
+                count = len(planned_cases)
+                remaining.append(count)
+                owner_indices.extend([owner_index] * count)
+                offset += count
+
+            stored_pairs: list[
+                tuple[EvaluationResults, list[EvaluationRecord]] | None
+            ] = [None] * len(flat_cases)
+            failure_reported = [False] * total
+
+            async def run_with_progress(
+                flat_index: int,
+                owner_index: int,
+                planned_case: EvaluationCase,
+            ) -> None:
+                try:
+                    pair = await self._a_run_case(
+                        planned_case,
+                        selected,
+                        run_name,
+                        dataset_name,
+                        limiter,
+                    )
+                except Exception as exc:
+                    if not failure_reported[owner_index]:
+                        failure_reported[owner_index] = True
+                        self._write_progress_failure(
+                            progress,
+                            position=int(progress.n) + 1,
+                            total=total,
+                            case=case_list[owner_index],
+                            index=owner_index,
+                            duration=(
+                                time.perf_counter() - case_started[owner_index]
+                            ),
+                            exc=exc,
+                        )
+                    raise
+
+                stored_pairs[flat_index] = pair
+                remaining[owner_index] -= 1
+                if remaining[owner_index] == 0:
+                    scope, planned_cases = plans[owner_index]
+                    start = case_offsets[owner_index]
+                    scoped_results: list[EvaluationResults] = []
+                    for scoped_index in range(start, start + len(planned_cases)):
+                        stored_pair = stored_pairs[scoped_index]
+                        assert stored_pair is not None
+                        scoped_results.append(stored_pair[0])
+                    shaped = self._shape_scope_results(scope, scoped_results)
+                    progress.update(1)
+                    self._write_progress_success(
+                        progress,
+                        completed=int(progress.n),
+                        total=total,
+                        case=case_list[owner_index],
+                        index=owner_index,
+                        duration=time.perf_counter() - case_started[owner_index],
+                        results=shaped,
+                        selected=selected,
+                    )
+
+            try:
+                await asyncio.gather(
+                    *(
+                        run_with_progress(flat_index, owner_index, case)
+                        for flat_index, (owner_index, case) in enumerate(
+                            zip(owner_indices, flat_cases)
+                        )
+                    )
+                )
+            finally:
+                progress.close()
+
+            pairs = []
+            for stored_pair in stored_pairs:
+                assert stored_pair is not None
+                pairs.append(stored_pair)
 
         # Ordered, serial persistence (writers are not concurrency-safe).
         flat_results: list[EvaluationResults] = []
@@ -645,6 +925,12 @@ class EvaluationFramework:
                 )
             )
             offset += count
+        if show_progress:
+            tqdm.write(
+                f"Evaluation complete: {len(case_list)}/{len(case_list)} cases "
+                f"in {self._progress_elapsed(time.perf_counter() - batch_started)}",
+                file=output_file,
+            )
         return results_list
 
     async def _a_run_case(

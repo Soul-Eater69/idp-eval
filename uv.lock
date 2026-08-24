@@ -674,6 +674,7 @@ dependencies = [
     { name = "azure-identity" },
     { name = "httpx" },
     { name = "openai" },
+    { name = "tqdm" },
 ]
 
 [package.optional-dependencies]
@@ -718,6 +719,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
     { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6" },
     { name = "pyyaml", marker = "extra == 'yaml'", specifier = ">=6" },
+    { name = "tqdm", specifier = ">=4.66" },
 ]
 provides-extras = ["yaml", "excel", "tracing", "phoenix", "dev"]
 

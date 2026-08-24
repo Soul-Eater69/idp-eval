@@ -261,6 +261,19 @@ Grouped evaluation simply fans each output into an ordinary independent case.
 Async evaluation preserves order, and the framework enforces the shared
 `max_concurrency` limit across judge calls.
 
+Set `show_progress=True` for a terminal- and notebook-friendly progress bar with
+one completion update per original case:
+
+```python
+results = framework.evaluate_many(
+    cases,
+    metrics=["faithfulness", "coverage"],
+    run_name="faithfulness_coverage_evaluation",
+    dataset_name="golden_set_augmented_tagged.csv",
+    show_progress=True,
+)
+```
+
 For the common case where one generation contains multiple output objects, set
 `evaluation_scope` directly on the case:
 

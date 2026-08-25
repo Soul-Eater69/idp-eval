@@ -339,6 +339,8 @@ results = framework.evaluate_many(
     run_name="generation_eval_v1",
     dataset_name="dataset.parquet",
     on_error="continue",
+    retry_until_complete=True,
+    retry_interval_seconds=180,
     show_progress=True,
 )
 ```
@@ -348,8 +350,11 @@ failures into `score=None`, `label="error"` metric results; validation,
 programming, schema, and persistence errors still raise. Successful rows,
 including `not_applicable`, are checkpointed immediately. Running the exact
 same command again reuses successful metric results and reruns only missing or
-error metrics. No extra framework retry or sleep is added—the configured SDK
-and Phoenix retry behavior remains authoritative.
+error metrics. Automatic retry is off by default. When enabled, it requires
+`on_error="continue"`, `resume=True`, and Excel output; it waits only between
+completed bulk rounds and reruns only operationally failed metrics while
+checkpointed successes are skipped. It continues until completion or user/process
+interruption. Provider SDK retries remain a separate layer.
 
 The async form has the same semantics and persists each completed case through
 a serialized writer while other cases continue:

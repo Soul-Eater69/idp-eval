@@ -9,8 +9,10 @@ output(s). Evaluation is never re-run for a second destination.
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from dataclasses import dataclass
+from numbers import Real
 from typing import Iterable, TypeAlias
 
 from tqdm.auto import tqdm
@@ -225,6 +227,80 @@ class EvaluationFramework:
             raise ValueError(
                 f"Unknown on_error {on_error!r}; expected 'raise' or 'continue'."
             )
+
+    def _validate_retry_options(
+        self,
+        *,
+        retry_until_complete: bool,
+        retry_interval_seconds: float,
+        on_error: str,
+    ) -> float:
+        """Validates bulk retry configuration before any judge work."""
+        if not isinstance(retry_until_complete, bool):
+            raise ValueError(
+                "retry_until_complete must be a bool, got "
+                f"{retry_until_complete!r}."
+            )
+        if (
+            isinstance(retry_interval_seconds, bool)
+            or not isinstance(retry_interval_seconds, Real)
+            or not math.isfinite(retry_interval_seconds)
+            or retry_interval_seconds <= 0
+        ):
+            raise ValueError(
+                "retry_interval_seconds must be a positive real number, got "
+                f"{retry_interval_seconds!r}."
+            )
+        if retry_until_complete and on_error != "continue":
+            raise ValueError(
+                "retry_until_complete=True requires on_error='continue'."
+            )
+        if retry_until_complete and (
+            not self._resume or self._checkpoint is None
+        ):
+            raise ValueError(
+                "retry_until_complete=True requires resume=True with Excel "
+                "checkpointing (output='excel' or output='both' and an "
+                "excel_path)."
+            )
+        return float(retry_interval_seconds)
+
+    @staticmethod
+    def _result_leaves(results) -> Iterable[EvaluationResult]:
+        """Yields metric results from normal and output-scoped return shapes."""
+        if isinstance(results, EvaluationResult):
+            yield results
+        elif isinstance(results, dict):
+            for value in results.values():
+                yield from EvaluationFramework._result_leaves(value)
+        elif isinstance(results, list):
+            for value in results:
+                yield from EvaluationFramework._result_leaves(value)
+
+    @classmethod
+    def _retry_round_counts(
+        cls, results: list[EvaluationReturn]
+    ) -> tuple[int, int]:
+        """Returns successful and retryable-operational metric counts."""
+        succeeded = 0
+        retryable_errors = 0
+        for result in cls._result_leaves(results):
+            details = result.details if isinstance(result.details, dict) else {}
+            is_retryable_error = (
+                result.label == "error"
+                and details.get("status") == "error"
+                and details.get("retryable") is True
+            )
+            if is_retryable_error:
+                retryable_errors += 1
+            elif result.label != "error":
+                succeeded += 1
+        return succeeded, retryable_errors
+
+    @staticmethod
+    def _write_retry_progress(message: str) -> None:
+        """Writes one retry-round line through tqdm's output-safe channel."""
+        tqdm.write(message)
 
     def _retrieval_metrics(self, selected: list[str]) -> list[str]:
         """Selected metric names that share the per-case document-relevance pass."""
@@ -755,6 +831,8 @@ class EvaluationFramework:
         dataset_name: str | None = None,
         show_progress: bool = False,
         on_error: str = "raise",
+        retry_until_complete: bool = False,
+        retry_interval_seconds: float = 180.0,
     ) -> list[EvaluationReturn]:
         """Evaluates many cases independently, honoring each output scope.
 
@@ -774,12 +852,76 @@ class EvaluationFramework:
         Args:
             show_progress: When true, display one tqdm progress update and a
                 compact metric summary per original input case.
+            retry_until_complete: Re-run checkpoint-incomplete operational
+                failures in bulk rounds until all complete. Requires
+                ``on_error='continue'`` and resumable Excel checkpointing.
+            retry_interval_seconds: Positive delay between retry rounds.
 
         Raises:
             KeyError: If a requested metric was not configured.
             ValueError: If any case is missing a required field for a selected
                 evaluator; the message names the offending ``case_id`` (or index).
         """
+        case_list = list(cases)
+        self._validate_on_error(on_error)
+        retry_interval = self._validate_retry_options(
+            retry_until_complete=retry_until_complete,
+            retry_interval_seconds=retry_interval_seconds,
+            on_error=on_error,
+        )
+
+        if not retry_until_complete:
+            return self._evaluate_many_once(
+                case_list,
+                metrics=metrics,
+                run_name=run_name,
+                dataset_name=dataset_name,
+                show_progress=show_progress,
+                on_error=on_error,
+            )
+
+        round_number = 1
+        while True:
+            results = self._evaluate_many_once(
+                case_list,
+                metrics=metrics,
+                run_name=run_name,
+                dataset_name=dataset_name,
+                show_progress=show_progress,
+                on_error=on_error,
+            )
+            succeeded, retryable_errors = self._retry_round_counts(results)
+            if show_progress:
+                self._write_retry_progress(
+                    f"Evaluation round {round_number} complete: "
+                    f"{succeeded} succeeded, "
+                    f"{retryable_errors} operational errors"
+                )
+            if retryable_errors == 0:
+                if show_progress:
+                    self._write_retry_progress(
+                        f"Evaluation retry complete: {succeeded}/{succeeded} "
+                        "metrics succeeded"
+                    )
+                return results
+            if show_progress:
+                self._write_retry_progress(
+                    f"Retrying {retryable_errors} failed metrics in "
+                    f"{retry_interval:g} seconds..."
+                )
+            time.sleep(retry_interval)
+            round_number += 1
+
+    def _evaluate_many_once(
+        self,
+        cases: "Iterable[EvaluationCase]",
+        metrics: list[str] | None = None,
+        run_name: str | None = None,
+        dataset_name: str | None = None,
+        show_progress: bool = False,
+        on_error: str = "raise",
+    ) -> list[EvaluationReturn]:
+        """Runs one existing many-case evaluation/checkpoint round."""
         case_list = list(cases)
         self._validate_on_error(on_error)
         selected = self._select(metrics)
@@ -876,6 +1018,8 @@ class EvaluationFramework:
         run_name: str | None = None,
         dataset_name: str | None = None,
         on_error: str = "raise",
+        retry_until_complete: bool = False,
+        retry_interval_seconds: float = 180.0,
     ) -> list[dict[str, EvaluationResult]]:
         """Convenience orchestration: fan grouped outputs into single cases.
 
@@ -903,6 +1047,8 @@ class EvaluationFramework:
             run_name=run_name,
             dataset_name=dataset_name,
             on_error=on_error,
+            retry_until_complete=retry_until_complete,
+            retry_interval_seconds=retry_interval_seconds,
         )
 
     async def a_evaluate_groups(
@@ -913,6 +1059,8 @@ class EvaluationFramework:
         dataset_name: str | None = None,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
         on_error: str = "raise",
+        retry_until_complete: bool = False,
+        retry_interval_seconds: float = 180.0,
     ) -> list[dict[str, EvaluationResult]]:
         """Fans grouped outputs into cases, then evaluates them concurrently.
 
@@ -930,6 +1078,8 @@ class EvaluationFramework:
             dataset_name=dataset_name,
             max_concurrency=max_concurrency,
             on_error=on_error,
+            retry_until_complete=retry_until_complete,
+            retry_interval_seconds=retry_interval_seconds,
         )
 
     @staticmethod
@@ -1034,6 +1184,8 @@ class EvaluationFramework:
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
         show_progress: bool = False,
         on_error: str = "raise",
+        retry_until_complete: bool = False,
+        retry_interval_seconds: float = 180.0,
     ) -> list[EvaluationReturn]:
         """Async counterpart of :meth:`evaluate_many`: cases run concurrently.
 
@@ -1049,6 +1201,70 @@ class EvaluationFramework:
         same time. When ``show_progress`` is true, progress advances as original
         input cases finish while return ordering remains unchanged.
         """
+        self._validate_max_concurrency(max_concurrency)
+        self._validate_on_error(on_error)
+        case_list = list(cases)
+        retry_interval = self._validate_retry_options(
+            retry_until_complete=retry_until_complete,
+            retry_interval_seconds=retry_interval_seconds,
+            on_error=on_error,
+        )
+
+        if not retry_until_complete:
+            return await self._a_evaluate_many_once(
+                case_list,
+                metrics=metrics,
+                run_name=run_name,
+                dataset_name=dataset_name,
+                max_concurrency=max_concurrency,
+                show_progress=show_progress,
+                on_error=on_error,
+            )
+
+        round_number = 1
+        while True:
+            results = await self._a_evaluate_many_once(
+                case_list,
+                metrics=metrics,
+                run_name=run_name,
+                dataset_name=dataset_name,
+                max_concurrency=max_concurrency,
+                show_progress=show_progress,
+                on_error=on_error,
+            )
+            succeeded, retryable_errors = self._retry_round_counts(results)
+            if show_progress:
+                self._write_retry_progress(
+                    f"Evaluation round {round_number} complete: "
+                    f"{succeeded} succeeded, "
+                    f"{retryable_errors} operational errors"
+                )
+            if retryable_errors == 0:
+                if show_progress:
+                    self._write_retry_progress(
+                        f"Evaluation retry complete: {succeeded}/{succeeded} "
+                        "metrics succeeded"
+                    )
+                return results
+            if show_progress:
+                self._write_retry_progress(
+                    f"Retrying {retryable_errors} failed metrics in "
+                    f"{retry_interval:g} seconds..."
+                )
+            await asyncio.sleep(retry_interval)
+            round_number += 1
+
+    async def _a_evaluate_many_once(
+        self,
+        cases: "Iterable[EvaluationCase]",
+        metrics: list[str] | None = None,
+        run_name: str | None = None,
+        dataset_name: str | None = None,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+        show_progress: bool = False,
+        on_error: str = "raise",
+    ) -> list[EvaluationReturn]:
+        """Runs one existing async many-case evaluation/checkpoint round."""
         self._validate_max_concurrency(max_concurrency)
         self._validate_on_error(on_error)
         case_list = list(cases)

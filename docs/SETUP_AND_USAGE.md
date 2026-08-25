@@ -670,6 +670,8 @@ results = framework.evaluate_many(
     run_name="generation_eval_v1",
     dataset_name="dataset.parquet",
     on_error="continue",
+    retry_until_complete=True,
+    retry_interval_seconds=180,
     show_progress=True,
 )
 
@@ -688,7 +690,11 @@ The default `on_error="raise"` remains fail-fast. With `"continue"`, only
 recognized exhausted rate-limit, provider 5xx, timeout, and connection failures
 become `score=None`, `label="error"` results. Validation, malformed judge
 schemas, implementation bugs, and persistence failures still raise. The
-framework adds no retry or cooldown layer.
+provider retry layer remains unchanged. Framework-level retry rounds are off by
+default; `retry_until_complete=True` requires `on_error="continue"`,
+`resume=True`, and Excel output. The framework waits
+`retry_interval_seconds` only between completed rounds, skips checkpointed
+successes, and reruns operational failures until completion or interruption.
 
 Successful metric rows (including `not_applicable`) are saved incrementally.
 Rerunning with the same Excel path and exact run, dataset, case content, metric,

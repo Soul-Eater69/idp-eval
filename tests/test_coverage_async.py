@@ -37,8 +37,14 @@ class ProbeJudge:
                         "source_item": "Important source item.",
                         "meaningfully_present": covered,
                         "fully_present": covered,
+                        "reason": "" if covered else "The item is absent.",
                     }
-                ]
+                ],
+                "overall_reason": (
+                    "The important source item is represented."
+                    if covered
+                    else "The important source item is absent."
+                ),
             }
         finally:
             with self._lock:
@@ -68,8 +74,10 @@ class AsyncProbeJudge:
                         "source_item": "Important source item.",
                         "meaningfully_present": True,
                         "fully_present": True,
+                        "reason": "",
                     }
-                ]
+                ],
+                "overall_reason": "The important source item is represented.",
             }
         finally:
             self.current -= 1

@@ -9,8 +9,9 @@ import pytest
 
 from idp_eval import EvaluationCase, EvaluationFramework, FaithfulnessEvaluator
 from idp_eval.prompts.faithfulness import (
-    FAITHFULNESS_SCHEMA_COMPACT,
-    FAITHFULNESS_SCHEMA_VERBOSE,
+    FAITHFULNESS_SCHEMA_NONE,
+    FAITHFULNESS_SCHEMA_OVERALL,
+    FAITHFULNESS_SCHEMA_PER_ITEM,
     render_faithfulness_prompt,
 )
 
@@ -35,31 +36,65 @@ def _claim(claim="A factual claim.", status="supported", reason=None):
     return value
 
 
+def _response(
+    claims, *, reason_mode="overall", overall_reason="Semantic summary."
+):
+    prepared = []
+    for claim in claims:
+        claim = dict(claim)
+        if reason_mode == "overall":
+            claim.setdefault(
+                "reason",
+                "Unsupported by context."
+                if claim["status"] == "unsupported"
+                else "",
+            )
+        elif reason_mode == "per_item":
+            claim.setdefault("reason", "Concise claim reason.")
+        prepared.append(claim)
+    response = {"claims": prepared}
+    if reason_mode != "none":
+        response["overall_reason"] = overall_reason
+    return response
+
+
 def test_public_constructor_uses_common_optional_item_limit():
     assert tuple(inspect.signature(FaithfulnessEvaluator).parameters) == (
         "llm",
         "verbose",
         "max_items",
+        "reason_mode",
     )
 
 
+def test_reason_mode_default_and_validation_before_judge_work():
+    assert FaithfulnessEvaluator()._reason_mode == "overall"
+    for mode in ("overall", "per_item", "none"):
+        assert FaithfulnessEvaluator(reason_mode=mode)._reason_mode == mode
+    judge = Judge({"claims": []})
+    with pytest.raises(ValueError, match="reason_mode"):
+        FaithfulnessEvaluator(judge, reason_mode="invalid")
+    assert judge.calls == []
+
+
 def test_one_sync_call_and_supported_scoring():
-    judge = Judge({"claims": [_claim()]})
+    judge = Judge(_response([_claim()]))
     result = FaithfulnessEvaluator(judge).evaluate(CASE)
     assert len(judge.calls) == 1
     assert result.score == 1.0 and result.label == "not_hallucinated"
     assert result.details["judge_call_count"] == 1
     assert result.details["claim_count"] == 1
     assert "claims" not in result.details
+    assert result.explanation == "Semantic summary."
 
 
 @pytest.mark.parametrize("max_items", [None, 1, 5])
 def test_claim_limit_prompt_details_and_fewer_than_limit(max_items):
-    judge = Judge({"claims": [_claim()]})
+    judge = Judge(_response([_claim()]))
     result = FaithfulnessEvaluator(judge, max_items=max_items).evaluate(CASE)
     system = judge.calls[0]["prompt"][0]["content"]
     if max_items is None:
-        assert "identify all materially distinct, checkable claims" in system
+        assert "all materially distinct, reasonably atomic" in system
         assert "maxItems" not in judge.calls[0]["schema"]["properties"]["claims"]
     else:
         assert f"select at most {max_items}" in system
@@ -69,10 +104,7 @@ def test_claim_limit_prompt_details_and_fewer_than_limit(max_items):
         assert "CONTEXT is for support judgment, not claim selection" in system
         assert "return only those that actually exist" in system
         assert "Do not invent, duplicate, or artificially split claims" in system
-        assert (
-            judge.calls[0]["schema"]["properties"]["claims"]["maxItems"]
-            == max_items
-        )
+        assert "maxItems" not in judge.calls[0]["schema"]["properties"]["claims"]
     assert len(judge.calls) == 1
     assert result.details["max_items"] == max_items
     assert result.details["evaluated_claims"] == 1
@@ -87,22 +119,40 @@ def test_invalid_claim_limit_fails_before_judge_work(bad):
 
 
 def test_claim_limit_rejects_over_limit_judge_response_without_truncating():
-    judge = Judge({"claims": [_claim("A"), _claim("B")]})
+    judge = Judge(_response([_claim("A"), _claim("B")]))
     with pytest.raises(ValueError, match="exceeds configured max_items=1"):
         FaithfulnessEvaluator(judge, max_items=1).evaluate(CASE)
 
 
+def test_unlimited_mode_scores_all_100_returned_claims():
+    claims = [_claim(f"Claim {index}.") for index in range(100)]
+    judge = Judge(_response(claims))
+    result = FaithfulnessEvaluator(judge).evaluate(CASE)
+    assert result.score == 1.0
+    assert result.details["evaluated_claims"] == 100
+    assert len(judge.calls) == 1
+
+
 def test_verbose_mixed_score_ids_audit_and_explanation():
     judge = Judge(
-        {"claims": [
-            _claim("Cancellation is allowed.", "supported", ""),
-            _claim("Refunds are instant.", "unsupported", "Context says five days."),
-        ]}
+        _response(
+            [
+                _claim("Cancellation is allowed.", "supported", ""),
+                _claim(
+                    "Refunds are instant.",
+                    "unsupported",
+                    "Context says five days.",
+                ),
+            ],
+            overall_reason=(
+                "The instant-refund claim conflicts with the five-day policy."
+            ),
+        )
     )
     result = FaithfulnessEvaluator(judge, verbose=True).evaluate(CASE)
     assert result.score == 0.5 and result.label == "hallucinated"
     assert result.explanation == (
-        "1 of 2 evaluated factual claims were supported; 1 was unsupported."
+        "The instant-refund claim conflicts with the five-day policy."
     )
     assert [item["id"] for item in result.details["claims"]] == ["F1", "F2"]
     assert [item["item_score"] for item in result.details["claims"]] == [1.0, 0.0]
@@ -110,18 +160,23 @@ def test_verbose_mixed_score_ids_audit_and_explanation():
 
 def test_all_unsupported_scores_zero():
     result = FaithfulnessEvaluator(
-        Judge({"claims": [_claim(status="unsupported")]}),
+        Judge(_response([_claim(status="unsupported")])),
     ).evaluate(CASE)
     assert result.score == 0.0 and result.label == "hallucinated"
 
 
 @pytest.mark.parametrize("verbose", [False, True])
 def test_no_claims_is_not_applicable_after_one_call(verbose):
-    judge = Judge({"claims": []})
+    judge = Judge(
+        _response(
+            [],
+            overall_reason="No checkable factual claims were identified.",
+        )
+    )
     result = FaithfulnessEvaluator(judge, verbose=verbose).evaluate(CASE)
     assert result.score is None and result.label == "not_applicable"
     assert result.explanation == (
-        "No checkable factual claims were identified in the output."
+        "No checkable factual claims were identified."
     )
     assert result.details["judge_call_count"] == 1
     assert result.details["claim_count"] == 0
@@ -129,15 +184,92 @@ def test_no_claims_is_not_applicable_after_one_call(verbose):
 
 
 def test_exact_normalized_dedup_keeps_first_and_stable_ids():
-    judge = Judge({"claims": [
-        _claim(" Refunds   take five days. ", "supported", ""),
-        _claim("REFUNDS TAKE FIVE DAYS.", "unsupported", "duplicate"),
-        _claim("Cancellation takes 24 hours.", "supported", ""),
-    ]})
+    judge = Judge(
+        _response(
+            [
+                _claim(" Refunds   take five days. ", "supported", ""),
+                _claim("REFUNDS TAKE FIVE DAYS.", "unsupported", "duplicate"),
+                _claim("Cancellation takes 24 hours.", "supported", ""),
+            ]
+        )
+    )
     result = FaithfulnessEvaluator(judge, verbose=True).evaluate(CASE)
     assert result.details["claim_count"] == 2
     assert [c["id"] for c in result.details["claims"]] == ["F1", "F2"]
     assert result.details["claims"][0]["status"] == "supported"
+
+
+def test_reason_modes_control_contract_explanation_and_one_call():
+    overall_judge = Judge(
+        _response(
+            [_claim("Refunds are instant.", "unsupported")],
+            overall_reason="The instant-refund claim conflicts with context.",
+        )
+    )
+    overall = FaithfulnessEvaluator(overall_judge, verbose=True).evaluate(CASE)
+    assert overall.explanation == "The instant-refund claim conflicts with context."
+    assert overall.details["claims"][0]["reason"]
+    assert len(overall_judge.calls) == 1
+
+    per_item_judge = Judge(
+        _response(
+            [_claim("Refunds take five days.", "supported", "Context states it.")],
+            reason_mode="per_item",
+            overall_reason="The refund statement is grounded in context.",
+        )
+    )
+    per_item = FaithfulnessEvaluator(
+        per_item_judge, verbose=True, reason_mode="per_item"
+    ).evaluate(CASE)
+    assert per_item.details["claims"][0]["reason"] == "Context states it."
+    assert per_item.explanation == "The refund statement is grounded in context."
+    assert len(per_item_judge.calls) == 1
+
+    none_judge = Judge(_response([_claim()], reason_mode="none"))
+    none = FaithfulnessEvaluator(
+        none_judge, verbose=True, reason_mode="none"
+    ).evaluate(CASE)
+    assert none.explanation is None
+    assert "reason" not in none.details["claims"][0]
+    assert len(none_judge.calls) == 1
+
+
+def test_overall_mode_does_not_require_reason_for_supported_claim():
+    judge = Judge(
+        {
+            "claims": [_claim("Refunds take five days.", "supported")],
+            "overall_reason": "The refund timing is grounded in context.",
+        }
+    )
+    result = FaithfulnessEvaluator(judge, verbose=True).evaluate(CASE)
+    assert result.details["claims"][0]["reason"] == ""
+    assert len(judge.calls) == 1
+
+
+def test_reason_requirements_are_mode_specific():
+    with pytest.raises(ValueError, match="unsupported claims"):
+        FaithfulnessEvaluator(
+            Judge(
+                {
+                    "claims": [_claim(status="unsupported", reason="")],
+                    "overall_reason": "Unsupported refund timing.",
+                }
+            )
+        ).evaluate(CASE)
+    with pytest.raises(ValueError, match="every claim"):
+        FaithfulnessEvaluator(
+            Judge(
+                {
+                    "claims": [_claim(reason="")],
+                    "overall_reason": "Refund timing is supported.",
+                }
+            ),
+            reason_mode="per_item",
+        ).evaluate(CASE)
+    with pytest.raises(ValueError, match="overall_reason"):
+        FaithfulnessEvaluator(Judge({"claims": [_claim(reason="")]})).evaluate(
+            CASE
+        )
 
 
 @pytest.mark.parametrize("missing", ["context", "output"])
@@ -151,7 +283,7 @@ def test_required_fields_fail_before_judge(missing):
 
 
 def test_only_rendered_context_and_output_reach_prompt():
-    judge = Judge({"claims": [_claim()]})
+    judge = Judge(_response([_claim()]))
     case = EvaluationCase(
         input="IGNORE-INPUT", instructions="IGNORE-INSTRUCTIONS",
         context={"policy": ["Refund in five days"]},
@@ -175,33 +307,55 @@ def test_only_rendered_context_and_output_reach_prompt():
 
 
 @pytest.mark.parametrize(
-    "response,verbose,match",
+    "response,reason_mode,match",
     [
-        ([], False, "expected an object"),
-        ({}, False, "expected only"),
-        ({"claims": [], "extra": 1}, False, "expected only"),
-        ({"claims": "bad"}, False, "must be a list"),
-        ({"claims": ["bad"]}, False, "expected an object"),
-        ({"claims": [{"claim": "x"}]}, False, "expected exactly"),
-        ({"claims": [_claim(reason="extra")]}, False, "expected exactly"),
-        ({"claims": [_claim(" ")]}, False, "non-empty string"),
-        ({"claims": [_claim(status="partial")]}, False, "Unknown faithfulness"),
-        ({"claims": [_claim(reason=3)]}, True, "must be a string"),
-        ({"claims": [_claim(status="unsupported", reason=" ")]}, True, "non-empty"),
+        ([], "overall", "expected an object"),
+        ({}, "overall", "expected exactly"),
+        ({"claims": [], "extra": 1}, "none", "expected exactly"),
+        ({"claims": "bad"}, "none", "must be a list"),
+        ({"claims": ["bad"]}, "none", "expected an object"),
+        ({"claims": [{"claim": "x"}]}, "none", "unexpected or missing"),
+        ({"claims": [_claim(reason="extra")]}, "none", "unexpected or missing"),
+        ({"claims": [_claim(" ")]}, "none", "non-empty string"),
+        ({"claims": [_claim(status="partial")]}, "none", "Unknown faithfulness"),
+        (
+            {
+                "claims": [_claim(reason=3)],
+                "overall_reason": "Summary.",
+            },
+            "overall",
+            "must be a string",
+        ),
+        (
+            {
+                "claims": [_claim(status="unsupported", reason=" ")],
+                "overall_reason": "Summary.",
+            },
+            "overall",
+            "non-empty",
+        ),
     ],
 )
-def test_strict_response_validation(response, verbose, match):
+def test_strict_response_validation(response, reason_mode, match):
     with pytest.raises(ValueError, match=match):
-        FaithfulnessEvaluator(Judge(response), verbose=verbose).evaluate(CASE)
+        FaithfulnessEvaluator(
+            Judge(response), reason_mode=reason_mode
+        ).evaluate(CASE)
 
 
-def test_compact_and_verbose_schemas_are_strict():
+def test_reason_mode_schemas_are_strict_and_have_no_max_items():
     for schema, keys in (
-        (FAITHFULNESS_SCHEMA_COMPACT, {"claim", "status"}),
-        (FAITHFULNESS_SCHEMA_VERBOSE, {"claim", "status", "reason"}),
+        (FAITHFULNESS_SCHEMA_NONE, {"claim", "status"}),
+        (FAITHFULNESS_SCHEMA_OVERALL, {"claim", "status", "reason"}),
+        (FAITHFULNESS_SCHEMA_PER_ITEM, {"claim", "status", "reason"}),
     ):
         assert schema["additionalProperties"] is False
-        assert schema["required"] == ["claims"]
+        assert schema["required"] == (
+            ["claims"]
+            if schema is FAITHFULNESS_SCHEMA_NONE
+            else ["claims", "overall_reason"]
+        )
+        assert "maxItems" not in schema["properties"]["claims"]
         item = schema["properties"]["claims"]["items"]
         assert item["additionalProperties"] is False
         assert set(item["required"]) == keys
@@ -210,12 +364,43 @@ def test_compact_and_verbose_schemas_are_strict():
 
 def test_prompt_contract_excludes_scores_and_distinguishes_coverage():
     system = render_faithfulness_prompt(
-        context="c", output="o", verbose=False
+        context="c", output="o"
     )[0]["content"]
+    normalized_system = " ".join(system.split())
     assert "OUTPUT -> CONTEXT" in system
     assert '"supported" or "unsupported"' in system
     assert "not a faithfulness failure; omissions belong to Coverage" in system
     assert "Do not return IDs, item scores, aggregate scores" in system
+    assert "all materially distinct, reasonably atomic" in system
+    assert "The item limit controls how many units are selected" in normalized_system
+
+
+def test_reason_prompts_are_semantic_and_mode_specific():
+    overall = render_faithfulness_prompt(
+        context="c", output="o", reason_mode="overall"
+    )[0]["content"]
+    per_item = render_faithfulness_prompt(
+        context="c", output="o", reason_mode="per_item"
+    )[0]["content"]
+    none = render_faithfulness_prompt(
+        context="c", output="o", reason_mode="none"
+    )[0]["content"]
+    assert "up to three representative unsupported claims" in overall
+    assert "Do not include a metric score, percentage, claim counts" in overall
+    assert "non-empty reason for every claim" in per_item
+    assert "Do not return per-item reasons" in none
+
+
+def test_faithfulness_schemas_never_include_scores_labels_or_max_items():
+    for schema in (
+        FAITHFULNESS_SCHEMA_OVERALL,
+        FAITHFULNESS_SCHEMA_PER_ITEM,
+        FAITHFULNESS_SCHEMA_NONE,
+    ):
+        serialized = repr(schema)
+        assert "score" not in serialized
+        assert "label" not in serialized
+        assert "maxItems" not in serialized
 
 
 class AsyncJudge:
@@ -225,7 +410,7 @@ class AsyncJudge:
 
     async def async_generate_object(self, prompt, schema):
         self.async_calls += 1
-        return {"claims": [_claim()]}
+        return _response([_claim()])
 
     def generate_object(self, prompt, schema):
         self.sync_calls += 1
@@ -244,7 +429,7 @@ def test_native_async_path_calls_once():
 
 
 def test_framework_async_thread_fallback_calls_once():
-    judge = Judge({"claims": [_claim()]})
+    judge = Judge(_response([_claim()]))
     result = asyncio.run(
         EvaluationFramework([FaithfulnessEvaluator(judge)]).a_evaluate(
             CASE, max_concurrency=1
@@ -271,7 +456,7 @@ class BlockingJudge:
 
 
 def test_async_many_respects_shared_semaphore_and_order():
-    judge = BlockingJudge([{"claims": [_claim(str(i))]} for i in range(4)])
+    judge = BlockingJudge([_response([_claim(str(i))]) for i in range(4)])
     framework = EvaluationFramework([FaithfulnessEvaluator(judge)])
     results = asyncio.run(
         framework.a_evaluate_many([CASE] * 4, max_concurrency=2)
@@ -280,7 +465,7 @@ def test_async_many_respects_shared_semaphore_and_order():
 
 
 def test_evaluate_many_and_groups_keep_each_output_one_case():
-    judge = Judge(*[{"claims": [_claim(str(i))]} for i in range(4)])
+    judge = Judge(*[_response([_claim(str(i))]) for i in range(4)])
     framework = EvaluationFramework([FaithfulnessEvaluator(judge)])
     assert len(framework.evaluate_many([CASE, CASE])) == 2
     grouped = framework.evaluate_groups([
@@ -300,6 +485,6 @@ def test_evaluate_many_and_groups_keep_each_output_one_case():
 )
 def test_semantic_outcomes_are_reflected_without_extra_scoring(description, status):
     result = FaithfulnessEvaluator(
-        Judge({"claims": [_claim(description, status)]})
+            Judge(_response([_claim(description, status)]))
     ).evaluate(CASE)
     assert result.score == (1.0 if status == "supported" else 0.0)

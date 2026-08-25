@@ -48,8 +48,10 @@ class ReusableSourceJudge:
                     "source_item": "item",
                     "meaningfully_present": True,
                     "fully_present": True,
+                    "reason": "",
                 }
-            ]
+            ],
+            "overall_reason": "The source item is fully represented.",
         }
 
 

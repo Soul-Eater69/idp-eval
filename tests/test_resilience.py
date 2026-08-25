@@ -133,7 +133,8 @@ def _covered_response(source_item):
                 "fully_present": True,
                 "reason": "",
             }
-        ]
+        ],
+        "overall_reason": "The source item is represented.",
     }
 
 
@@ -141,7 +142,8 @@ def _supported_response(claim):
     return {
         "claims": [
             {"claim": claim, "status": "supported", "reason": ""}
-        ]
+        ],
+        "overall_reason": "The claim is grounded in context.",
     }
 
 
@@ -273,7 +275,7 @@ def test_continue_runs_unrelated_metric_after_operational_failure():
             OrderedEvaluator("metric_a"),
             OrderedEvaluator("metric_b", TimeoutError("throttled")),
             OrderedEvaluator("metric_c"),
-        ]
+        ],
     )
     results = framework.evaluate(
         EvaluationCase(case_id="one"), on_error="continue"
@@ -887,7 +889,8 @@ def test_resume_verbose_detail_rows_are_replaced_not_duplicated(tmp_path):
                 "fully_present": False,
                 "reason": "absent",
             },
-        ]
+        ],
+        "overall_reason": "The second source item is absent.",
     }
     successful = Judge(response)
     EvaluationFramework(
@@ -962,8 +965,10 @@ def test_builtin_resume_fingerprint_changes_with_judge_model(tmp_path):
                         "source_item": "fact",
                         "meaningfully_present": True,
                         "fully_present": True,
+                        "reason": "",
                     }
-                ]
+                ],
+                "overall_reason": "The fact is represented.",
             }
 
     path = tmp_path / "model.xlsx"
@@ -1304,14 +1309,21 @@ def test_builtin_evaluation_fingerprint_tracks_retrieval_configuration():
                         "source_item": "fact",
                         "meaningfully_present": True,
                         "fully_present": True,
+                        "reason": "",
                     }
-                ]
+                ],
+                "overall_reason": "The fact is represented.",
             },
         ),
         (
             FaithfulnessEvaluator,
             "max_items",
-            {"claims": [{"claim": "fact", "status": "supported"}]},
+            {
+                "claims": [
+                    {"claim": "fact", "status": "supported", "reason": ""}
+                ],
+                "overall_reason": "The fact is grounded in context.",
+            },
         ),
     ],
 )
@@ -1356,6 +1368,60 @@ def test_extraction_limits_change_resume_identity_and_exact_limit_resumes(
         resume=True,
     ).evaluate(case)
     assert len(unlimited_judge.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "evaluator_type,response",
+    [
+        (CoverageEvaluator, _covered_response("fact")),
+        (FaithfulnessEvaluator, _supported_response("fact")),
+    ],
+)
+def test_reason_mode_changes_resume_identity_and_exact_mode_resumes(
+    tmp_path, evaluator_type, response
+):
+    path = tmp_path / f"{evaluator_type.name}-reason-mode.xlsx"
+    case = EvaluationCase(case_id="same", context="fact", output="fact")
+
+    first = QueuedJudge(response)
+    EvaluationFramework(
+        [evaluator_type(first, reason_mode="overall")],
+        output="excel",
+        excel_path=str(path),
+        resume=True,
+    ).evaluate(case)
+    assert len(first.calls) == 1
+
+    same = QueuedJudge(response)
+    EvaluationFramework(
+        [evaluator_type(same, reason_mode="overall")],
+        output="excel",
+        excel_path=str(path),
+        resume=True,
+    ).evaluate(case)
+    assert same.calls == []
+
+    none_response = (
+        {
+            "items": [
+                {
+                    "source_item": "fact",
+                    "meaningfully_present": True,
+                    "fully_present": True,
+                }
+            ]
+        }
+        if evaluator_type is CoverageEvaluator
+        else {"claims": [{"claim": "fact", "status": "supported"}]}
+    )
+    changed = QueuedJudge(none_response)
+    EvaluationFramework(
+        [evaluator_type(changed, reason_mode="none")],
+        output="excel",
+        excel_path=str(path),
+        resume=True,
+    ).evaluate(case)
+    assert len(changed.calls) == 1
 
 
 def test_report_fields_do_not_participate_in_evaluation_fingerprint():

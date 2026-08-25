@@ -53,10 +53,16 @@ def _coverage_judge(*, reasons=True):
             "fully_present": False,
         },
     ]
-    if reasons:
-        items[0]["reason"] = "Qualifier missing."
-        items[1]["reason"] = "SSO absent."
-    return Judge({"items": items})
+    # Default overall mode requires internal failure diagnostics even when the
+    # test exercises compact (non-verbose) result details.
+    items[0]["reason"] = "Qualifier missing."
+    items[1]["reason"] = "SSO absent."
+    return Judge(
+        {
+            "items": items,
+            "overall_reason": "The identity-provider qualifier and SSO are absent.",
+        }
+    )
 
 
 def _instruction_judge():
@@ -87,7 +93,8 @@ def _faithfulness_judge():
                     "status": "unsupported",
                     "reason": "Context says five days.",
                 },
-            ]
+            ],
+            "overall_reason": "The instant-refund claim conflicts with context.",
         }
     )
 
@@ -137,6 +144,10 @@ def test_summary_sheet_and_compact_coverage_details(tmp_path):
     )
     framework.evaluate(CASE, run_name="run", dataset_name="dataset")
     header, rows = _read(path)
+    assert rows[0]["explanation"] == (
+        "The identity-provider qualifier and SSO are absent."
+    )
+    assert "2 of" not in rows[0]["explanation"]
     assert header == (
         "run_name",
         "dataset_name",

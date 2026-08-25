@@ -24,7 +24,8 @@ unsupported additions to the output.
 
 ## Coverage
 
-`CoverageEvaluator(judge, verbose=False)` performs whole-source coverage in one
+`CoverageEvaluator(judge, verbose=False, max_items=None,
+reason_mode="overall")` performs whole-source coverage in one
 structured judge call:
 
 ```text
@@ -51,8 +52,10 @@ aggregate score, percentage, or label. Labels are `covered` for 1.0,
 `partial` for a score strictly between 0 and 1, `missing` for 0.0, and
 `not_applicable` when no source items are identified.
 
-By default there is no item-count limit. `CoverageEvaluator(judge,
-max_items=5)` instead asks for up to five items: fewer are returned when fewer
+By default there is no item-count limit, so the complete context is decomposed
+into all materially distinct, reasonably atomic, independently assessable
+source items. `CoverageEvaluator(judge, max_items=5)` instead asks for up to
+five items: fewer are returned when fewer
 meaningful items exist, while larger sources use the most material,
 representative, nonredundant items. The judge examines the complete context
 before selecting; selection is based on source materiality rather than whether
@@ -62,19 +65,31 @@ outcomes, constraints, prohibitions, actors, dependencies, thresholds, timing,
 channels, and measurable targets while consolidating semantic redundancy.
 Material qualifiers are preserved.
 
+The cap controls how many atomic units are selected, never how much independent
+information is packed into one unit. A capped run never pads or merges distinct
+facts merely to fit the cap. Provider schemas intentionally omit JSON Schema
+`maxItems`; the prompt expresses the cap and Python rejects an oversized
+response without truncating it.
+
 Headings, section labels, introductory phrases, structural instructions,
 meta-statements, and filler are not independent items. A source objective
 counts only when it adds meaning not already represented by detailed items; an
 umbrella and equivalent children are not double-counted. Generic topical overlap
 does not earn partial credit—a concrete semantic component must be present.
 
-Compact mode returns counts, one-call accounting, and timing. `verbose=True`
-also returns the item-level audit trail and concise reasons for partial or
-missing items. Covered items use an empty reason. Both modes score identically.
+`reason_mode="overall"` is the recommended production mode: the same single
+judge response classifies every selected item, includes concise internal
+diagnostics for partial/missing items, and returns one semantic overall
+explanation. `reason_mode="per_item"` is audit/debug mode and requires a reason
+for every item. `reason_mode="none"` omits all reasons and sets
+`EvaluationResult.explanation` to `None`. `verbose=True` separately exposes the
+item-level audit trail in `details`; it does not change scoring or reason
+semantics. Visible explanations never receive count/percentage prefixes.
 
 ## Faithfulness
 
-`FaithfulnessEvaluator(judge, verbose=False)` asks whether distinct factual
+`FaithfulnessEvaluator(judge, verbose=False, max_items=None,
+reason_mode="overall")` asks whether distinct factual
 claims in generated `output` are supported by authoritative `context`
 (`output → context`). One structured judge call identifies factual claims and
 classifies each as `supported` or `unsupported`; Python deduplicates normalized
@@ -96,7 +111,8 @@ Missing source facts do not reduce faithfulness: Coverage measures
 The metric requires `context + output` and ignores `input`, `instructions`,
 metadata, and retrieved documents. Dict/list/nested values are rendered through
 `render_value()` and remain one case. Compact mode returns counts and timing;
-`verbose=True` adds the claim-level status, item score, and reason audit trail.
+`verbose=True` adds the claim-level status, deterministic item score, and any
+generated internal reason to the audit trail.
 A valid response with no checkable factual claims returns `not_applicable` after
 the single judge call. Async evaluation uses native judge async generation when
 available and otherwise uses the framework's shared-concurrency thread bridge.
@@ -106,6 +122,14 @@ output first and selects by claim materiality independently of whether context
 will mark a claim supported or unsupported. Its overall label is
 `not_hallucinated` only at score 1.0 and `hallucinated` for every score below
 1.0; the metric name remains `faithfulness`.
+
+As with Coverage, `max_items=None` is exhaustive and a finite cap selects
+representative atomic claims without merging independent claims. The cap is
+prompt- and Python-enforced rather than expressed with JSON Schema `maxItems`.
+`reason_mode="overall"` returns one semantic overall explanation and internal
+diagnostics only for unsupported claims; `per_item` requires reasons for every
+claim; `none` returns no reasons and no explanation. Every mode still makes
+exactly one judge call, and Python remains authoritative for score and label.
 
 ## Instruction adherence
 

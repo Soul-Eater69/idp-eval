@@ -39,8 +39,14 @@ def _coverage_judge(*, empty=False):
                     "source_item": "Source requirement.",
                     "meaningfully_present": True,
                     "fully_present": True,
+                    "reason": "",
                 }
-            ]
+            ],
+            "overall_reason": (
+                "No important source items were identified."
+                if empty
+                else "The source requirement is represented."
+            ),
         }
     )
 
@@ -116,7 +122,14 @@ def test_multiple_metrics_share_the_same_case_trace(spans):
 
 
 def test_faithfulness_uses_one_evaluate_stage_with_standard_attributes(spans):
-    judge = Judge({"claims": [{"claim": "answer", "status": "supported"}]})
+    judge = Judge(
+        {
+            "claims": [
+                {"claim": "answer", "status": "supported", "reason": ""}
+            ],
+            "overall_reason": "The answer is grounded in the source.",
+        }
+    )
     evaluator = FaithfulnessEvaluator(judge)
     EvaluationFramework(evaluators=[evaluator]).evaluate(
         EvaluationCase(context="source", output="answer")
@@ -141,8 +154,10 @@ def test_two_cases_create_two_independent_traces(spans):
                                 "source_item": "A",
                                 "meaningfully_present": True,
                                 "fully_present": True,
+                                "reason": "",
                             }
-                        ]
+                        ],
+                        "overall_reason": "The source item is represented.",
                     },
                     {
                         "items": [
@@ -150,8 +165,10 @@ def test_two_cases_create_two_independent_traces(spans):
                                 "source_item": "A",
                                 "meaningfully_present": True,
                                 "fully_present": True,
+                                "reason": "",
                             }
-                        ]
+                        ],
+                        "overall_reason": "The source item is represented.",
                     },
                 )
             )

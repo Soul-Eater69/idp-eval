@@ -23,14 +23,19 @@ class CountingJudge:
                     "source_item": "A",
                     "meaningfully_present": True,
                     "fully_present": True,
+                    "reason": "",
                 }
-            ]
+            ],
+            "overall_reason": "The source item is represented.",
         }
 
 
 class FaithfulnessJudge:
     def generate_object(self, prompt, schema):
-        return {"claims": [{"claim": "A", "status": "supported"}]}
+        return {
+            "claims": [{"claim": "A", "status": "supported", "reason": ""}],
+            "overall_reason": "The claim is grounded in context.",
+        }
 
 
 def test_required_fields_are_declared():

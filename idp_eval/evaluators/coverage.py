@@ -12,14 +12,15 @@ belong to faithfulness.
 from __future__ import annotations
 
 import asyncio
-import copy
 import time
+from typing import Literal
 
 from idp_eval import tracing
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
 from idp_eval.prompts.coverage import (
-    COVERAGE_SCHEMA_COMPACT,
-    COVERAGE_SCHEMA_VERBOSE,
+    COVERAGE_SCHEMA_NONE,
+    COVERAGE_SCHEMA_OVERALL,
+    COVERAGE_SCHEMA_PER_ITEM,
     render_coverage_prompt,
 )
 from idp_eval.rendering import render_value
@@ -46,16 +47,24 @@ class CoverageEvaluator(Evaluator):
     Args:
         llm: Judge exposing ``generate_object(prompt, schema) -> dict``.
         verbose: Include the full item-level audit trail in ``result.details``.
-            Compact mode returns counts/timing only. Scoring is identical.
+            This controls exposed detail only; ``reason_mode`` controls reason
+            generation and the visible explanation.
         max_items: Optional positive maximum number of material source items.
             This is an upper bound, never a target or padding instruction.
+        reason_mode: ``overall`` returns one semantic explanation plus internal
+            reasons for failures; ``per_item`` requires reasons for every item;
+            ``none`` returns no semantic reasons or explanation.
     """
 
     name = "coverage"
     required_fields = ("context", "output")
 
     def __init__(
-        self, llm=None, verbose: bool = False, max_items: int | None = None
+        self,
+        llm=None,
+        verbose: bool = False,
+        max_items: int | None = None,
+        reason_mode: Literal["overall", "per_item", "none"] = "overall",
     ):
         if (
             isinstance(max_items, bool)
@@ -66,15 +75,22 @@ class CoverageEvaluator(Evaluator):
                 "max_items must be None or a positive integer, got "
                 f"{max_items!r}."
             )
+        if reason_mode not in {"overall", "per_item", "none"}:
+            raise ValueError(
+                "reason_mode must be one of 'overall', 'per_item', or 'none', "
+                f"got {reason_mode!r}."
+            )
         self._llm = llm
         self._verbose = verbose
         self._max_items = max_items
+        self._reason_mode = reason_mode
 
     def resume_signature(self) -> dict:
         return {
-            "contract_version": 2,
+            "contract_version": 3,
             "verbose": self._verbose,
             "max_items": self._max_items,
+            "reason_mode": self._reason_mode,
             "judge": self.judge_resume_signature(self._llm),
         }
 
@@ -95,24 +111,24 @@ class CoverageEvaluator(Evaluator):
         prompt = render_coverage_prompt(
             context=render_value(case.context),
             output=render_value(case.output),
-            verbose=self._verbose,
+            reason_mode=self._reason_mode,
             max_items=self._max_items,
         )
-        schema = (
-            COVERAGE_SCHEMA_VERBOSE if self._verbose else COVERAGE_SCHEMA_COMPACT
-        )
-        if self._max_items is not None:
-            schema = copy.deepcopy(schema)
-            schema["properties"]["items"]["maxItems"] = self._max_items
+        schema = {
+            "overall": COVERAGE_SCHEMA_OVERALL,
+            "per_item": COVERAGE_SCHEMA_PER_ITEM,
+            "none": COVERAGE_SCHEMA_NONE,
+        }[self._reason_mode]
         return prompt, schema
 
     def _result_from_response(
         self, response: object, total_ms: float
     ) -> EvaluationResult:
-        items = self._build_items(self._validate_response(response))
+        raw_items, overall_reason = self._validate_response(response)
+        items = self._build_items(raw_items)
         if not items:
-            return self._not_applicable(total_ms)
-        return self._result(items, total_ms)
+            return self._not_applicable(total_ms, overall_reason)
+        return self._result(items, total_ms, overall_reason)
 
     async def a_evaluate(
         self, case: EvaluationCase, *, judge_limiter: asyncio.Semaphore
@@ -140,9 +156,21 @@ class CoverageEvaluator(Evaluator):
                     )
         return self._result_from_response(response, _elapsed_ms(started))
 
-    def _validate_response(self, response: object) -> list[dict]:
-        if not isinstance(response, dict) or "items" not in response:
-            raise ValueError("Malformed coverage response: missing `items`.")
+    def _validate_response(
+        self, response: object
+    ) -> tuple[list[dict], str | None]:
+        if not isinstance(response, dict):
+            raise ValueError("Malformed coverage response: expected an object.")
+        expected_top = (
+            {"items"}
+            if self._reason_mode == "none"
+            else {"items", "overall_reason"}
+        )
+        if set(response) != expected_top:
+            raise ValueError(
+                "Malformed coverage response: expected exactly "
+                f"{sorted(expected_top)}."
+            )
         raw_items = response["items"]
         if not isinstance(raw_items, list):
             raise ValueError("Malformed coverage response: `items` must be a list.")
@@ -152,11 +180,37 @@ class CoverageEvaluator(Evaluator):
                 f"max_items={self._max_items}."
             )
 
+        overall_reason = response.get("overall_reason")
+        if self._reason_mode == "none":
+            overall_reason = None
+        elif not isinstance(overall_reason, str) or not overall_reason.strip():
+            raise ValueError(
+                "Malformed coverage response: `overall_reason` must be a "
+                "non-empty string."
+            )
+
         validated: list[dict] = []
+        base_keys = {
+            "source_item",
+            "meaningfully_present",
+            "fully_present",
+        }
         for index, item in enumerate(raw_items, start=1):
             if not isinstance(item, dict):
                 raise ValueError(
                     f"Malformed coverage item {index}: expected an object."
+                )
+            item_keys = set(item)
+            if self._reason_mode == "none":
+                valid_keys = item_keys == base_keys
+            elif self._reason_mode == "per_item":
+                valid_keys = item_keys == base_keys | {"reason"}
+            else:
+                valid_keys = item_keys in (base_keys, base_keys | {"reason"})
+            if not valid_keys:
+                raise ValueError(
+                    f"Malformed coverage item {index}: unexpected or missing "
+                    "fields for the configured reason_mode."
                 )
             source_item = item.get("source_item")
             meaningfully_present = item.get("meaningfully_present")
@@ -177,33 +231,42 @@ class CoverageEvaluator(Evaluator):
                 meaningfully_present, fully_present
             )
 
-            reason = item.get("reason", "")
-            if not isinstance(reason, str):
+            reason = item.get("reason")
+            if reason is not None and not isinstance(reason, str):
                 raise ValueError(
                     f"Malformed coverage item {index}: `reason` must be a string."
                 )
-            if self._verbose:
-                if status == "covered" and reason != "":
+            if self._reason_mode == "overall":
+                if status == "covered" and reason not in (None, ""):
                     raise ValueError(
                         f"Malformed coverage item {index}: covered items must use "
-                        "an empty `reason`."
+                        "an omitted or empty `reason` in overall mode."
                     )
-                if status != "covered" and not reason.strip():
+                if status != "covered" and (
+                    reason is None or not reason.strip()
+                ):
                     raise ValueError(
                         f"Malformed coverage item {index}: partial/missing items "
                         "must include a non-empty `reason`."
                     )
+            elif self._reason_mode == "per_item" and (
+                reason is None or not reason.strip()
+            ):
+                raise ValueError(
+                    f"Malformed coverage item {index}: every item must include "
+                    "a non-empty `reason` in per_item mode."
+                )
 
-            validated.append(
-                {
-                    "source_item": source_item,
-                    "meaningfully_present": meaningfully_present,
-                    "fully_present": fully_present,
-                    "status": status,
-                    "reason": reason,
-                }
-            )
-        return validated
+            value = {
+                "source_item": source_item,
+                "meaningfully_present": meaningfully_present,
+                "fully_present": fully_present,
+                "status": status,
+            }
+            if self._reason_mode != "none":
+                value["reason"] = reason or ""
+            validated.append(value)
+        return validated, overall_reason
 
     @staticmethod
     def _build_items(raw_items: list[dict]) -> list[dict]:
@@ -215,17 +278,17 @@ class CoverageEvaluator(Evaluator):
             if normalized in seen:
                 continue
             seen.add(normalized)
-            items.append(
-                {
-                    "id": f"S{len(items) + 1}",
-                    "source_item": raw["source_item"],
-                    "meaningfully_present": raw["meaningfully_present"],
-                    "fully_present": raw["fully_present"],
-                    "status": raw["status"],
-                    "item_score": coverage_status_score(raw["status"]),
-                    "reason": raw["reason"],
-                }
-            )
+            item = {
+                "id": f"S{len(items) + 1}",
+                "source_item": raw["source_item"],
+                "meaningfully_present": raw["meaningfully_present"],
+                "fully_present": raw["fully_present"],
+                "status": raw["status"],
+                "item_score": coverage_status_score(raw["status"]),
+            }
+            if "reason" in raw:
+                item["reason"] = raw["reason"]
+            items.append(item)
         return items
 
     def _base_details(self, items: list[dict], total_ms: float) -> dict:
@@ -239,9 +302,15 @@ class CoverageEvaluator(Evaluator):
             "judge_call_count": 1,
             "total_ms": total_ms,
             "verbose": self._verbose,
+            "reason_mode": self._reason_mode,
         }
 
-    def _result(self, items: list[dict], total_ms: float) -> EvaluationResult:
+    def _result(
+        self,
+        items: list[dict],
+        total_ms: float,
+        overall_reason: str | None,
+    ) -> EvaluationResult:
         details = self._base_details(items, total_ms)
         if self._verbose:
             details["items"] = items
@@ -251,26 +320,22 @@ class CoverageEvaluator(Evaluator):
                 "coverage.item_count": details["final_item_count"],
                 "coverage.judge_call_count": 1,
                 "coverage.verbose": self._verbose,
+                "coverage.reason_mode": self._reason_mode,
                 "coverage.total_ms": total_ms,
             }
         )
         score = calculate_coverage(items)
-        count = details["final_item_count"]
-        covered = details["covered_count"]
-        partial = details["partial_count"]
-        missing = details["missing_count"]
         return EvaluationResult(
             metric=self.name,
             score=score,
             label=coverage_label(score),
-            explanation=(
-                f"{covered} of {count} evaluated source items are fully covered; "
-                f"{partial} partial and {missing} missing."
-            ),
+            explanation=overall_reason,
             details=details,
         )
 
-    def _not_applicable(self, total_ms: float) -> EvaluationResult:
+    def _not_applicable(
+        self, total_ms: float, overall_reason: str | None
+    ) -> EvaluationResult:
         details = self._base_details([], total_ms)
         if self._verbose:
             details["items"] = []
@@ -279,6 +344,7 @@ class CoverageEvaluator(Evaluator):
                 "coverage.item_count": 0,
                 "coverage.judge_call_count": 1,
                 "coverage.verbose": self._verbose,
+                "coverage.reason_mode": self._reason_mode,
                 "coverage.total_ms": total_ms,
             }
         )
@@ -286,8 +352,6 @@ class CoverageEvaluator(Evaluator):
             metric=self.name,
             score=None,
             label="not_applicable",
-            explanation=(
-                "No important source items were identified in the supplied context."
-            ),
+            explanation=overall_reason,
             details=details,
         )

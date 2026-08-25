@@ -38,8 +38,10 @@ def test_coverage_accepts_but_does_not_send_descriptive_input():
                     "source_item": "Authoritative source.",
                     "meaningfully_present": True,
                     "fully_present": True,
+                    "reason": "",
                 }
-            ]
+            ],
+            "overall_reason": "The authoritative source is represented.",
         }
     )
     evaluator = CoverageEvaluator(judge)
@@ -53,7 +55,16 @@ def test_coverage_accepts_but_does_not_send_descriptive_input():
 
 def test_faithfulness_accepts_but_does_not_send_descriptive_input():
     judge = RepeatJudge(
-        {"claims": [{"claim": "Authoritative source.", "status": "supported"}]}
+        {
+            "claims": [
+                {
+                    "claim": "Authoritative source.",
+                    "status": "supported",
+                    "reason": "",
+                }
+            ],
+            "overall_reason": "The claim is grounded in the source.",
+        }
     )
     evaluator = FaithfulnessEvaluator(judge)
     first, second = _cases()

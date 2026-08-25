@@ -4,15 +4,16 @@ import copy
 
 from idp_eval.prompts.coverage import (
     COVERAGE_PROMPT_COMPACT_V1,
-    COVERAGE_SCHEMA_COMPACT,
-    COVERAGE_SCHEMA_VERBOSE,
+    COVERAGE_SCHEMA_NONE,
+    COVERAGE_SCHEMA_OVERALL,
+    COVERAGE_SCHEMA_PER_ITEM,
     render_coverage_prompt,
 )
 
 
-def _system(verbose: bool = False) -> str:
+def _system(reason_mode: str = "overall") -> str:
     return " ".join(
-        render_coverage_prompt("source", "output", verbose=verbose)[0][
+        render_coverage_prompt("source", "output", reason_mode=reason_mode)[0][
             "content"
         ].split()
     )
@@ -29,8 +30,8 @@ def test_prompt_is_one_call_context_plus_output():
 
 def test_prompt_requires_all_materially_distinct_items_when_unlimited():
     system = _system()
-    assert "all materially distinct source items" in system
-    assert "semantic consolidation" in system
+    assert "all materially distinct, reasonably atomic" in system
+    assert "independently assessable" in system
     assert "approximately 10" not in system
     assert "target 10" not in system
 
@@ -48,12 +49,14 @@ def test_prompt_expresses_optional_limit_as_at_most_without_padding():
     assert "independently of whether the OUTPUT covers them" in system
     assert "Only after selection, classify" in system
     assert "Do not invent, duplicate, or artificially split items" in system
+    assert "Never merge multiple independent facts or requirements" in system
+    assert "item limit controls how many units are selected" in system
 
 
 def test_prompt_preserves_qualifiers_and_excludes_structural_meta_text():
     system = _system()
     assert "Preserve material qualifiers" in system
-    assert "headings, section labels, introductory phrases" in system
+    assert "headings, section labels, introductory phrases" in system.lower()
     assert "structural instructions, meta-statements" in system
     assert "The solution must satisfy the following requirements" in system
 
@@ -74,12 +77,12 @@ def test_prompt_rejects_generic_overlap_for_partial_credit():
 def test_prompt_forbids_llm_numeric_scoring():
     system = _system()
     assert "Do not return an aggregate score" in system
-    assert "Python derives all statuses and numeric scores" in system
+    assert "Python derives all statuses, labels, and numeric scores" in system
 
 
 def test_compact_schema_contains_only_required_judgment_fields():
-    assert COVERAGE_SCHEMA_COMPACT["additionalProperties"] is False
-    item = COVERAGE_SCHEMA_COMPACT["properties"]["items"]["items"]
+    assert COVERAGE_SCHEMA_NONE["additionalProperties"] is False
+    item = COVERAGE_SCHEMA_NONE["properties"]["items"]["items"]
     assert set(item["properties"]) == {
         "source_item",
         "meaningfully_present",
@@ -93,8 +96,12 @@ def test_compact_schema_contains_only_required_judgment_fields():
     assert item["additionalProperties"] is False
 
 
-def test_verbose_schema_requires_reason_for_openai_strict_output():
-    item = COVERAGE_SCHEMA_VERBOSE["properties"]["items"]["items"]
+def test_overall_and_per_item_schemas_are_strict_and_include_overall_reason():
+    for schema in (COVERAGE_SCHEMA_OVERALL, COVERAGE_SCHEMA_PER_ITEM):
+        assert schema["required"] == ["items", "overall_reason"]
+        assert schema["properties"]["overall_reason"] == {"type": "string"}
+        assert "maxItems" not in schema["properties"]["items"]
+    item = COVERAGE_SCHEMA_OVERALL["properties"]["items"]["items"]
     assert set(item["properties"]) == {
         "source_item",
         "meaningfully_present",
@@ -108,8 +115,30 @@ def test_verbose_schema_requires_reason_for_openai_strict_output():
         "reason",
     ]
     assert item["additionalProperties"] is False
-    assert "empty string" in _system(verbose=True)
-    assert "concise non-empty explanation" in _system(verbose=True)
+    assert "empty reason string" in _system("overall")
+    assert "concise, non-empty diagnostic reason" in _system("overall")
+
+
+def test_reason_mode_prompts_define_semantic_explanation_contract():
+    overall = _system("overall")
+    per_item = _system("per_item")
+    none = _system("none")
+    assert "up to three representative partial/missing items" in overall
+    assert "Do not include a metric score, percentage, item counts" in overall
+    assert "non-empty reason for every source item" in per_item
+    assert "Do not return per-item reasons, overall_reason" in none
+
+
+def test_schemas_never_ask_llm_for_score_label_or_max_items():
+    for schema in (
+        COVERAGE_SCHEMA_OVERALL,
+        COVERAGE_SCHEMA_PER_ITEM,
+        COVERAGE_SCHEMA_NONE,
+    ):
+        serialized = repr(schema)
+        assert "score" not in serialized
+        assert "label" not in serialized
+        assert "maxItems" not in serialized
 
 
 def test_render_does_not_mutate_prompt_template():

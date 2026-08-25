@@ -56,17 +56,29 @@ def _coverage_judge():
         {
             "items": [
                 {"source_item": "Users can view invoices.",
-                 "meaningfully_present": True, "fully_present": True},
+                 "meaningfully_present": True, "fully_present": True,
+                 "reason": ""},
                 {"source_item": "Invoices show total amount due.",
-                 "meaningfully_present": False, "fully_present": False},
-            ]
+                 "meaningfully_present": False, "fully_present": False,
+                 "reason": "The total amount is absent."},
+            ],
+            "overall_reason": "The invoice total is not represented.",
         }
     )
 
 
 def _faithfulness_judge():
     return ScriptedJudge(
-        {"claims": [{"claim": "Users can view invoices.", "status": "supported"}]}
+        {
+            "claims": [
+                {
+                    "claim": "Users can view invoices.",
+                    "status": "supported",
+                    "reason": "",
+                }
+            ],
+            "overall_reason": "Invoice viewing is grounded in the context.",
+        }
     )
 
 
@@ -86,14 +98,17 @@ def test_coverage_evaluator():
 
 def test_coverage_partial_and_missing():
     judge = ScriptedJudge(
-        {"items": [
-            {"source_item": "a", "meaningfully_present": True,
-             "fully_present": True, "reason": ""},
-            {"source_item": "b", "meaningfully_present": True,
-             "fully_present": False, "reason": "Qualifier missing."},
-            {"source_item": "c", "meaningfully_present": False,
-             "fully_present": False, "reason": "Missing."},
-        ]}
+        {
+            "items": [
+                {"source_item": "a", "meaningfully_present": True,
+                 "fully_present": True, "reason": ""},
+                {"source_item": "b", "meaningfully_present": True,
+                 "fully_present": False, "reason": "Qualifier missing."},
+                {"source_item": "c", "meaningfully_present": False,
+                 "fully_present": False, "reason": "Missing."},
+            ],
+            "overall_reason": "A qualifier and one source item are absent.",
+        }
     )
     result = CoverageEvaluator(llm=judge, verbose=True).evaluate(CASE)
 
@@ -118,9 +133,7 @@ def test_faithfulness_uses_only_context_and_output_semantically():
     assert result.metric == "faithfulness"
     assert result.score == 1.0
     assert result.label == "not_hallucinated"
-    assert result.explanation == (
-        "1 of 1 evaluated factual claims were supported; 0 were unsupported."
-    )
+    assert result.explanation == "Invoice viewing is grounded in the context."
     assert result.details["judge_call_count"] == 1
     assert len(judge.calls) == 1
     user = judge.calls[0]["prompt"][1]["content"]
@@ -205,16 +218,20 @@ def test_configured_core_instances_receive_shared_framework_judge():
                             "source_item": "Users can view invoices.",
                             "meaningfully_present": True,
                             "fully_present": True,
+                            "reason": "",
                         }
-                    ]
+                    ],
+                    "overall_reason": "Invoice viewing is represented.",
                 }
             return {
                 "claims": [
                     {
                         "claim": "Users can view invoices.",
                         "status": "supported",
+                        "reason": "",
                     }
-                ]
+                ],
+                "overall_reason": "Invoice viewing is grounded in context.",
             }
 
     judge = SharedJudge()
@@ -340,13 +357,20 @@ def test_framework_core_classes_still_construct_and_evaluate_with_shared_judge()
                     "source_item": "Users can view invoices.",
                     "meaningfully_present": True,
                     "fully_present": True,
+                    "reason": "",
                 }
-            ]
+            ],
+            "overall_reason": "Invoice viewing is represented.",
         },
         {
             "claims": [
-                {"claim": "Users can view invoices.", "status": "supported"}
-            ]
+                {
+                    "claim": "Users can view invoices.",
+                    "status": "supported",
+                    "reason": "",
+                }
+            ],
+            "overall_reason": "Invoice viewing is grounded in context.",
         },
     )
     framework = EvaluationFramework(

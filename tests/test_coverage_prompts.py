@@ -123,9 +123,21 @@ def test_reason_mode_prompts_define_semantic_explanation_contract():
     overall = _system("overall")
     per_item = _system("per_item")
     none = _system("none")
-    assert "up to three representative partial/missing items" in overall
+    assert "at least one and at most three representative" in overall
     assert "Do not include a metric score, percentage, item counts" in overall
+    assert (
+        "Start directly with the substantive supported area or failure"
+        in overall
+    )
+    assert "Do not begin with generic aggregate commentary" in overall
+    assert "Most requirements are covered" in overall
+    assert "items = []" in overall
+    assert "Do not invent source items merely to avoid an empty array" in overall
+    assert "The context contains no materially evaluable source items" in overall
     assert "non-empty reason for every source item" in per_item
+    assert "at least one and at most three representative" in per_item
+    assert "Start directly with the substantive supported area" in per_item
+    assert "items is empty" in per_item
     assert "Do not return per-item reasons, overall_reason" in none
 
 

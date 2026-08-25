@@ -192,6 +192,15 @@ def test_empty_items_is_not_applicable_after_one_call():
     assert result.details["final_item_count"] == 0
 
 
+def test_empty_items_none_mode_is_not_applicable_without_explanation():
+    result, judge = _evaluate([], reason_mode="none")
+    assert len(judge.calls) == 1
+    assert result.score is None
+    assert result.label == "not_applicable"
+    assert result.explanation is None
+    assert result.details["final_item_count"] == 0
+
+
 def test_compact_details_are_minimal_and_omit_items():
     result, _ = _evaluate([_item("A", True, True)])
     assert set(result.details) == {
@@ -313,6 +322,17 @@ def test_normalized_exact_dedup_keeps_first_item():
         "Retain SSO",
         "Preserve MFA",
     ]
+
+
+def test_normalized_exact_duplicate_with_conflicting_binary_judgment_fails():
+    with pytest.raises(ValueError, match="duplicate normalized source item"):
+        _evaluate(
+            [
+                _item("Retain SSO", True, True, ""),
+                _item(" retain   sso ", True, False, "Qualifier absent."),
+            ],
+            verbose=True,
+        )
 
 
 def test_invalid_binary_combination_fails_clearly():

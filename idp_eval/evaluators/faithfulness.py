@@ -237,13 +237,18 @@ class FaithfulnessEvaluator(Evaluator):
 
     @staticmethod
     def _build_claims(raw_claims: list[dict]) -> list[dict]:
-        seen: set[str] = set()
+        seen: dict[str, str] = {}
         claims = []
         for raw in raw_claims:
             normalized = _normalize_claim(raw["claim"])
             if normalized in seen:
+                if seen[normalized] != raw["status"]:
+                    raise ValueError(
+                        "Malformed faithfulness response: duplicate normalized "
+                        "claim has conflicting classifications."
+                    )
                 continue
-            seen.add(normalized)
+            seen[normalized] = raw["status"]
             claim = {
                 "id": f"F{len(claims) + 1}",
                 "claim": raw["claim"],

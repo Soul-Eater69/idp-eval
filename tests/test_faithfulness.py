@@ -183,12 +183,29 @@ def test_no_claims_is_not_applicable_after_one_call(verbose):
     assert len(judge.calls) == 1
 
 
+def test_no_claims_none_mode_is_not_applicable_without_explanation():
+    judge = Judge(_response([], reason_mode="none"))
+    result = FaithfulnessEvaluator(judge, reason_mode="none").evaluate(CASE)
+    assert result.score is None and result.label == "not_applicable"
+    assert result.explanation is None
+    assert result.details["claim_count"] == 0
+    assert len(judge.calls) == 1
+
+
 def test_exact_normalized_dedup_keeps_first_and_stable_ids():
     judge = Judge(
         _response(
             [
-                _claim(" Refunds   take five days. ", "supported", ""),
-                _claim("REFUNDS TAKE FIVE DAYS.", "unsupported", "duplicate"),
+                _claim(
+                    " Refunds   take five days. ",
+                    "unsupported",
+                    "First diagnostic.",
+                ),
+                _claim(
+                    "REFUNDS TAKE FIVE DAYS.",
+                    "unsupported",
+                    "Different duplicate diagnostic.",
+                ),
                 _claim("Cancellation takes 24 hours.", "supported", ""),
             ]
         )
@@ -196,7 +213,25 @@ def test_exact_normalized_dedup_keeps_first_and_stable_ids():
     result = FaithfulnessEvaluator(judge, verbose=True).evaluate(CASE)
     assert result.details["claim_count"] == 2
     assert [c["id"] for c in result.details["claims"]] == ["F1", "F2"]
-    assert result.details["claims"][0]["status"] == "supported"
+    assert result.details["claims"][0]["status"] == "unsupported"
+    assert result.details["claims"][0]["reason"] == "First diagnostic."
+
+
+def test_normalized_duplicate_claim_with_conflicting_status_fails():
+    judge = Judge(
+        _response(
+            [
+                _claim("Refunds take five days.", "supported", ""),
+                _claim(
+                    " refunds   take five days. ",
+                    "unsupported",
+                    "Conflicting duplicate.",
+                ),
+            ]
+        )
+    )
+    with pytest.raises(ValueError, match="duplicate normalized claim"):
+        FaithfulnessEvaluator(judge).evaluate(CASE)
 
 
 def test_reason_modes_control_contract_explanation_and_one_call():
@@ -385,9 +420,34 @@ def test_reason_prompts_are_semantic_and_mode_specific():
     none = render_faithfulness_prompt(
         context="c", output="o", reason_mode="none"
     )[0]["content"]
-    assert "up to three representative unsupported claims" in overall
-    assert "Do not include a metric score, percentage, claim counts" in overall
-    assert "non-empty reason for every claim" in per_item
+    normalized = " ".join(overall.split())
+    normalized_per_item = " ".join(per_item.split())
+    assert "at least one and at most three representative" in normalized
+    assert (
+        "Do not include a metric score, percentage, claim counts" in normalized
+    )
+    assert (
+        "Start directly with the substantive supported area or failure"
+        in normalized
+    )
+    assert "Do not begin with generic aggregate commentary" in normalized
+    assert "Most claims are supported" in normalized
+    assert "claims = []" in normalized
+    assert "Do not invent claims merely to avoid an empty array" in normalized
+    assert (
+        "The output contains no materially checkable factual claims"
+        in normalized
+    )
+    assert "non-empty reason for every claim" in normalized_per_item
+    assert (
+        "at least one and at most three representative"
+        in normalized_per_item
+    )
+    assert (
+        "Start directly with the substantive supported area"
+        in normalized_per_item
+    )
+    assert "claims is empty" in normalized_per_item
     assert "Do not return per-item reasons" in none
 
 

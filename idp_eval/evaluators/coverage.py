@@ -271,13 +271,25 @@ class CoverageEvaluator(Evaluator):
     @staticmethod
     def _build_items(raw_items: list[dict]) -> list[dict]:
         """Adds stable IDs/scores and removes normalized-exact duplicates."""
-        seen: set[str] = set()
+        seen: dict[str, tuple[bool, bool]] = {}
         items: list[dict] = []
         for raw in raw_items:
             normalized = _normalize(raw["source_item"])
             if normalized in seen:
+                classification = (
+                    raw["meaningfully_present"],
+                    raw["fully_present"],
+                )
+                if seen[normalized] != classification:
+                    raise ValueError(
+                        "Malformed coverage response: duplicate normalized "
+                        "source item has conflicting classifications."
+                    )
                 continue
-            seen.add(normalized)
+            seen[normalized] = (
+                raw["meaningfully_present"],
+                raw["fully_present"],
+            )
             item = {
                 "id": f"S{len(items) + 1}",
                 "source_item": raw["source_item"],

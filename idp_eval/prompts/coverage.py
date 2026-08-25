@@ -44,6 +44,8 @@ SOURCE ITEM RULES
   meaning not already fully represented by specific extracted items. Do not
   create both a redundant umbrella item and child items that fully represent it.
 - Never invent source information.
+- If the CONTEXT contains no materially distinct source items worth evaluating,
+  return items = []. Do not invent source items merely to avoid an empty array.
 
 CLASSIFICATION RULES
 For each source item return two booleans:
@@ -79,31 +81,47 @@ semantic explanation, not a score summary.
 For fully represented items, use an empty reason string. For partial or missing
 items, return one concise, non-empty diagnostic reason.
 
-If failures exist, overall_reason must identify the most material failure
-patterns, mention up to three representative partial/missing items, and explain
-specifically why they failed. Preserve important names, regions, thresholds,
-numbers, dates, negations, and qualifiers. Group repetitive failures into themes
-instead of enumerating every similar failure. Do not use vague wording such as
-"some claims", "certain details", "X and Y", or "a few issues", and do not invent
-failure categories not supported by the item classifications.
+If partial or missing items exist, overall_reason must identify the most material
+failure patterns, reference at least one and at most three representative
+partial/missing source items, and explain specifically why they failed. Preserve
+important names, regions, actors, thresholds, numbers, dates, negations,
+modality, scope, conditions, and qualifiers. Group repetitive failures into
+themes instead of enumerating every similar failure. Do not use vague wording
+such as "some claims", "certain details", "X and Y", or "a few issues", and do
+not invent failure categories not supported by the item classifications.
 
 If everything is fully represented, summarize the material source concepts that
 the output represents. Do not include a metric score, percentage, item counts,
-status counts, or final metric label in overall_reason."""
+status counts, or final metric label in overall_reason.
+
+Start directly with the substantive supported area or failure. Do not begin with
+generic aggregate commentary about how many source items passed or how good the
+overall result is, such as "Most requirements are covered", "Coverage is
+generally good", "The output covers most of the source", "Overall coverage is
+strong", or "Most source items are represented".
+
+If items is empty, overall_reason must be a concise semantic statement such as:
+The context contains no materially evaluable source items."""
 
 _PER_ITEM_REASON_RULES = """\
 Return one concise, non-empty reason for every source item and one non-empty
 overall_reason in the same structured response.
 
-The overall_reason is a semantic explanation, not a score summary. If failures
-exist, identify the most material failure patterns, mention up to three
-representative partial/missing items, and explain specifically why they failed.
-Preserve important names, regions, thresholds, numbers, dates, negations, and
+The overall_reason is a semantic explanation, not a score summary. If partial or
+missing items exist, identify the most material failure patterns, reference at
+least one and at most three representative partial/missing source items, and
+explain specifically why they failed. Preserve important names, regions, actors,
+thresholds, numbers, dates, negations, modality, scope, conditions, and
 qualifiers. Group repetitive failures into themes. Do not use vague wording such
 as "some claims", "certain details", "X and Y", or "a few issues", and do not
 invent failure categories. If everything is fully represented, summarize the
 material source concepts represented by the output. Do not include a metric
-score, percentage, item counts, status counts, or final metric label."""
+score, percentage, item counts, status counts, or final metric label.
+
+Start directly with the substantive supported area or failure. Do not begin with
+generic aggregate commentary about how many source items passed or how good the
+overall result is. If items is empty, overall_reason must be a concise semantic
+statement such as: The context contains no materially evaluable source items."""
 
 _NONE_REASON_RULES = """\
 Return only each source_item and its two booleans. Do not return per-item reasons,

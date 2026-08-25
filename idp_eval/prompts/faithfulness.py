@@ -40,6 +40,8 @@ CLAIM RULES
   certainty, and scope.
 - Headings, formatting, labels, greetings, rhetoric, pure style, and purely
   subjective opinions are not checkable claims.
+- If the OUTPUT contains no materially distinct, checkable claims, return
+  claims = []. Do not invent claims merely to avoid an empty array.
 
 SUPPORT RULES
 - "supported" means CONTEXT provides sufficient evidence for the complete
@@ -70,31 +72,48 @@ semantic explanation, not a score summary.
 For supported claims, use an empty reason string. For unsupported claims, return
 one concise, non-empty diagnostic reason.
 
-If unsupported claims exist, overall_reason must identify the most material
-failure patterns, mention up to three representative unsupported claims, and
-explain specifically why they fail. Preserve important names, regions,
-thresholds, numbers, dates, negations, and qualifiers. Group repetitive failures
-into themes instead of enumerating every similar failure. Do not use vague
-wording such as "some claims", "certain details", "X and Y", or "a few issues",
-and do not invent failure categories not supported by the classifications.
+If unsupported claims exist, overall_reason must identify the material failure
+patterns, reference at least one and at most three representative unsupported
+claims, and explain specifically why they fail. Preserve important names,
+regions, actors, thresholds, numbers, dates, negations, modality, scope,
+conditions, and qualifiers. Group repetitive failures into themes instead of
+enumerating every similar failure. Do not use vague wording such as "some
+claims", "certain details", "X and Y", or "a few issues", and do not invent
+failure categories not supported by the classifications.
 
 If every claim is supported, summarize the material output concepts grounded in
 the context. Do not include a metric score, percentage, claim counts, status
-counts, or final metric label in overall_reason."""
+counts, or final metric label in overall_reason.
+
+Start directly with the substantive supported area or failure. Do not begin with
+generic aggregate commentary about how many claims passed or how good the
+overall result is, such as "Most claims are supported", "Most claims are
+grounded", "The response is mostly faithful", "Overall, the response is well
+grounded", "The response is generally accurate", or "There are a few unsupported
+claims".
+
+If claims is empty, overall_reason must be a concise semantic statement such as:
+The output contains no materially checkable factual claims."""
 
 _PER_ITEM_REASON_RULES = """\
 Return one concise, non-empty reason for every claim and one non-empty
 overall_reason in the same structured response.
 
 The overall_reason is a semantic explanation, not a score summary. If
-unsupported claims exist, identify the most material failure patterns, mention
-up to three representative unsupported claims, and explain specifically why
-they fail. Preserve important names, regions, thresholds, numbers, dates,
-negations, and qualifiers. Group repetitive failures into themes. Do not use
-vague wording such as "some claims", "certain details", "X and Y", or "a few
-issues", and do not invent failure categories. If every claim is supported,
-summarize the material output concepts grounded in the context. Do not include a
-metric score, percentage, claim counts, status counts, or final metric label."""
+unsupported claims exist, identify the material failure patterns, reference at
+least one and at most three representative unsupported claims, and explain
+specifically why they fail. Preserve important names, regions, actors,
+thresholds, numbers, dates, negations, modality, scope, conditions, and
+qualifiers. Group repetitive failures into themes. Do not use vague wording such
+as "some claims", "certain details", "X and Y", or "a few issues", and do not
+invent failure categories. If every claim is supported, summarize the material
+output concepts grounded in the context. Do not include a metric score,
+percentage, claim counts, status counts, or final metric label.
+
+Start directly with the substantive supported area or failure. Do not begin with
+generic aggregate commentary about how many claims passed or how good the
+overall result is. If claims is empty, overall_reason must be a concise semantic
+statement such as: The output contains no materially checkable factual claims."""
 
 _NONE_REASON_RULES = """\
 Return only claim and status for each item. Do not return per-item reasons,

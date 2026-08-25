@@ -87,7 +87,7 @@ class CoverageEvaluator(Evaluator):
 
     def resume_signature(self) -> dict:
         return {
-            "contract_version": 3,
+            "contract_version": 4,
             "verbose": self._verbose,
             "max_items": self._max_items,
             "reason_mode": self._reason_mode,

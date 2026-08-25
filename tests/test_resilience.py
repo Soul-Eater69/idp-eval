@@ -1297,6 +1297,42 @@ def test_builtin_evaluation_fingerprint_tracks_retrieval_configuration():
     assert len(fingerprints) == 4
 
 
+def test_core_evaluator_resume_signatures_use_contract_version_four():
+    assert CoverageEvaluator().resume_signature()["contract_version"] == 4
+    assert FaithfulnessEvaluator().resume_signature()["contract_version"] == 4
+
+
+@pytest.mark.parametrize(
+    "evaluator_type", [CoverageEvaluator, FaithfulnessEvaluator]
+)
+def test_v4_semantic_contract_changes_fingerprint_from_v3(evaluator_type):
+    class PreviousV3Contract(evaluator_type):
+        def resume_signature(self):
+            signature = super().resume_signature()
+            signature["contract_version"] = 3
+            return signature
+
+    class Judge:
+        model = "same-offline-model"
+
+    case_hash = case_fingerprint(
+        EvaluationCase(case_id="same", context="fact", output="fact")
+    )
+    current = evaluator_type(
+        Judge(), verbose=True, max_items=5, reason_mode="overall"
+    )
+    previous = PreviousV3Contract(
+        Judge(), verbose=True, max_items=5, reason_mode="overall"
+    )
+
+    assert current.resume_signature() | {"contract_version": 3} == (
+        previous.resume_signature()
+    )
+    assert evaluation_fingerprint(
+        case_hash, current.name, current
+    ) != evaluation_fingerprint(case_hash, previous.name, previous)
+
+
 @pytest.mark.parametrize(
     "evaluator_type,limit_name,response",
     [

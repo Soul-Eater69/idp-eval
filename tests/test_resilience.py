@@ -1305,32 +1305,40 @@ def test_core_evaluator_resume_signatures_use_contract_version_four():
 @pytest.mark.parametrize(
     "evaluator_type", [CoverageEvaluator, FaithfulnessEvaluator]
 )
-def test_v4_semantic_contract_changes_fingerprint_from_v3(evaluator_type):
-    class PreviousV3Contract(evaluator_type):
-        def resume_signature(self):
-            signature = super().resume_signature()
-            signature["contract_version"] = 3
-            return signature
-
+def test_v4_semantic_contract_changes_fingerprint_from_v3(
+    evaluator_type, monkeypatch
+):
     class Judge:
         model = "same-offline-model"
 
     case_hash = case_fingerprint(
         EvaluationCase(case_id="same", context="fact", output="fact")
     )
-    current = evaluator_type(
+    evaluator = evaluator_type(
         Judge(), verbose=True, max_items=5, reason_mode="overall"
     )
-    previous = PreviousV3Contract(
-        Judge(), verbose=True, max_items=5, reason_mode="overall"
+    current_signature = evaluator.resume_signature()
+    assert current_signature["contract_version"] == 4
+    current_fingerprint = evaluation_fingerprint(
+        case_hash, evaluator.name, evaluator
     )
 
-    assert current.resume_signature() | {"contract_version": 3} == (
-        previous.resume_signature()
+    previous_signature = {
+        **current_signature,
+        "contract_version": 3,
+    }
+    monkeypatch.setattr(
+        evaluator,
+        "resume_signature",
+        lambda: previous_signature,
     )
-    assert evaluation_fingerprint(
-        case_hash, current.name, current
-    ) != evaluation_fingerprint(case_hash, previous.name, previous)
+    previous_fingerprint = evaluation_fingerprint(
+        case_hash, evaluator.name, evaluator
+    )
+
+    assert type(evaluator) is evaluator_type
+    assert current_signature | {"contract_version": 3} == previous_signature
+    assert current_fingerprint != previous_fingerprint
 
 
 @pytest.mark.parametrize(

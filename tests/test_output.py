@@ -140,26 +140,36 @@ def test_summary_sheet_and_compact_coverage_details(tmp_path):
     assert header == (
         "run_name",
         "dataset_name",
-        "case_id",
+        "key_id",
         "input",
-        "trace_id",
+        "context",
+        "output",
+        "instructions",
         "metric",
+        "status",
         "score",
         "label",
         "explanation",
-        "annotator_kind",
         "timestamp",
         "raw_details_json",
     )
     row = rows[0]
     assert row["metric"] == "coverage"
     assert row["score"] == 0.25
-    assert row["case_id"] == "gt-001"
+    assert row["key_id"] == "gt-001"
     assert row["input"] is None
+    assert row["context"] == "ctx"
+    assert row["output"] == "out"
+    assert row["status"] == "success"
     details = json.loads(row["raw_details_json"])
     assert details["judge_call_count"] == 1
     assert "items" not in details
-    assert _sheet_names(path) == ["evaluations"]
+    assert _sheet_names(path) == ["evaluations", "_idp_eval_checkpoint"]
+    checkpoint = openpyxl.load_workbook(path)["_idp_eval_checkpoint"]
+    assert checkpoint.sheet_state == "veryHidden"
+    checkpoint_row = _read(path, "_idp_eval_checkpoint")[1][0]
+    assert len(checkpoint_row["case_fingerprint"]) == 64
+    assert len(checkpoint_row["evaluation_fingerprint"]) == 64
 
 
 def test_summary_persists_rendered_descriptive_input_only_at_case_level(tmp_path):
@@ -180,6 +190,135 @@ def test_summary_persists_rendered_descriptive_input_only_at_case_level(tmp_path
     assert "input" not in _read(path, "coverage_items")[0]
 
 
+def test_summary_persists_all_rendered_case_audit_fields(tmp_path):
+    path = tmp_path / "audit.xlsx"
+    case = EvaluationCase(
+        case_id="audit-1",
+        input={"task": "Answer"},
+        context={"facts": ["A", "B"]},
+        output={"answer": "A"},
+        instructions=["Be concise"],
+        retrieved_documents=[{"text": "A", "score": 0.9}],
+    )
+    EvaluationFramework(
+        evaluators=[CoverageEvaluator(_coverage_judge(), verbose=True)],
+        output="excel",
+        excel_path=str(path),
+        report_fields=[
+            "input",
+            "context",
+            "output",
+            "instructions",
+            "retrieved_documents",
+        ],
+    ).evaluate(case)
+    row = _read(path)[1][0]
+    assert row["input"] == "Task: Answer"
+    assert row["context"] == "Facts:\n- A\n- B"
+    assert row["output"] == "Answer: A"
+    assert row["instructions"] == "- Be concise"
+    assert row["retrieved_documents"] == "- Text: A\n\n  Score: 0.9"
+
+
+def test_report_fields_select_order_and_metadata_columns(tmp_path):
+    path = tmp_path / "selected.xlsx"
+    case = EvaluationCase(
+        case_id="epic-1",
+        context={"facts": ["A"]},
+        output={"answer": "A"},
+        metadata={"theme_id": "theme-7"},
+    )
+    EvaluationFramework(
+        evaluators=[CoverageEvaluator(_coverage_judge())],
+        output="excel",
+        excel_path=str(path),
+        report_fields=["output", "context", "metadata.theme_id"],
+    ).evaluate(case)
+    header, rows = _read(path)
+    assert header[:6] == (
+        "run_name",
+        "dataset_name",
+        "key_id",
+        "output",
+        "context",
+        "theme_id",
+    )
+    assert rows[0]["output"] == "Answer: A"
+    assert rows[0]["context"] == "Facts:\n- A"
+    assert rows[0]["theme_id"] == "theme-7"
+
+
+def test_missing_selected_metadata_writes_empty_cell(tmp_path):
+    path = tmp_path / "missing-metadata.xlsx"
+    EvaluationFramework(
+        evaluators=[CoverageEvaluator(_coverage_judge())],
+        output="excel",
+        excel_path=str(path),
+        report_fields=["metadata.theme_id"],
+    ).evaluate(CASE)
+    assert _read(path)[1][0]["theme_id"] is None
+
+
+@pytest.mark.parametrize(
+    "fields,match",
+    [
+        (["foo"], "Unknown report field"),
+        (["case_id"], "Unknown report field"),
+        (["context", "context"], "Duplicate report field"),
+        (["metadata."], "one non-empty key"),
+        (["metadata.a.b"], "one non-empty key"),
+        (["metadata.metric"], "conflicts with visible Excel column"),
+        (["input", "metadata.input"], "conflicts with visible Excel column"),
+    ],
+)
+def test_report_field_validation(fields, match):
+    with pytest.raises(ValueError, match=match):
+        EvaluationFramework(evaluators=[], report_fields=fields)
+
+
+def test_visible_sheets_hide_technical_identity_columns(tmp_path):
+    path = tmp_path / "clean.xlsx"
+    EvaluationFramework(
+        evaluators=[CoverageEvaluator(_coverage_judge(), verbose=True)],
+        output="excel",
+        excel_path=str(path),
+    ).evaluate(CASE)
+    technical = {
+        "case_id",
+        "trace_id",
+        "case_fingerprint",
+        "evaluation_fingerprint",
+        "annotator_kind",
+    }
+    assert technical.isdisjoint(_read(path)[0])
+    assert technical.isdisjoint(_read(path, "coverage_items")[0])
+    checkpoint = openpyxl.load_workbook(path)["_idp_eval_checkpoint"]
+    assert checkpoint.sheet_state == "veryHidden"
+    assert technical.issubset(set(_read(path, "_idp_eval_checkpoint")[0]))
+
+
+def test_resume_rejects_visible_report_schema_change_before_judge(tmp_path):
+    path = tmp_path / "schema.xlsx"
+    first_judge = _coverage_judge()
+    EvaluationFramework(
+        [CoverageEvaluator(first_judge)],
+        output="excel",
+        excel_path=str(path),
+        resume=True,
+        report_fields=["context", "output"],
+    ).evaluate(CASE)
+    second_judge = _coverage_judge()
+    with pytest.raises(ValueError, match="does not match"):
+        EvaluationFramework(
+            [CoverageEvaluator(second_judge)],
+            output="excel",
+            excel_path=str(path),
+            resume=True,
+            report_fields=["output"],
+        )
+    assert second_judge.calls == 0
+
+
 def test_verbose_coverage_items_sheet(tmp_path):
     path = tmp_path / "coverage.xlsx"
     framework = EvaluationFramework(
@@ -188,13 +327,16 @@ def test_verbose_coverage_items_sheet(tmp_path):
         excel_path=str(path),
     )
     framework.evaluate(CASE)
-    assert _sheet_names(path) == ["evaluations", "coverage_items"]
+    assert _sheet_names(path) == [
+        "evaluations",
+        "_idp_eval_checkpoint",
+        "coverage_items",
+    ]
     header, rows = _read(path, "coverage_items")
     assert header == (
         "run_name",
         "dataset_name",
-        "case_id",
-        "trace_id",
+        "key_id",
         "metric",
         "item_id",
         "source_item",
@@ -218,7 +360,11 @@ def test_only_current_coverage_sheets_are_created(tmp_path):
         output="excel",
         excel_path=str(path),
     ).evaluate(CASE)
-    assert _sheet_names(path) == ["evaluations", "coverage_items"]
+    assert _sheet_names(path) == [
+        "evaluations",
+        "_idp_eval_checkpoint",
+        "coverage_items",
+    ]
 
 
 def test_instruction_adherence_sheet_remains(tmp_path):
@@ -243,13 +389,16 @@ def test_verbose_faithfulness_items_sheet(tmp_path):
         output="excel",
         excel_path=str(path),
     ).evaluate(CASE)
-    assert _sheet_names(path) == ["evaluations", "faithfulness_items"]
+    assert _sheet_names(path) == [
+        "evaluations",
+        "_idp_eval_checkpoint",
+        "faithfulness_items",
+    ]
     header, rows = _read(path, "faithfulness_items")
     assert header == (
         "run_name",
         "dataset_name",
-        "case_id",
-        "trace_id",
+        "key_id",
         "metric",
         "claim_id",
         "claim",
@@ -274,13 +423,26 @@ def test_multiple_cases_append_in_order(tmp_path):
             EvaluationCase(case_id="c2", context="c", output="o"),
         ]
     )
-    assert [row["case_id"] for row in _read(path)[1]] == ["c1", "c2"]
-    assert [row["case_id"] for row in _read(path, "coverage_items")[1]] == [
+    assert [row["key_id"] for row in _read(path)[1]] == ["c1", "c2"]
+    assert [row["key_id"] for row in _read(path, "coverage_items")[1]] == [
         "c1",
         "c1",
         "c2",
         "c2",
     ]
+
+
+def test_default_non_resume_mode_preserves_append_behavior(tmp_path):
+    path = tmp_path / "append.xlsx"
+    framework = EvaluationFramework(
+        evaluators=[CoverageEvaluator(_coverage_judge(), verbose=True)],
+        output="excel",
+        excel_path=str(path),
+    )
+    framework.evaluate(CASE)
+    framework.evaluate(CASE)
+    assert len(_read(path)[1]) == 2
+    assert len(_read(path, "coverage_items")[1]) == 4
 
 
 class RecordingWriter:
@@ -321,7 +483,8 @@ def test_custom_evaluations_use_same_excel_path(tmp_path):
     )
     row = _read(path)[1][0]
     assert row["metric"] == "company_policy"
-    assert row["annotator_kind"] == "CODE"
+    checkpoint_row = _read(path, "_idp_eval_checkpoint")[1][0]
+    assert checkpoint_row["annotator_kind"] == "CODE"
     assert json.loads(row["raw_details_json"])["version"] == "v1"
 
 

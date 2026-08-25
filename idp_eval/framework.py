@@ -10,19 +10,29 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass
 from typing import Iterable, TypeAlias
 
 from tqdm.auto import tqdm
 
 from idp_eval import tracing
 from idp_eval.models import EvaluationCase, EvaluationResult, Evaluator
+from idp_eval.operational_errors import classify_operational_error
 from idp_eval.output import (
+    EvaluationCheckpoint,
     EvaluationRecord,
     PersistenceError,
     build_writers,
+    validate_report_fields,
     validate_annotator_kind,
 )
 from idp_eval.rendering import is_empty_value, render_value
+from idp_eval.resume import (
+    case_fingerprint,
+    evaluation_fingerprint,
+    external_evaluation_fingerprint,
+    rendered_case_fields,
+)
 
 # An entry may be an evaluator class (constructed with the shared judge) or an
 # already-constructed evaluator instance (backward-compatible).
@@ -37,6 +47,31 @@ ScopedEvaluationResults: TypeAlias = dict[
     str, EvaluationResults | list[EvaluationResults] | None
 ]
 EvaluationReturn: TypeAlias = EvaluationResults | ScopedEvaluationResults
+
+
+@dataclass
+class _LogicalRun:
+    """Internal result for one already-expanded evaluator-facing case."""
+
+    results: EvaluationResults
+    records: list[EvaluationRecord]
+    resumed_metrics: int = 0
+    evaluated_metrics: int = 0
+    operational_errors: int = 0
+
+
+@dataclass
+class _CaseRun:
+    """Internal result and operational counts for one original case."""
+
+    results: EvaluationReturn
+    resumed_metrics: int = 0
+    evaluated_metrics: int = 0
+    operational_errors: int = 0
+
+    @property
+    def fully_resumed(self) -> bool:
+        return self.resumed_metrics > 0 and self.evaluated_metrics == 0
 
 
 class EvaluationFramework:
@@ -59,6 +94,8 @@ class EvaluationFramework:
         judge=None,
         output: str | None = None,
         excel_path: str | None = None,
+        resume: bool = False,
+        report_fields: list[str] | tuple[str, ...] | None = None,
     ):
         """Initializes the framework.
 
@@ -71,6 +108,11 @@ class EvaluationFramework:
                 ``"excel"``, or ``"both"``.
             excel_path: Destination ``.xlsx`` path; required when ``output``
                 includes Excel.
+            resume: Reuse exact successful evaluations from ``excel_path`` and
+                upsert rerun errors. Requires Excel output.
+            report_fields: Ordered case-content fields shown in the visible
+                Excel report. Reporting-only; does not affect evaluation or
+                resume fingerprints.
 
         Raises:
             TypeError: If an entry is neither an ``Evaluator`` subclass nor
@@ -87,7 +129,22 @@ class EvaluationFramework:
                 )
             self._evaluators[evaluator.name] = evaluator
 
-        self._writers = build_writers(output, excel_path)
+        validated_report_fields = validate_report_fields(report_fields)
+        self._writers = build_writers(
+            output,
+            excel_path,
+            resume=resume,
+            report_fields=validated_report_fields,
+        )
+        self._checkpoint = next(
+            (
+                writer
+                for writer in self._writers
+                if isinstance(writer, EvaluationCheckpoint)
+            ),
+            None,
+        )
+        self._resume = resume
 
     @staticmethod
     def _instantiate(entry: EvaluatorEntry, judge) -> Evaluator:
@@ -162,6 +219,13 @@ class EvaluationFramework:
                 f"{max_concurrency!r}."
             )
 
+    @staticmethod
+    def _validate_on_error(on_error: str) -> None:
+        if on_error not in ("raise", "continue"):
+            raise ValueError(
+                f"Unknown on_error {on_error!r}; expected 'raise' or 'continue'."
+            )
+
     def _retrieval_metrics(self, selected: list[str]) -> list[str]:
         """Selected metric names that share the per-case document-relevance pass."""
         return [
@@ -200,6 +264,7 @@ class EvaluationFramework:
         metrics: list[str] | None = None,
         run_name: str | None = None,
         dataset_name: str | None = None,
+        on_error: str = "raise",
     ) -> EvaluationReturn:
         """Evaluates a case using its combined/individual/both output scope.
 
@@ -210,6 +275,9 @@ class EvaluationFramework:
             run_name: Optional benchmark run name, attached to the trace and
                 every published row.
             dataset_name: Optional dataset name, attached likewise.
+            on_error: ``"raise"`` preserves fail-fast behavior. ``"continue"``
+                converts only recognized operational failures into metric error
+                results.
 
         Returns:
             Combined scope returns the backward-compatible metric mapping.
@@ -223,31 +291,75 @@ class EvaluationFramework:
             PersistenceError: If evaluation succeeds but a configured writer
                 fails; the computed results are preserved on the exception.
         """
+        self._validate_on_error(on_error)
         selected = self._select(metrics)
         scope, planned_cases = self._scope_plan(case)
         for planned_case in planned_cases:
             self._validate_case(planned_case, selected)
 
-        results = [
-            self._evaluate_one(
+        return self._run_original_sync(
+            scope,
+            planned_cases,
+            selected,
+            run_name=run_name,
+            dataset_name=dataset_name,
+            on_error=on_error,
+        ).results
+
+    def _run_original_sync(
+        self,
+        scope: str,
+        planned_cases: list[EvaluationCase],
+        selected: list[str],
+        *,
+        run_name: str | None,
+        dataset_name: str | None,
+        on_error: str,
+    ) -> _CaseRun:
+        """Runs and immediately persists each logical part of one input case."""
+        logical_runs: list[_LogicalRun] = []
+        for planned_case in planned_cases:
+            run = self._run_one(
                 planned_case,
                 selected,
                 run_name=run_name,
                 dataset_name=dataset_name,
+                on_error=on_error,
             )
-            for planned_case in planned_cases
-        ]
-        return self._shape_scope_results(scope, results)
+            self._publish(run.records, run.results)
+            logical_runs.append(run)
+        return _CaseRun(
+            results=self._shape_scope_results(
+                scope, [run.results for run in logical_runs]
+            ),
+            resumed_metrics=sum(run.resumed_metrics for run in logical_runs),
+            evaluated_metrics=sum(run.evaluated_metrics for run in logical_runs),
+            operational_errors=sum(
+                run.operational_errors for run in logical_runs
+            ),
+        )
 
-    def _evaluate_one(
+    def _run_one(
         self,
         case: EvaluationCase,
         selected: list[str],
         *,
         run_name: str | None,
         dataset_name: str | None,
-    ) -> EvaluationResults:
-        """Runs one already-expanded ordinary case with one root trace."""
+        on_error: str,
+    ) -> _LogicalRun:
+        """Runs one expanded case, reusing exact successful checkpoints."""
+
+        resumed = self._load_resumed_results(
+            case, selected, run_name, dataset_name
+        )
+        to_run = [name for name in selected if name not in resumed]
+        if selected and not to_run:
+            return _LogicalRun(
+                results={name: resumed[name] for name in selected},
+                records=[],
+                resumed_metrics=len(resumed),
+            )
 
         with tracing.case_evaluation_span(
             case.case_id,
@@ -257,30 +369,46 @@ class EvaluationFramework:
         ) as handle:
             # One batched relevance call for all selected retrieval metrics,
             # judged once through the deepest requested effective K.
-            retrieval = self._retrieval_metrics(selected)
+            retrieval = self._retrieval_metrics(to_run)
             relevance_pass = None
+            new_results: dict[str, EvaluationResult] = {}
             if retrieval:
                 relevance_pass, max_depth = self._build_relevance_pass(
                     case, retrieval
                 )
-                relevance_pass.run(max_depth)
-
-            results: dict[str, EvaluationResult] = {}
-            for metric_name in selected:
-                evaluator = self._evaluators[metric_name]
-                if relevance_pass is not None and getattr(
-                    evaluator, "uses_retrieval_relevance", False
-                ):
-                    results[metric_name] = evaluator.evaluate_shared(
-                        case, relevance_pass
+                try:
+                    relevance_pass.run(max_depth)
+                except Exception as exc:
+                    error = self._operational_results(
+                        retrieval, exc, on_error=on_error
                     )
-                else:
-                    results[metric_name] = evaluator.evaluate(case)
+                    new_results.update(error)
+                    relevance_pass = None
+
+            for metric_name in to_run:
+                if metric_name in new_results:
+                    continue
+                evaluator = self._evaluators[metric_name]
+                try:
+                    if relevance_pass is not None and getattr(
+                        evaluator, "uses_retrieval_relevance", False
+                    ):
+                        new_results[metric_name] = evaluator.evaluate_shared(
+                            case, relevance_pass
+                        )
+                    else:
+                        new_results[metric_name] = evaluator.evaluate(case)
+                except Exception as exc:
+                    new_results.update(
+                        self._operational_results(
+                            [metric_name], exc, on_error=on_error
+                        )
+                    )
 
             # Supplemental, compact result attributes on the open root span
             # (native Phoenix annotations, below, are the canonical record).
-            for metric_name in selected:
-                result = results[metric_name]
+            for metric_name in to_run:
+                result = new_results[metric_name]
                 tracing.annotate_current_span(
                     metric=result.metric,
                     score=result.score,
@@ -291,13 +419,79 @@ class EvaluationFramework:
             span_id = handle.span_id
             trace_id = handle.trace_id
 
-        # The root span is now closed/exported; persist native annotations
-        # against its span id.
+        results = {
+            name: resumed[name] if name in resumed else new_results[name]
+            for name in selected
+        }
         records = self._build_records(
-            case, selected, results, run_name, dataset_name, trace_id, span_id
+            case,
+            to_run,
+            new_results,
+            run_name,
+            dataset_name,
+            trace_id,
+            span_id,
         )
-        self._publish(records, results)
+        return _LogicalRun(
+            results=results,
+            records=records,
+            resumed_metrics=len(resumed),
+            evaluated_metrics=len(to_run),
+            operational_errors=sum(
+                result.label == "error" for result in new_results.values()
+            ),
+        )
 
+    def _operational_results(
+        self, metrics: list[str], exc: Exception, *, on_error: str
+    ) -> dict[str, EvaluationResult]:
+        """Converts only known operational failures when explicitly requested."""
+        info = classify_operational_error(exc)
+        if on_error == "raise" or info is None:
+            raise exc
+        return {
+            metric: EvaluationResult(
+                metric=metric,
+                score=None,
+                label="error",
+                explanation=info.explanation,
+                details=dict(info.details()),
+            )
+            for metric in metrics
+        }
+
+    def _evaluation_fingerprints(
+        self, case: EvaluationCase, selected: list[str]
+    ) -> tuple[str, dict[str, str]]:
+        case_hash = case_fingerprint(case)
+        return case_hash, {
+            name: evaluation_fingerprint(
+                case_hash, name, self._evaluators[name]
+            )
+            for name in selected
+        }
+
+    def _load_resumed_results(
+        self,
+        case: EvaluationCase,
+        selected: list[str],
+        run_name: str | None,
+        dataset_name: str | None,
+    ) -> EvaluationResults:
+        if not self._resume or self._checkpoint is None:
+            return {}
+        _, fingerprints = self._evaluation_fingerprints(case, selected)
+        results: EvaluationResults = {}
+        for name in selected:
+            result = self._checkpoint.load_successful_result(
+                run_name=run_name,
+                dataset_name=dataset_name,
+                case_id=case.case_id,
+                evaluation_fingerprint=fingerprints[name],
+                metric=name,
+            )
+            if result is not None:
+                results[name] = result
         return results
 
     @staticmethod
@@ -369,15 +563,32 @@ class EvaluationFramework:
         span_id: str | None,
     ) -> list[EvaluationRecord]:
         """Normalizes one case's results into publishable records (in order)."""
-        descriptive_input = self._descriptive_input(case)
+        case_hash, fingerprints = self._evaluation_fingerprints(case, selected)
+        audit = rendered_case_fields(case)
         return [
             EvaluationRecord.from_result(
                 results[name],
                 annotator_kind=self._evaluators[name].annotator_kind,
+                status=(
+                    "error"
+                    if results[name].label == "error"
+                    and results[name].details
+                    and results[name].details.get("status") == "error"
+                    else "success"
+                ),
                 case_id=case.case_id,
-                input=descriptive_input,
+                input=audit["input"],
                 run_name=run_name,
                 dataset_name=dataset_name,
+                case_fingerprint=case_hash,
+                evaluation_fingerprint=fingerprints[name],
+                context=audit["context"],
+                output=audit["output"],
+                instructions=audit["instructions"],
+                evaluation_scope=audit["evaluation_scope"],
+                retrieved_documents_json=audit["retrieved_documents_json"],
+                retrieved_documents=audit["retrieved_documents"],
+                metadata=(dict(case.metadata) if case.metadata is not None else None),
                 trace_id=trace_id,
                 span_id=span_id,
             )
@@ -422,6 +633,13 @@ class EvaluationFramework:
     @staticmethod
     def _progress_score(result: EvaluationResult) -> str:
         """Formats a normalized result compactly, including not-applicable."""
+        if result.label == "error":
+            error_type = (
+                result.details.get("error_type")
+                if isinstance(result.details, dict)
+                else None
+            )
+            return f"ERROR ({error_type or 'operational'})"
         score = "None" if result.score is None else f"{result.score:.3f}"
         label = "None" if result.label is None else result.label
         return f"{score} ({label})"
@@ -487,14 +705,25 @@ class EvaluationFramework:
         duration: float,
         results: EvaluationReturn,
         selected: list[str],
+        fully_resumed: bool = False,
+        operational_errors: int = 0,
     ) -> None:
         """Writes one case completion line without corrupting the bar."""
         metrics = cls._progress_metric_summary(results, selected)
         suffix = f" | {metrics}" if metrics else ""
+        if fully_resumed:
+            symbol = "↷"
+            state = "resumed from checkpoint"
+        elif operational_errors:
+            symbol = "⚠"
+            state = "completed with operational error"
+        else:
+            symbol = "✓"
+            state = "completed"
         tqdm.write(
-            f"✓ [{completed}/{total}] "
+            f"{symbol} [{completed}/{total}] "
             f"case={cls._progress_case_label(case, index)} "
-            f"completed in {duration:.1f}s{suffix}",
+            f"{state} in {duration:.1f}s{suffix}",
             file=progress.fp,
         )
 
@@ -525,6 +754,7 @@ class EvaluationFramework:
         run_name: str | None = None,
         dataset_name: str | None = None,
         show_progress: bool = False,
+        on_error: str = "raise",
     ) -> list[EvaluationReturn]:
         """Evaluates many cases independently, honoring each output scope.
 
@@ -551,42 +781,54 @@ class EvaluationFramework:
                 evaluator; the message names the offending ``case_id`` (or index).
         """
         case_list = list(cases)
+        self._validate_on_error(on_error)
         selected = self._select(metrics)
 
         # Pre-validate the entire batch before any judge work (fail fast).
+        plans: list[tuple[str, list[EvaluationCase]]] = []
         for index, case in enumerate(case_list):
             try:
-                _, planned_cases = self._scope_plan(case)
+                plan = self._scope_plan(case)
+                planned_cases = plan[1]
                 for planned_case in planned_cases:
                     self._validate_case(planned_case, selected)
+                plans.append(plan)
             except ValueError as exc:
                 label = case.case_id if case.case_id is not None else f"index {index}"
                 raise ValueError(f"Case {label}: {exc}") from exc
 
         if not show_progress:
             return [
-                self.evaluate(
-                    case,
-                    metrics=metrics,
+                self._run_original_sync(
+                    scope,
+                    planned_cases,
+                    selected,
                     run_name=run_name,
                     dataset_name=dataset_name,
-                )
-                for case in case_list
+                    on_error=on_error,
+                ).results
+                for scope, planned_cases in plans
             ]
 
         total = len(case_list)
         batch_started = time.perf_counter()
         progress = tqdm(total=total, desc="Evaluating cases", unit="case")
         results_list: list[EvaluationReturn] = []
+        resumed_cases = 0
+        operational_error_cases = 0
         try:
-            for index, case in enumerate(case_list):
+            for index, (case, (scope, planned_cases)) in enumerate(
+                zip(case_list, plans)
+            ):
                 case_started = time.perf_counter()
                 try:
-                    results = self.evaluate(
-                        case,
-                        metrics=metrics,
+                    run = self._run_original_sync(
+                        scope,
+                        planned_cases,
+                        selected,
                         run_name=run_name,
                         dataset_name=dataset_name,
+                        on_error=on_error,
                     )
                 except Exception as exc:
                     self._write_progress_failure(
@@ -599,7 +841,9 @@ class EvaluationFramework:
                         exc=exc,
                     )
                     raise
-                results_list.append(results)
+                results_list.append(run.results)
+                resumed_cases += int(run.fully_resumed)
+                operational_error_cases += int(run.operational_errors > 0)
                 progress.update(1)
                 self._write_progress_success(
                     progress,
@@ -608,15 +852,19 @@ class EvaluationFramework:
                     case=case,
                     index=index,
                     duration=time.perf_counter() - case_started,
-                    results=results,
+                    results=run.results,
                     selected=selected,
+                    fully_resumed=run.fully_resumed,
+                    operational_errors=run.operational_errors,
                 )
         finally:
             progress.close()
 
         tqdm.write(
             f"Evaluation complete: {total}/{total} cases in "
-            f"{self._progress_elapsed(time.perf_counter() - batch_started)}",
+            f"{self._progress_elapsed(time.perf_counter() - batch_started)} | "
+            f"completed={total - resumed_cases} | resumed={resumed_cases} | "
+            f"operational_errors={operational_error_cases}",
             file=progress.fp,
         )
         return results_list
@@ -627,6 +875,7 @@ class EvaluationFramework:
         metrics: list[str] | None = None,
         run_name: str | None = None,
         dataset_name: str | None = None,
+        on_error: str = "raise",
     ) -> list[dict[str, EvaluationResult]]:
         """Convenience orchestration: fan grouped outputs into single cases.
 
@@ -653,6 +902,7 @@ class EvaluationFramework:
             metrics=metrics,
             run_name=run_name,
             dataset_name=dataset_name,
+            on_error=on_error,
         )
 
     async def a_evaluate_groups(
@@ -662,6 +912,7 @@ class EvaluationFramework:
         run_name: str | None = None,
         dataset_name: str | None = None,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+        on_error: str = "raise",
     ) -> list[dict[str, EvaluationResult]]:
         """Fans grouped outputs into cases, then evaluates them concurrently.
 
@@ -678,6 +929,7 @@ class EvaluationFramework:
             run_name=run_name,
             dataset_name=dataset_name,
             max_concurrency=max_concurrency,
+            on_error=on_error,
         )
 
     @staticmethod
@@ -740,6 +992,7 @@ class EvaluationFramework:
         run_name: str | None = None,
         dataset_name: str | None = None,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
+        on_error: str = "raise",
     ) -> EvaluationReturn:
         """Async counterpart of :meth:`evaluate`, including output scope.
 
@@ -749,24 +1002,28 @@ class EvaluationFramework:
         judge call.
         """
         self._validate_max_concurrency(max_concurrency)
+        self._validate_on_error(on_error)
         selected = self._select(metrics)
         scope, planned_cases = self._scope_plan(case)
         for planned_case in planned_cases:
             self._validate_case(planned_case, selected)
         limiter = asyncio.Semaphore(max_concurrency)
-        pairs = await asyncio.gather(
+        publish_lock = asyncio.Lock()
+        runs = await asyncio.gather(
             *(
-                self._a_run_case(
-                    planned_case, selected, run_name, dataset_name, limiter
+                self._a_run_and_publish(
+                    planned_case,
+                    selected,
+                    run_name,
+                    dataset_name,
+                    limiter,
+                    on_error,
+                    publish_lock,
                 )
                 for planned_case in planned_cases
             )
         )
-        results_list: list[EvaluationResults] = []
-        for results, records in pairs:
-            self._publish(records, results)
-            results_list.append(results)
-        return self._shape_scope_results(scope, results_list)
+        return self._shape_scope_results(scope, [run.results for run in runs])
 
     async def a_evaluate_many(
         self,
@@ -776,6 +1033,7 @@ class EvaluationFramework:
         dataset_name: str | None = None,
         max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
         show_progress: bool = False,
+        on_error: str = "raise",
     ) -> list[EvaluationReturn]:
         """Async counterpart of :meth:`evaluate_many`: cases run concurrently.
 
@@ -786,12 +1044,13 @@ class EvaluationFramework:
 
         Failure behavior mirrors :meth:`evaluate_many`: the whole batch is
         validated up front (fail fast, case-aware error). Results are returned in
-        input order; persistence happens serially after evaluation to avoid
-        concurrent writer mutation. When ``show_progress`` is true, progress
-        advances as original input cases finish while return ordering remains
-        unchanged.
+        input order; each completed logical case is persisted immediately through
+        one serialized publisher so concurrent tasks never mutate writers at the
+        same time. When ``show_progress`` is true, progress advances as original
+        input cases finish while return ordering remains unchanged.
         """
         self._validate_max_concurrency(max_concurrency)
+        self._validate_on_error(on_error)
         case_list = list(cases)
         selected = self._select(metrics)
 
@@ -807,16 +1066,23 @@ class EvaluationFramework:
                 raise ValueError(f"Case {label}: {exc}") from exc
 
         limiter = asyncio.Semaphore(max_concurrency)
+        publish_lock = asyncio.Lock()
         flat_cases = [case for _, cases in plans for case in cases]
 
+        async def run_and_publish(planned_case: EvaluationCase) -> _LogicalRun:
+            return await self._a_run_and_publish(
+                planned_case,
+                selected,
+                run_name,
+                dataset_name,
+                limiter,
+                on_error,
+                publish_lock,
+            )
+
         if not show_progress:
-            pairs = await asyncio.gather(
-                *(
-                    self._a_run_case(
-                        case, selected, run_name, dataset_name, limiter
-                    )
-                    for case in flat_cases
-                )
+            runs = await asyncio.gather(
+                *(run_and_publish(case) for case in flat_cases)
             )
         else:
             total = len(case_list)
@@ -835,9 +1101,7 @@ class EvaluationFramework:
                 owner_indices.extend([owner_index] * count)
                 offset += count
 
-            stored_pairs: list[
-                tuple[EvaluationResults, list[EvaluationRecord]] | None
-            ] = [None] * len(flat_cases)
+            stored_runs: list[_LogicalRun | None] = [None] * len(flat_cases)
             failure_reported = [False] * total
 
             async def run_with_progress(
@@ -846,13 +1110,7 @@ class EvaluationFramework:
                 planned_case: EvaluationCase,
             ) -> None:
                 try:
-                    pair = await self._a_run_case(
-                        planned_case,
-                        selected,
-                        run_name,
-                        dataset_name,
-                        limiter,
-                    )
+                    run = await run_and_publish(planned_case)
                 except Exception as exc:
                     if not failure_reported[owner_index]:
                         failure_reported[owner_index] = True
@@ -869,17 +1127,19 @@ class EvaluationFramework:
                         )
                     raise
 
-                stored_pairs[flat_index] = pair
+                stored_runs[flat_index] = run
                 remaining[owner_index] -= 1
                 if remaining[owner_index] == 0:
                     scope, planned_cases = plans[owner_index]
                     start = case_offsets[owner_index]
-                    scoped_results: list[EvaluationResults] = []
+                    scoped_runs: list[_LogicalRun] = []
                     for scoped_index in range(start, start + len(planned_cases)):
-                        stored_pair = stored_pairs[scoped_index]
-                        assert stored_pair is not None
-                        scoped_results.append(stored_pair[0])
-                    shaped = self._shape_scope_results(scope, scoped_results)
+                        stored_run = stored_runs[scoped_index]
+                        assert stored_run is not None
+                        scoped_runs.append(stored_run)
+                    shaped = self._shape_scope_results(
+                        scope, [run.results for run in scoped_runs]
+                    )
                     progress.update(1)
                     self._write_progress_success(
                         progress,
@@ -890,6 +1150,14 @@ class EvaluationFramework:
                         duration=time.perf_counter() - case_started[owner_index],
                         results=shaped,
                         selected=selected,
+                        fully_resumed=(
+                            sum(run.resumed_metrics for run in scoped_runs) > 0
+                            and sum(run.evaluated_metrics for run in scoped_runs)
+                            == 0
+                        ),
+                        operational_errors=sum(
+                            run.operational_errors for run in scoped_runs
+                        ),
                     )
 
             try:
@@ -904,16 +1172,12 @@ class EvaluationFramework:
             finally:
                 progress.close()
 
-            pairs = []
-            for stored_pair in stored_pairs:
-                assert stored_pair is not None
-                pairs.append(stored_pair)
+            runs = []
+            for stored_run in stored_runs:
+                assert stored_run is not None
+                runs.append(stored_run)
 
-        # Ordered, serial persistence (writers are not concurrency-safe).
-        flat_results: list[EvaluationResults] = []
-        for results, records in pairs:
-            self._publish(records, results)
-            flat_results.append(results)
+        flat_results = [run.results for run in runs]
 
         results_list: list[EvaluationReturn] = []
         offset = 0
@@ -926,12 +1190,51 @@ class EvaluationFramework:
             )
             offset += count
         if show_progress:
+            resumed_cases = 0
+            operational_error_cases = 0
+            offset = 0
+            for _, planned_cases in plans:
+                scoped_runs = runs[offset : offset + len(planned_cases)]
+                resumed_cases += int(
+                    sum(run.resumed_metrics for run in scoped_runs) > 0
+                    and sum(run.evaluated_metrics for run in scoped_runs) == 0
+                )
+                operational_error_cases += int(
+                    any(run.operational_errors for run in scoped_runs)
+                )
+                offset += len(planned_cases)
             tqdm.write(
-                f"Evaluation complete: {len(case_list)}/{len(case_list)} cases "
-                f"in {self._progress_elapsed(time.perf_counter() - batch_started)}",
+                f"Evaluation complete: {len(case_list)}/{len(case_list)} cases in "
+                f"{self._progress_elapsed(time.perf_counter() - batch_started)} | "
+                f"completed={len(case_list) - resumed_cases} | "
+                f"resumed={resumed_cases} | "
+                f"operational_errors={operational_error_cases}",
                 file=output_file,
             )
         return results_list
+
+    async def _a_run_and_publish(
+        self,
+        case: EvaluationCase,
+        selected: list[str],
+        run_name: str | None,
+        dataset_name: str | None,
+        limiter: asyncio.Semaphore,
+        on_error: str,
+        publish_lock: asyncio.Lock,
+    ) -> _LogicalRun:
+        """Runs one logical case and checkpoints it before returning."""
+        run = await self._a_run_case(
+            case,
+            selected,
+            run_name,
+            dataset_name,
+            limiter,
+            on_error,
+        )
+        async with publish_lock:
+            self._publish(run.records, run.results)
+        return run
 
     async def _a_run_case(
         self,
@@ -940,13 +1243,24 @@ class EvaluationFramework:
         run_name: str | None,
         dataset_name: str | None,
         limiter: asyncio.Semaphore,
-    ) -> tuple[dict[str, EvaluationResult], list[EvaluationRecord]]:
+        on_error: str,
+    ) -> _LogicalRun:
         """Runs one case's selected evaluators within its own root trace.
 
-        Returns the results and the (not-yet-persisted) records so the caller can
-        persist serially. Concurrent cases each get an independent root span/trace
-        because each is a separate task with its own OpenTelemetry context.
+        Concurrent cases each get an independent root span/trace because each is
+        a separate task with its own OpenTelemetry context.
         """
+        resumed = self._load_resumed_results(
+            case, selected, run_name, dataset_name
+        )
+        to_run = [name for name in selected if name not in resumed]
+        if selected and not to_run:
+            return _LogicalRun(
+                results={name: resumed[name] for name in selected},
+                records=[],
+                resumed_metrics=len(resumed),
+            )
+
         with tracing.case_evaluation_span(
             case.case_id,
             run_name,
@@ -955,40 +1269,54 @@ class EvaluationFramework:
         ) as handle:
             # One batched relevance call for all selected retrieval metrics. The
             # complete call consumes one slot from the shared judge limiter.
-            retrieval = self._retrieval_metrics(selected)
+            retrieval = self._retrieval_metrics(to_run)
             relevance_pass = None
+            new_results: dict[str, EvaluationResult] = {}
             if retrieval:
                 relevance_pass, max_depth = self._build_relevance_pass(
                     case, retrieval
                 )
-                await relevance_pass.a_run(max_depth, limiter)
-
-            results: dict[str, EvaluationResult] = {}
-            for metric_name in selected:
-                evaluator = self._evaluators[metric_name]
-                if relevance_pass is not None and getattr(
-                    evaluator, "uses_retrieval_relevance", False
-                ):
-                    # Deterministic: reads the shared judgments, no judge calls.
-                    results[metric_name] = evaluator.evaluate_shared(
-                        case, relevance_pass
-                    )
-                    continue
-                a_evaluate = getattr(evaluator, "a_evaluate", None)
-                if a_evaluate is not None:
-                    results[metric_name] = await a_evaluate(
-                        case, judge_limiter=limiter
-                    )
-                else:
-                    # No async path: run sync evaluate in a worker thread under
-                    # the shared limiter (its judge calls stay bounded).
-                    async with limiter:
-                        results[metric_name] = await asyncio.to_thread(
-                            evaluator.evaluate, case
+                try:
+                    await relevance_pass.a_run(max_depth, limiter)
+                except Exception as exc:
+                    new_results.update(
+                        self._operational_results(
+                            retrieval, exc, on_error=on_error
                         )
+                    )
+                    relevance_pass = None
 
-            for metric_name in selected:
-                result = results[metric_name]
+            for metric_name in to_run:
+                if metric_name in new_results:
+                    continue
+                evaluator = self._evaluators[metric_name]
+                try:
+                    if relevance_pass is not None and getattr(
+                        evaluator, "uses_retrieval_relevance", False
+                    ):
+                        new_results[metric_name] = evaluator.evaluate_shared(
+                            case, relevance_pass
+                        )
+                        continue
+                    a_evaluate = getattr(evaluator, "a_evaluate", None)
+                    if a_evaluate is not None:
+                        new_results[metric_name] = await a_evaluate(
+                            case, judge_limiter=limiter
+                        )
+                    else:
+                        async with limiter:
+                            new_results[metric_name] = await asyncio.to_thread(
+                                evaluator.evaluate, case
+                            )
+                except Exception as exc:
+                    new_results.update(
+                        self._operational_results(
+                            [metric_name], exc, on_error=on_error
+                        )
+                    )
+
+            for metric_name in to_run:
+                result = new_results[metric_name]
                 tracing.annotate_current_span(
                     metric=result.metric,
                     score=result.score,
@@ -999,10 +1327,28 @@ class EvaluationFramework:
             span_id = handle.span_id
             trace_id = handle.trace_id
 
+        results = {
+            name: resumed[name] if name in resumed else new_results[name]
+            for name in selected
+        }
         records = self._build_records(
-            case, selected, results, run_name, dataset_name, trace_id, span_id
+            case,
+            to_run,
+            new_results,
+            run_name,
+            dataset_name,
+            trace_id,
+            span_id,
         )
-        return results, records
+        return _LogicalRun(
+            results=results,
+            records=records,
+            resumed_metrics=len(resumed),
+            evaluated_metrics=len(to_run),
+            operational_errors=sum(
+                result.label == "error" for result in new_results.values()
+            ),
+        )
 
     def log_evaluation(
         self,
@@ -1035,6 +1381,16 @@ class EvaluationFramework:
             case_id if case_id is not None
             else (case.case_id if case is not None else None)
         )
+        record_case = case or EvaluationCase(case_id=resolved_case_id)
+        audit = rendered_case_fields(record_case)
+        case_hash = case_fingerprint(record_case)
+        result_status = (
+            "error"
+            if result.label == "error"
+            and result.details
+            and result.details.get("status") == "error"
+            else "success"
+        )
         with tracing.case_evaluation_span(
             resolved_case_id,
             run_name,
@@ -1054,12 +1410,26 @@ class EvaluationFramework:
         record = EvaluationRecord.from_result(
             result,
             annotator_kind=annotator_kind,
+            status=result_status,
             case_id=resolved_case_id,
-            input=(
-                self._descriptive_input(case) if case is not None else None
-            ),
+            input=audit["input"],
             run_name=run_name,
             dataset_name=dataset_name,
+            case_fingerprint=case_hash,
+            evaluation_fingerprint=external_evaluation_fingerprint(
+                case_hash, result.metric, annotator_kind
+            ),
+            context=audit["context"],
+            output=audit["output"],
+            instructions=audit["instructions"],
+            evaluation_scope=audit["evaluation_scope"],
+            retrieved_documents_json=audit["retrieved_documents_json"],
+            retrieved_documents=audit["retrieved_documents"],
+            metadata=(
+                dict(record_case.metadata)
+                if record_case.metadata is not None
+                else None
+            ),
             trace_id=trace_id,
             span_id=span_id,
         )
@@ -1107,7 +1477,7 @@ class EvaluationFramework:
         Raises:
             PersistenceError: If any writer fails. Evaluation is never re-run.
         """
-        if not self._writers:
+        if not self._writers or not records:
             return
         try:
             for writer in self._writers:

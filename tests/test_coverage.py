@@ -34,9 +34,11 @@ def _item(text, present, full, reason=None):
     return item
 
 
-def _evaluate(items, *, verbose=False):
+def _evaluate(items, *, verbose=False, max_items=None):
     judge = Judge({"items": items})
-    result = CoverageEvaluator(judge, verbose=verbose).evaluate(CASE)
+    result = CoverageEvaluator(
+        judge, verbose=verbose, max_items=max_items
+    ).evaluate(CASE)
     return result, judge
 
 
@@ -49,10 +51,11 @@ def test_public_api_requires_context_and_output_only():
         CoverageEvaluator(object()).evaluate(EvaluationCase(context="c"))
 
 
-def test_public_constructor_is_judge_plus_verbose_only():
+def test_public_constructor_exposes_optional_item_limit():
     assert tuple(inspect.signature(CoverageEvaluator).parameters) == (
         "llm",
         "verbose",
+        "max_items",
     )
 
 
@@ -66,11 +69,45 @@ def test_exactly_one_call_and_structured_context_output_rendering():
     assert "IGNORED_TASK" not in user
 
 
+@pytest.mark.parametrize("max_items", [None, 1, 5])
+def test_item_limit_prompt_and_details_preserve_one_call(max_items):
+    result, judge = _evaluate(
+        [_item("Only real item", True, True)], max_items=max_items
+    )
+    system = judge.calls[0]["prompt"][0]["content"]
+    if max_items is None:
+        assert "identify all materially distinct source items" in system
+        assert "maxItems" not in judge.calls[0]["schema"]["properties"]["items"]
+    else:
+        assert f"select at most {max_items}" in system
+        assert "return only those that actually exist" in system
+        assert "Do not invent, duplicate, or artificially split items" in system
+        assert judge.calls[0]["schema"]["properties"]["items"]["maxItems"] == max_items
+    assert len(judge.calls) == 1
+    assert result.details["max_items"] == max_items
+    assert result.details["evaluated_items"] == 1
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, 1.5, "5"])
+def test_invalid_item_limit_fails_before_judge_work(bad):
+    judge = Judge({"items": []})
+    with pytest.raises(ValueError, match="max_items"):
+        CoverageEvaluator(judge, max_items=bad)
+    assert judge.calls == []
+
+
+def test_item_limit_rejects_over_limit_judge_response_without_truncating():
+    with pytest.raises(ValueError, match="exceeds configured max_items=1"):
+        _evaluate(
+            [_item("A", True, True), _item("B", True, True)], max_items=1
+        )
+
+
 @pytest.mark.parametrize(
     "present,full,score,label",
     [
-        (True, True, 1.0, "complete"),
-        (True, False, 0.5, "incomplete"),
+        (True, True, 1.0, "covered"),
+        (True, False, 0.5, "partial"),
         (False, False, 0.0, "missing"),
     ],
 )
@@ -106,6 +143,8 @@ def test_compact_details_are_minimal_and_omit_items():
     result, _ = _evaluate([_item("A", True, True)])
     assert set(result.details) == {
         "final_item_count",
+        "max_items",
+        "evaluated_items",
         "covered_count",
         "partial_count",
         "missing_count",
@@ -243,7 +282,7 @@ def test_backend_type_does_not_affect_coverage_result():
     gateway = CoverageEvaluator(GatewayCompatibleJudge(response)).evaluate(CASE)
     azure = CoverageEvaluator(AzureCompatibleJudge(response)).evaluate(CASE)
     assert gateway.score == azure.score == 0.5
-    assert gateway.label == azure.label == "incomplete"
+    assert gateway.label == azure.label == "partial"
     assert {
         key: value
         for key, value in gateway.details.items()

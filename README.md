@@ -37,7 +37,7 @@ source items + binary judgments
 deterministic Python scoring
 ```
 
-The judge identifies all materially distinct source information and returns
+The judge identifies materially distinct source information and returns
 `meaningfully_present` and `fully_present` for each item. Python derives:
 
 ```text
@@ -47,11 +47,16 @@ not meaningfully_present               missing   0.0
 ```
 
 The final score is the mean of item scores. The judge never returns the
-aggregate score, percentage, or label. Labels are `complete` for 1.0,
-`incomplete` for a score strictly between 0 and 1, `missing` for 0.0, and
+aggregate score, percentage, or label. Labels are `covered` for 1.0,
+`partial` for a score strictly between 0 and 1, `missing` for 0.0, and
 `not_applicable` when no source items are identified.
 
-There is no fixed or approximate item-count target. The prompt asks for all
+By default there is no item-count limit. `CoverageEvaluator(judge,
+max_items=5)` instead asks for up to five items: fewer are returned when fewer
+meaningful items exist, while larger sources use the most material,
+representative, nonredundant items. The judge examines the complete context
+before selecting; selection is based on source materiality rather than whether
+an item is covered, partial, or missing. The prompt asks for
 materially distinct facts, obligations, capabilities, requirements, objectives,
 outcomes, constraints, prohibitions, actors, dependencies, thresholds, timing,
 channels, and measurable targets while consolidating semantic redundancy.
@@ -95,6 +100,12 @@ metadata, and retrieved documents. Dict/list/nested values are rendered through
 A valid response with no checkable factual claims returns `not_applicable` after
 the single judge call. Async evaluation uses native judge async generation when
 available and otherwise uses the framework's shared-concurrency thread bridge.
+`FaithfulnessEvaluator(max_items=5)` similarly evaluates up to five
+material claims without padding or inventing claims. It examines the complete
+output first and selects by claim materiality independently of whether context
+will mark a claim supported or unsupported. Its overall label is
+`not_hallucinated` only at score 1.0 and `hallucinated` for every score below
+1.0; the metric name remains `faithfulness`.
 
 ## Instruction adherence
 
@@ -221,7 +232,9 @@ print(results["coverage"].score)
 ```
 
 Evaluator classes receive the shared judge. Constructed instances also work,
-including `CoverageEvaluator(judge, verbose=True)`. Each evaluator validates
+including `CoverageEvaluator(max_items=5, verbose=True)` when `judge=judge` is
+provided to the framework. An explicitly supplied evaluator judge is preserved
+and is not overwritten by the framework judge. Each evaluator validates
 only its required fields; extra fields are allowed. Structured dictionaries and
 lists are rendered recursively and deterministically. Dictionary keys become
 readable labels; no domain-specific schema is required. Case metadata is never
@@ -270,6 +283,61 @@ results = framework.evaluate_many(
     metrics=["faithfulness", "coverage"],
     run_name="faithfulness_coverage_evaluation",
     dataset_name="golden_set_augmented_tagged.csv",
+    show_progress=True,
+)
+```
+
+For long provider-backed runs, Excel can also be the resumable checkpoint:
+
+```python
+framework = EvaluationFramework(
+    judge=judge,
+    evaluators=[
+        CoverageEvaluator(max_items=5, verbose=True),
+        FaithfulnessEvaluator(max_items=5, verbose=True),
+    ],
+    output="excel",
+    excel_path="generation_eval.xlsx",
+    resume=True,
+    report_fields=["context", "output", "metadata.theme_id"],
+)
+
+case = EvaluationCase(
+    case_id="EPIC-1234",
+    metadata={"theme_id": "THEME-42"},
+    context=source,
+    output=generation,
+)
+
+results = framework.evaluate_many(
+    cases,
+    metrics=["coverage", "faithfulness"],
+    run_name="generation_eval_v1",
+    dataset_name="dataset.parquet",
+    on_error="continue",
+    show_progress=True,
+)
+```
+
+`on_error="continue"` converts only recognized exhausted provider/transport
+failures into `score=None`, `label="error"` metric results; validation,
+programming, schema, and persistence errors still raise. Successful rows,
+including `not_applicable`, are checkpointed immediately. Running the exact
+same command again reuses successful metric results and reruns only missing or
+error metrics. No extra framework retry or sleep is added—the configured SDK
+and Phoenix retry behavior remains authoritative.
+
+The async form has the same semantics and persists each completed case through
+a serialized writer while other cases continue:
+
+```python
+results = await framework.a_evaluate_many(
+    cases,
+    metrics=["coverage", "faithfulness"],
+    run_name="generation_eval_v1",
+    dataset_name="dataset.parquet",
+    max_concurrency=2,
+    on_error="continue",
     show_progress=True,
 )
 ```
@@ -503,7 +571,8 @@ uses these sheets where applicable:
 
 | Sheet | Content |
 | --- | --- |
-| `evaluations` | one row per case and metric |
+| `evaluations` | one published case/metric result (upserted when resuming) |
+| `_idp_eval_checkpoint` | hidden technical resume/result state |
 | `coverage_items` | verbose coverage item judgments |
 | `instruction_adherence_items` | instruction judgments |
 | `retrieval_documents` | retrieval judgments |
@@ -512,6 +581,26 @@ uses these sheets where applicable:
 
 Compact coverage results omit item rows by design. Persistence errors retain the
 computed results and never rerun evaluators.
+
+The visible summary uses `key_id` for the Python `case_id` and includes only the
+ordered case fields selected by `report_fields` (default: `input`, `context`,
+`output`, `instructions`). Select metadata explicitly with `metadata.<key>`;
+metadata is reporting-only and never enters evaluator prompts. Technical trace,
+annotator, and SHA-256 fingerprint state lives in the hidden
+`_idp_eval_checkpoint` sheet. With `resume=True`, the existing workbook must use
+the same visible report schema. Exact successful rows are
+reconstructed in Python and are neither re-evaluated nor republished; exact
+error rows are rerun and upserted in place. `run_name`, `dataset_name`,
+`case_id`, and `evaluation_fingerprint` form the checkpoint identity.
+Built-in evaluation fingerprints include the evaluator contract/configuration
+and safe judge type/model/provider/client identity, never endpoint or auth data.
+Custom evaluators with score-affecting constructor options should override
+`resume_signature()` with compact JSON-safe configuration so resume can
+distinguish those variants.
+Changing `max_items` on either evaluator changes resume identity because it changes
+evaluator semantics. Changing `report_fields` does not change evaluation
+fingerprints, though reopening an existing workbook with a different visible
+schema raises before judge work to prevent mixed reports.
 
 Custom results use the same output path:
 

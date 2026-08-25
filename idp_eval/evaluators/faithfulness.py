@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
 
 from idp_eval import tracing
@@ -29,25 +30,50 @@ def _elapsed_ms(started: float) -> float:
 
 
 class FaithfulnessEvaluator(Evaluator):
-    """Measures support for factual output claims with one judge call."""
+    """Measures support for factual output claims with one judge call.
+
+    ``max_items`` is an optional positive upper bound, not a required count;
+    fewer real claims remain fewer evaluated claims.
+    """
 
     name = "faithfulness"
     required_fields = ("context", "output")
 
-    def __init__(self, llm, verbose: bool = False):
+    def __init__(
+        self, llm=None, verbose: bool = False, max_items: int | None = None
+    ):
+        if (
+            isinstance(max_items, bool)
+            or (max_items is not None and not isinstance(max_items, int))
+            or (isinstance(max_items, int) and max_items < 1)
+        ):
+            raise ValueError(
+                "max_items must be None or a positive integer, got "
+                f"{max_items!r}."
+            )
         self._llm = llm
         self._verbose = verbose
+        self._max_items = max_items
+
+    def resume_signature(self) -> dict:
+        return {
+            "contract_version": 2,
+            "verbose": self._verbose,
+            "max_items": self._max_items,
+            "judge": self.judge_resume_signature(self._llm),
+        }
 
     def evaluate(self, case: EvaluationCase) -> EvaluationResult:
         """Evaluates one case with exactly one structured judge call."""
         self.validate_case(case)
+        llm = self._require_judge()
         started = time.monotonic()
         prompt, schema = self._prompt_and_schema(case)
         with tracing.judge_span(
             "faithfulness.evaluate",
             {"idp_eval.metric": self.name, "idp_eval.stage": "evaluate"},
         ):
-            response = self._llm.generate_object(prompt=prompt, schema=schema)
+            response = llm.generate_object(prompt=prompt, schema=schema)
         return self._result_from_response(response, _elapsed_ms(started))
 
     async def a_evaluate(
@@ -55,6 +81,7 @@ class FaithfulnessEvaluator(Evaluator):
     ) -> EvaluationResult:
         """Uses native async generation or the shared-limiter thread bridge."""
         self.validate_case(case)
+        llm = self._require_judge()
         started = time.monotonic()
         prompt, schema = self._prompt_and_schema(case)
         async with judge_limiter:
@@ -63,13 +90,13 @@ class FaithfulnessEvaluator(Evaluator):
                 {"idp_eval.metric": self.name, "idp_eval.stage": "evaluate"},
             ):
                 async_generate = getattr(
-                    self._llm, "async_generate_object", None
+                    llm, "async_generate_object", None
                 )
                 if callable(async_generate):
                     response = await async_generate(prompt=prompt, schema=schema)
                 else:
                     response = await asyncio.to_thread(
-                        self._llm.generate_object,
+                        llm.generate_object,
                         prompt=prompt,
                         schema=schema,
                     )
@@ -80,12 +107,16 @@ class FaithfulnessEvaluator(Evaluator):
             context=render_value(case.context),
             output=render_value(case.output),
             verbose=self._verbose,
+            max_items=self._max_items,
         )
         schema = (
             FAITHFULNESS_SCHEMA_VERBOSE
             if self._verbose
             else FAITHFULNESS_SCHEMA_COMPACT
         )
+        if self._max_items is not None:
+            schema = copy.deepcopy(schema)
+            schema["properties"]["claims"]["maxItems"] = self._max_items
         return prompt, schema
 
     def _result_from_response(
@@ -107,6 +138,11 @@ class FaithfulnessEvaluator(Evaluator):
         if not isinstance(raw_claims, list):
             raise ValueError(
                 "Malformed faithfulness response: `claims` must be a list."
+            )
+        if self._max_items is not None and len(raw_claims) > self._max_items:
+            raise ValueError(
+                "Malformed faithfulness response: `claims` exceeds configured "
+                f"max_items={self._max_items}."
             )
         required_keys = (
             {"claim", "status", "reason"}
@@ -176,6 +212,8 @@ class FaithfulnessEvaluator(Evaluator):
     def _base_details(self, claims: list[dict], total_ms: float) -> dict:
         return {
             "claim_count": len(claims),
+            "max_items": self._max_items,
+            "evaluated_claims": len(claims),
             "supported_count": sum(c["status"] == "supported" for c in claims),
             "unsupported_count": sum(
                 c["status"] == "unsupported" for c in claims
@@ -208,7 +246,7 @@ class FaithfulnessEvaluator(Evaluator):
             score=score,
             label=faithfulness_label(score),
             explanation=(
-                f"{details['supported_count']} of {len(claims)} factual claims "
+                f"{details['supported_count']} of {len(claims)} evaluated factual claims "
                 f"were supported; {unsupported} {unsupported_verb} unsupported."
             ),
             details=details,

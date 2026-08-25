@@ -246,7 +246,7 @@ def test_both_scope_persists_combined_and_individual_rows_once(tmp_path):
     rows = list(sheet.iter_rows(values_only=True))
     header, data = rows[0], rows[1:]
     records = [dict(zip(header, row)) for row in data]
-    assert [record["case_id"] for record in records] == [
+    assert [record["key_id"] for record in records] == [
         "persist",
         "persist:0",
         "persist:1",

@@ -27,14 +27,27 @@ def test_prompt_is_one_call_context_plus_output():
     assert "[INPUT]" not in user
 
 
-def test_prompt_requires_all_materially_distinct_items_without_count_target():
+def test_prompt_requires_all_materially_distinct_items_when_unlimited():
     system = _system()
     assert "all materially distinct source items" in system
     assert "semantic consolidation" in system
-    assert "no fixed or approximate item-count target" in system
-    assert "Do not omit or merge distinct information" in system
     assert "approximately 10" not in system
     assert "target 10" not in system
+
+
+def test_prompt_expresses_optional_limit_as_at_most_without_padding():
+    system = " ".join(
+        render_coverage_prompt("source", "output", max_items=5)[0][
+            "content"
+        ].split()
+    )
+    assert "select at most 5 of the most material and representative" in system
+    assert "If fewer than 5 meaningful items exist" in system
+    assert "Examine the complete CONTEXT before selecting" in system
+    assert "Do not stop after finding the first 5 candidates" in system
+    assert "independently of whether the OUTPUT covers them" in system
+    assert "Only after selection, classify" in system
+    assert "Do not invent, duplicate, or artificially split items" in system
 
 
 def test_prompt_preserves_qualifiers_and_excludes_structural_meta_text():

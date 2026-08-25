@@ -47,20 +47,28 @@ class InstructionAdherenceEvaluator(Evaluator):
     name = "instruction_adherence"
     required_fields = ("instructions", "output")
 
-    def __init__(self, llm, verbose: bool = False):
+    def __init__(self, llm=None, verbose: bool = False):
         self._llm = llm
         self._verbose = verbose
+
+    def resume_signature(self) -> dict:
+        return {
+            "contract_version": 1,
+            "verbose": self._verbose,
+            "judge": self.judge_resume_signature(self._llm),
+        }
 
     def evaluate(self, case: EvaluationCase) -> EvaluationResult:
         """Evaluates one case with exactly one structured judge call."""
         self.validate_case(case)
+        llm = self._require_judge()
         started = time.monotonic()
         prompt, schema = self._prompt_and_schema(case)
         with tracing.judge_span(
             "instruction_adherence.evaluate",
             {"idp_eval.metric": self.name, "idp_eval.stage": "evaluate"},
         ):
-            response = self._llm.generate_object(prompt=prompt, schema=schema)
+            response = llm.generate_object(prompt=prompt, schema=schema)
         return self._result_from_response(response, _elapsed_ms(started))
 
     def _prompt_and_schema(self, case: EvaluationCase) -> tuple[list[dict], dict]:
@@ -93,6 +101,7 @@ class InstructionAdherenceEvaluator(Evaluator):
     ) -> EvaluationResult:
         """Evaluates asynchronously through the native or bridged judge path."""
         self.validate_case(case)
+        llm = self._require_judge()
         started = time.monotonic()
         prompt, schema = self._prompt_and_schema(case)
         async with judge_limiter:
@@ -101,13 +110,13 @@ class InstructionAdherenceEvaluator(Evaluator):
                 {"idp_eval.metric": self.name, "idp_eval.stage": "evaluate"},
             ):
                 async_generate = getattr(
-                    self._llm, "async_generate_object", None
+                    llm, "async_generate_object", None
                 )
                 if callable(async_generate):
                     response = await async_generate(prompt=prompt, schema=schema)
                 else:
                     response = await asyncio.to_thread(
-                        self._llm.generate_object,
+                        llm.generate_object,
                         prompt=prompt,
                         schema=schema,
                     )

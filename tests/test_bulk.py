@@ -150,7 +150,7 @@ def test_evaluate_many_excel_rows_attributable(tmp_path):
     )
     framework.evaluate_many(_cases())
     _, rows = _read(path)
-    assert [r["case_id"] for r in rows] == ["theme-1:epic-1", "theme-2:epic-2"]
+    assert [r["key_id"] for r in rows] == ["theme-1:epic-1", "theme-2:epic-2"]
     assert all(r["metric"] == "coverage" for r in rows)
 
 
@@ -217,7 +217,7 @@ def test_evaluate_groups_deterministic_case_ids(tmp_path):
     )
     framework.evaluate_groups(_groups())
     _, rows = _read(path)
-    assert [r["case_id"] for r in rows] == [
+    assert [r["key_id"] for r in rows] == [
         "theme-1:0", "theme-1:1", "theme-2:0",
     ]
 
@@ -257,7 +257,7 @@ def test_group_case_ids_override_is_preserved(tmp_path):
         }
     ])
     _, rows = _read(path)
-    assert [r["case_id"] for r in rows] == ["custom-a", "custom-b"]
+    assert [r["key_id"] for r in rows] == ["custom-a", "custom-b"]
 
 
 def test_group_preserves_generic_structured_fields_and_metadata_without_mutation():

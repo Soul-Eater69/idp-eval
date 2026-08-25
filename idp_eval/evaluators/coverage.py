@@ -12,6 +12,7 @@ belong to faithfulness.
 from __future__ import annotations
 
 import asyncio
+import copy
 import time
 
 from idp_eval import tracing
@@ -46,25 +47,48 @@ class CoverageEvaluator(Evaluator):
         llm: Judge exposing ``generate_object(prompt, schema) -> dict``.
         verbose: Include the full item-level audit trail in ``result.details``.
             Compact mode returns counts/timing only. Scoring is identical.
+        max_items: Optional positive maximum number of material source items.
+            This is an upper bound, never a target or padding instruction.
     """
 
     name = "coverage"
     required_fields = ("context", "output")
 
-    def __init__(self, llm, verbose: bool = False):
+    def __init__(
+        self, llm=None, verbose: bool = False, max_items: int | None = None
+    ):
+        if (
+            isinstance(max_items, bool)
+            or (max_items is not None and not isinstance(max_items, int))
+            or (isinstance(max_items, int) and max_items < 1)
+        ):
+            raise ValueError(
+                "max_items must be None or a positive integer, got "
+                f"{max_items!r}."
+            )
         self._llm = llm
         self._verbose = verbose
+        self._max_items = max_items
+
+    def resume_signature(self) -> dict:
+        return {
+            "contract_version": 2,
+            "verbose": self._verbose,
+            "max_items": self._max_items,
+            "judge": self.judge_resume_signature(self._llm),
+        }
 
     def evaluate(self, case: EvaluationCase) -> EvaluationResult:
         """Evaluates one case with exactly one judge call."""
         self.validate_case(case)
+        llm = self._require_judge()
         started = time.monotonic()
         prompt, schema = self._prompt_and_schema(case)
         with tracing.judge_span(
             "coverage.evaluate",
             {"idp_eval.metric": self.name, "idp_eval.stage": "evaluate"},
         ):
-            response = self._llm.generate_object(prompt=prompt, schema=schema)
+            response = llm.generate_object(prompt=prompt, schema=schema)
         return self._result_from_response(response, _elapsed_ms(started))
 
     def _prompt_and_schema(self, case: EvaluationCase) -> tuple[list[dict], dict]:
@@ -72,10 +96,14 @@ class CoverageEvaluator(Evaluator):
             context=render_value(case.context),
             output=render_value(case.output),
             verbose=self._verbose,
+            max_items=self._max_items,
         )
         schema = (
             COVERAGE_SCHEMA_VERBOSE if self._verbose else COVERAGE_SCHEMA_COMPACT
         )
+        if self._max_items is not None:
+            schema = copy.deepcopy(schema)
+            schema["properties"]["items"]["maxItems"] = self._max_items
         return prompt, schema
 
     def _result_from_response(
@@ -91,6 +119,7 @@ class CoverageEvaluator(Evaluator):
     ) -> EvaluationResult:
         """Evaluates asynchronously using the judge's native async method."""
         self.validate_case(case)
+        llm = self._require_judge()
         started = time.monotonic()
         prompt, schema = self._prompt_and_schema(case)
         async with judge_limiter:
@@ -99,13 +128,13 @@ class CoverageEvaluator(Evaluator):
                 {"idp_eval.metric": self.name, "idp_eval.stage": "evaluate"},
             ):
                 async_generate = getattr(
-                    self._llm, "async_generate_object", None
+                    llm, "async_generate_object", None
                 )
                 if callable(async_generate):
                     response = await async_generate(prompt=prompt, schema=schema)
                 else:
                     response = await asyncio.to_thread(
-                        self._llm.generate_object,
+                        llm.generate_object,
                         prompt=prompt,
                         schema=schema,
                     )
@@ -117,6 +146,11 @@ class CoverageEvaluator(Evaluator):
         raw_items = response["items"]
         if not isinstance(raw_items, list):
             raise ValueError("Malformed coverage response: `items` must be a list.")
+        if self._max_items is not None and len(raw_items) > self._max_items:
+            raise ValueError(
+                "Malformed coverage response: `items` exceeds configured "
+                f"max_items={self._max_items}."
+            )
 
         validated: list[dict] = []
         for index, item in enumerate(raw_items, start=1):
@@ -197,6 +231,8 @@ class CoverageEvaluator(Evaluator):
     def _base_details(self, items: list[dict], total_ms: float) -> dict:
         return {
             "final_item_count": len(items),
+            "max_items": self._max_items,
+            "evaluated_items": len(items),
             "covered_count": sum(i["status"] == "covered" for i in items),
             "partial_count": sum(i["status"] == "partial" for i in items),
             "missing_count": sum(i["status"] == "missing" for i in items),
@@ -228,7 +264,7 @@ class CoverageEvaluator(Evaluator):
             score=score,
             label=coverage_label(score),
             explanation=(
-                f"{covered} of {count} source items are fully covered; "
+                f"{covered} of {count} evaluated source items are fully covered; "
                 f"{partial} partial and {missing} missing."
             ),
             details=details,

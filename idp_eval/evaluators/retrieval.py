@@ -317,6 +317,15 @@ class _RetrievalEvaluator(Evaluator):
         if self._llm is None:
             self._llm = judge
 
+    def resume_signature(self) -> dict:
+        return {
+            "contract_version": 1,
+            "k": self._k,
+            "verbose": self._verbose,
+            "document_text_key": self._document_text_key,
+            "judge": self.judge_resume_signature(self._llm),
+        }
+
     def validate_case(self, case: EvaluationCase) -> None:
         super().validate_case(case)
         _validate_documents_list(case, type(self).__name__)
@@ -605,6 +614,14 @@ class ContextualRelevancyEvaluator(Evaluator):
         if self._llm is None:
             self._llm = judge
 
+    def resume_signature(self) -> dict:
+        return {
+            "contract_version": 1,
+            "verbose": self._verbose,
+            "document_text_key": self._document_text_key,
+            "judge": self.judge_resume_signature(self._llm),
+        }
+
     def validate_case(self, case: EvaluationCase) -> None:
         super().validate_case(case)
         _validate_documents_list(case, type(self).__name__)
@@ -824,6 +841,14 @@ class ContextualRecallEvaluator(Evaluator):
     def _bind_judge(self, judge) -> None:
         if self._llm is None:
             self._llm = judge
+
+    def resume_signature(self) -> dict:
+        return {
+            "contract_version": 1,
+            "verbose": self._verbose,
+            "document_text_key": self._document_text_key,
+            "judge": self.judge_resume_signature(self._llm),
+        }
 
     def validate_case(self, case: EvaluationCase) -> None:
         super().validate_case(case)

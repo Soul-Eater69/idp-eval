@@ -162,8 +162,8 @@ def calculate_faithfulness(claims: list[dict]) -> float:
 
 
 def faithfulness_label(score: float) -> str:
-    """Labels fully supported output as faithful, otherwise unfaithful."""
-    return "faithful" if score >= 1.0 else "unfaithful"
+    """Labels any output with an unsupported claim as hallucinated."""
+    return "not_hallucinated" if score == 1.0 else "hallucinated"
 
 
 def coverage_label(score: float) -> str:
@@ -173,18 +173,18 @@ def coverage_label(score: float) -> str:
     only two defensible ones (everything vs. nothing covered), not arbitrary
     thresholds:
 
-        1.0            -> "complete"    (every item represented)
-        0 < score < 1  -> "incomplete"  (some items missing/partial)
+        1.0            -> "covered"     (every item represented)
+        0 < score < 1  -> "partial"     (some items missing/partial)
         0.0            -> "missing"     (nothing represented)
 
     Not-applicable results (no score) are labeled ``"not_applicable"`` by the
     evaluator and never reach this function.
     """
-    if score >= 1.0:
-        return "complete"
-    if score <= 0.0:
+    if score == 1.0:
+        return "covered"
+    if score == 0.0:
         return "missing"
-    return "incomplete"
+    return "partial"
 
 
 def instruction_adherence_label(score: float) -> str:

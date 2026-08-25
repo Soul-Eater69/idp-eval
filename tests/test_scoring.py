@@ -24,8 +24,10 @@ def test_faithfulness_scoring_and_labels():
         )
         == 0.5
     )
-    assert faithfulness_label(1.0) == "faithful"
-    assert faithfulness_label(0.5) == "unfaithful"
+    assert faithfulness_label(1.0) == "not_hallucinated"
+    assert faithfulness_label(0.999) == "hallucinated"
+    assert faithfulness_label(0.5) == "hallucinated"
+    assert faithfulness_label(0.0) == "hallucinated"
     with pytest.raises(ValueError, match="At least one factual claim"):
         calculate_faithfulness([])
     with pytest.raises(ValueError, match="Unknown faithfulness status"):
@@ -143,9 +145,9 @@ def test_instruction_adherence_unknown_status_raises(status):
 
 
 def test_coverage_label():
-    assert coverage_label(1.0) == "complete"
-    assert coverage_label(0.5) == "incomplete"
-    assert coverage_label(0.01) == "incomplete"
+    assert coverage_label(1.0) == "covered"
+    assert coverage_label(0.5) == "partial"
+    assert coverage_label(0.001) == "partial"
     assert coverage_label(0.0) == "missing"
 
 

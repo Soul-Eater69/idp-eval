@@ -240,9 +240,14 @@ Classes receive the shared judge. Constructed instances are also accepted:
 
 ```python
 framework = EvaluationFramework(
-    evaluators=[CoverageEvaluator(judge, verbose=True)]
+    judge=judge,
+    evaluators=[CoverageEvaluator(max_items=5, verbose=True)]
 )
 ```
+
+Configured built-in LLM evaluator instances may be created before a judge is
+available. The framework binds its shared judge when the instance has no
+explicit judge; an explicitly supplied evaluator judge takes precedence.
 
 ## 5. EvaluationCase fields
 
@@ -356,8 +361,8 @@ case = EvaluationCase(
 result = framework.evaluate(case, metrics=["coverage"])["coverage"]
 ```
 
-`CoverageEvaluator(judge, verbose=False)` makes exactly one structured call
-using `context + output`. The judge identifies all materially distinct source
+`CoverageEvaluator(judge, verbose=False, max_items=None)` makes exactly one
+structured call using `context + output`. The judge identifies materially distinct source
 items and returns two booleans:
 
 - `fully_present=True` becomes `covered` and 1.0.
@@ -367,8 +372,12 @@ items and returns two booleans:
 Python calculates the mean and label. An empty item set returns `score=None`
 and `label="not_applicable"` after the one call.
 
-There is no item-count target. The prompt preserves qualifiers, consolidates
-semantic redundancy, excludes structural/meta wrapper text, and avoids counting
+By default there is no item-count limit. Set `max_items=5` to extract at most
+five material, representative source items; the judge returns fewer when fewer
+meaningful items exist and never pads to the limit. The prompt preserves
+qualifiers, examines the complete context before selection, and keeps selection
+independent of covered/partial/missing status. It consolidates semantic
+redundancy, excludes structural/meta wrapper text, and avoids counting
 both an umbrella objective and equivalent detailed items. Generic topical
 overlap is insufficient for partial credit.
 
@@ -377,6 +386,8 @@ Compact details:
 ```python
 {
     "final_item_count": 3,
+    "max_items": None,
+    "evaluated_items": 3,
     "covered_count": 2,
     "partial_count": 0,
     "missing_count": 1,
@@ -427,9 +438,14 @@ Omitted context information is not unfaithful—it belongs to Coverage. Compact
 details contain claim counts, timing, `judge_call_count=1`, and `verbose=False`;
 verbose details add each claim, status, deterministic item score, and reason.
 If no checkable factual claims are identified, the result is `not_applicable`
-after that one call. Async evaluation uses native judge async generation when
-available, otherwise the same call runs in a worker thread under the framework's
-shared concurrency limit.
+after that one call. `max_items=5` limits extraction to at most five material,
+representative claims without padding. The complete output is examined before
+selection, and supported/unsupported status does not influence which claims are
+selected. Score 1.0 is labeled
+`not_hallucinated`; any lower scored result is `hallucinated`.
+Async evaluation uses native judge async generation when available; otherwise
+the same call runs in a worker thread under the framework's shared concurrency
+limit.
 
 ### Instruction Adherence
 
@@ -584,6 +600,63 @@ Explicit `case_ids` win, followed by IDs derived from `group_id`, then stable
 group/output indexes. Inputs are not mutated. Async results preserve order, and
 the framework enforces the shared `max_concurrency` limit across all judge calls.
 
+### Resilient and resumable batches
+
+Use Excel as the checkpoint for long-running provider-backed evaluations:
+
+```python
+framework = EvaluationFramework(
+    judge=judge,
+    evaluators=[
+        CoverageEvaluator(max_items=5, verbose=True),
+        FaithfulnessEvaluator(max_items=5, verbose=True),
+    ],
+    output="excel",
+    excel_path="generation_eval.xlsx",
+    resume=True,
+    report_fields=["context", "output", "metadata.theme_id"],
+)
+
+case = EvaluationCase(
+    case_id="EPIC-1234",
+    metadata={"theme_id": "THEME-42"},
+    context=source,
+    output=generation,
+)
+
+results = framework.evaluate_many(
+    cases,
+    metrics=["coverage", "faithfulness"],
+    run_name="generation_eval_v1",
+    dataset_name="dataset.parquet",
+    on_error="continue",
+    show_progress=True,
+)
+
+results = await framework.a_evaluate_many(
+    cases,
+    metrics=["coverage", "faithfulness"],
+    run_name="generation_eval_v1",
+    dataset_name="dataset.parquet",
+    max_concurrency=2,
+    on_error="continue",
+    show_progress=True,
+)
+```
+
+The default `on_error="raise"` remains fail-fast. With `"continue"`, only
+recognized exhausted rate-limit, provider 5xx, timeout, and connection failures
+become `score=None`, `label="error"` results. Validation, malformed judge
+schemas, implementation bugs, and persistence failures still raise. The
+framework adds no retry or cooldown layer.
+
+Successful metric rows (including `not_applicable`) are saved incrementally.
+Rerunning with the same Excel path and exact run, dataset, case content, metric,
+and evaluator configuration reconstructs those results without judge calls;
+missing/error metrics rerun and replace their prior rows. Async evaluation
+serializes writer mutation while preserving concurrent judge work and
+input-ordered returns.
+
 By default, `case.output=[a, b]` is one structured output and one trace. For a
 single generation containing multiple output objects, orchestration can be
 selected directly:
@@ -631,17 +704,33 @@ span. Excel can contain:
 
 | Sheet | One row per |
 | --- | --- |
-| `evaluations` | case and metric |
+| `evaluations` | published case/metric result (upserted when resuming) |
+| `_idp_eval_checkpoint` | hidden technical resume/result state |
 | `coverage_items` | verbose coverage item |
 | `instruction_adherence_items` | instruction item |
 | `retrieval_documents` | retrieval document |
 | `contextual_relevancy_items` | verbose retrieved-content item |
 | `contextual_recall_items` | verbose reference-item capture judgment |
 
-The `evaluations` summary includes the rendered descriptive `input` for each
-combined or individual case. Item-level sheets do not duplicate it. Nested
-details remain JSON on the summary sheet. Persistence failures retain computed
-results and never rerun evaluation.
+The visible `evaluations` summary displays Python `case_id` as `key_id` and
+includes the ordered case fields selected by `report_fields` (default: `input`,
+`context`, `output`, `instructions`). `retrieved_documents` is available
+explicitly but omitted by default because it can be large. Select one-level
+metadata with `metadata.<key>`; metadata remains reporting-only. Technical
+fingerprints, trace IDs, and annotator kinds live in the hidden
+`_idp_eval_checkpoint` sheet. Nested details remain JSON on the summary sheet.
+Persistence failures retain
+computed results and never rerun evaluation. Existing workbooks that predate the
+fingerprint/status schema are rejected for `resume=True` rather than matched
+unsafely by case ID.
+Built-in fingerprints include evaluator configuration and safe judge
+type/model/provider/client identity; endpoint and authentication values are
+excluded.
+Changing `max_items` on either evaluator changes the evaluation fingerprint;
+changing `report_fields` does not. A resumed workbook must nevertheless use the
+same visible report schema, or construction fails before judge work.
+Custom evaluators with score-affecting options should override
+`resume_signature()` and return compact JSON-safe configuration values.
 
 ## 10. Custom evaluation publishing
 
@@ -666,10 +755,13 @@ allowed.
 
 | Coverage score | Label |
 | --- | --- |
-| `1.0` | `complete` |
-| `0 < score < 1` | `incomplete` |
+| `1.0` | `covered` |
+| `0 < score < 1` | `partial` |
 | `0.0` | `missing` |
 | `None` | `not_applicable` |
+
+Faithfulness uses `not_hallucinated` only at 1.0, `hallucinated` for every
+score below 1.0, and `not_applicable` when no checkable claims exist.
 
 ## 12. Verification
 

@@ -100,7 +100,7 @@ class EvaluationResult:
     Attributes:
         metric: Name of the metric that produced this result.
         score: Numeric score, typically in ``[0, 1]``. ``None`` if not scored.
-        label: Human-readable label such as ``"high"`` or ``"unfaithful"``.
+        label: Human-readable metric-specific label.
         explanation: Short natural-language justification for the score.
         details: Metric-specific structured detail (e.g. missing items).
     """
@@ -128,6 +128,7 @@ class Evaluator(ABC):
     # enforces these (Level 2 validation) before the evaluator's first judge
     # call. Unused fields on a case are allowed and simply ignored.
     required_fields: tuple[str, ...] = ()
+    _llm: Any | None = None
 
     @property
     @abstractmethod
@@ -162,3 +163,41 @@ class Evaluator(ABC):
             f"{type(self).__name__} requires non-empty {names}.\n\n"
             f"Received:\n{received}"
         )
+
+    def _bind_judge(self, judge: Any) -> None:
+        """Binds a framework judge only when none was supplied explicitly."""
+        if self._llm is None:
+            self._llm = judge
+
+    def _require_judge(self) -> Any:
+        """Returns the configured judge or raises at the first judge operation."""
+        if self._llm is None:
+            raise ValueError(
+                f"{type(self).__name__} requires a judge. Pass it directly or "
+                "provide judge=... to EvaluationFramework."
+            )
+        return self._llm
+
+    def resume_signature(self) -> dict[str, Any]:
+        """Returns explicit score-affecting configuration for resume identity.
+
+        Custom configurable evaluators should override this method. The
+        evaluator class and metric name are fingerprinted separately, so the
+        safe default only needs a manually bumped contract version.
+        """
+        return {"contract_version": 1}
+
+    @staticmethod
+    def judge_resume_signature(judge: Any) -> dict[str, Any]:
+        """Returns safe, stable judge identity without endpoint/auth values."""
+        signature: dict[str, Any] = {
+            "type": f"{type(judge).__module__}.{type(judge).__qualname__}"
+        }
+        for name in ("model", "provider", "client"):
+            try:
+                value = getattr(judge, name, None)
+            except Exception:  # pragma: no cover - defensive custom property
+                continue
+            if isinstance(value, (str, int, float, bool)):
+                signature[name] = value
+        return signature

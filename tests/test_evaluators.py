@@ -117,9 +117,9 @@ def test_faithfulness_uses_only_context_and_output_semantically():
 
     assert result.metric == "faithfulness"
     assert result.score == 1.0
-    assert result.label == "faithful"
+    assert result.label == "not_hallucinated"
     assert result.explanation == (
-        "1 of 1 factual claims were supported; 0 were unsupported."
+        "1 of 1 evaluated factual claims were supported; 0 were unsupported."
     )
     assert result.details["judge_call_count"] == 1
     assert len(judge.calls) == 1
@@ -191,6 +191,80 @@ def test_framework_runs_all_three_metrics():
     assert set(results) == {"faithfulness", "coverage", "instruction_adherence"}
 
 
+def test_configured_core_instances_receive_shared_framework_judge():
+    class SharedJudge:
+        def __init__(self):
+            self.calls = []
+
+        def generate_object(self, prompt, schema):
+            self.calls.append({"prompt": prompt, "schema": schema})
+            if "items" in schema["properties"]:
+                return {
+                    "items": [
+                        {
+                            "source_item": "Users can view invoices.",
+                            "meaningfully_present": True,
+                            "fully_present": True,
+                        }
+                    ]
+                }
+            return {
+                "claims": [
+                    {
+                        "claim": "Users can view invoices.",
+                        "status": "supported",
+                    }
+                ]
+            }
+
+    judge = SharedJudge()
+    coverage = CoverageEvaluator(max_items=5)
+    faithfulness = FaithfulnessEvaluator(max_items=5)
+    framework = EvaluationFramework(
+        judge=judge, evaluators=[coverage, faithfulness]
+    )
+    results = framework.evaluate(CASE)
+
+    assert set(results) == {"coverage", "faithfulness"}
+    assert coverage._llm is judge and faithfulness._llm is judge
+    assert len(judge.calls) == 2
+
+
+@pytest.mark.parametrize(
+    "evaluator",
+    [CoverageEvaluator(max_items=5), FaithfulnessEvaluator(max_items=5)],
+)
+def test_unbound_core_evaluator_fails_only_when_judge_work_starts(evaluator):
+    with pytest.raises(ValueError, match="requires a judge.*EvaluationFramework"):
+        evaluator.evaluate(CASE)
+
+
+def test_explicit_instance_judge_is_not_overwritten_by_framework_judge():
+    explicit = _coverage_judge()
+    other = _coverage_judge()
+    evaluator = CoverageEvaluator(llm=explicit, max_items=5)
+    framework = EvaluationFramework([evaluator], judge=other)
+    framework.evaluate(CASE)
+    assert evaluator._llm is explicit
+    assert len(explicit.calls) == 1
+    assert other.calls == []
+
+
+def test_configured_instruction_instance_uses_shared_framework_judge():
+    judge = ScriptedJudge(
+        {
+            "instructions": [
+                {"instruction": "Keep it concise.", "status": "followed"}
+            ]
+        }
+    )
+    evaluator = InstructionAdherenceEvaluator(verbose=False)
+    result = EvaluationFramework([evaluator], judge=judge).evaluate(CASE)
+    assert result["instruction_adherence"].score == 1.0
+    assert evaluator._llm is judge
+    assert len(judge.calls) == 1
+
+
 def test_framework_runs_selected_metrics():
     framework = EvaluationFramework(
         evaluators=[
@@ -256,6 +330,31 @@ def test_framework_classes_select_two_only():
         judge=object(),
     )
     assert set(framework.metrics) == {"faithfulness", "coverage"}
+
+
+def test_framework_core_classes_still_construct_and_evaluate_with_shared_judge():
+    judge = ScriptedJudge(
+        {
+            "items": [
+                {
+                    "source_item": "Users can view invoices.",
+                    "meaningfully_present": True,
+                    "fully_present": True,
+                }
+            ]
+        },
+        {
+            "claims": [
+                {"claim": "Users can view invoices.", "status": "supported"}
+            ]
+        },
+    )
+    framework = EvaluationFramework(
+        evaluators=[CoverageEvaluator, FaithfulnessEvaluator], judge=judge
+    )
+    results = framework.evaluate(CASE)
+    assert set(results) == {"coverage", "faithfulness"}
+    assert len(judge.calls) == 2
 
 
 def test_framework_all_three_classes():

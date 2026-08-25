@@ -1,6 +1,7 @@
 """Offline contract tests for one-call claim-level faithfulness."""
 
 import asyncio
+import inspect
 import threading
 import time
 
@@ -34,14 +35,61 @@ def _claim(claim="A factual claim.", status="supported", reason=None):
     return value
 
 
+def test_public_constructor_uses_common_optional_item_limit():
+    assert tuple(inspect.signature(FaithfulnessEvaluator).parameters) == (
+        "llm",
+        "verbose",
+        "max_items",
+    )
+
+
 def test_one_sync_call_and_supported_scoring():
     judge = Judge({"claims": [_claim()]})
     result = FaithfulnessEvaluator(judge).evaluate(CASE)
     assert len(judge.calls) == 1
-    assert result.score == 1.0 and result.label == "faithful"
+    assert result.score == 1.0 and result.label == "not_hallucinated"
     assert result.details["judge_call_count"] == 1
     assert result.details["claim_count"] == 1
     assert "claims" not in result.details
+
+
+@pytest.mark.parametrize("max_items", [None, 1, 5])
+def test_claim_limit_prompt_details_and_fewer_than_limit(max_items):
+    judge = Judge({"claims": [_claim()]})
+    result = FaithfulnessEvaluator(judge, max_items=max_items).evaluate(CASE)
+    system = judge.calls[0]["prompt"][0]["content"]
+    if max_items is None:
+        assert "identify all materially distinct, checkable claims" in system
+        assert "maxItems" not in judge.calls[0]["schema"]["properties"]["claims"]
+    else:
+        assert f"select at most {max_items}" in system
+        assert "Examine the complete OUTPUT before selecting" in system
+        assert f"Do not stop after finding the first {max_items}" in system
+        assert "independently of whether CONTEXT will classify them" in system
+        assert "CONTEXT is for support judgment, not claim selection" in system
+        assert "return only those that actually exist" in system
+        assert "Do not invent, duplicate, or artificially split claims" in system
+        assert (
+            judge.calls[0]["schema"]["properties"]["claims"]["maxItems"]
+            == max_items
+        )
+    assert len(judge.calls) == 1
+    assert result.details["max_items"] == max_items
+    assert result.details["evaluated_claims"] == 1
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, 1.5, "5"])
+def test_invalid_claim_limit_fails_before_judge_work(bad):
+    judge = Judge({"claims": []})
+    with pytest.raises(ValueError, match="max_items"):
+        FaithfulnessEvaluator(judge, max_items=bad)
+    assert judge.calls == []
+
+
+def test_claim_limit_rejects_over_limit_judge_response_without_truncating():
+    judge = Judge({"claims": [_claim("A"), _claim("B")]})
+    with pytest.raises(ValueError, match="exceeds configured max_items=1"):
+        FaithfulnessEvaluator(judge, max_items=1).evaluate(CASE)
 
 
 def test_verbose_mixed_score_ids_audit_and_explanation():
@@ -52,9 +100,9 @@ def test_verbose_mixed_score_ids_audit_and_explanation():
         ]}
     )
     result = FaithfulnessEvaluator(judge, verbose=True).evaluate(CASE)
-    assert result.score == 0.5 and result.label == "unfaithful"
+    assert result.score == 0.5 and result.label == "hallucinated"
     assert result.explanation == (
-        "1 of 2 factual claims were supported; 1 was unsupported."
+        "1 of 2 evaluated factual claims were supported; 1 was unsupported."
     )
     assert [item["id"] for item in result.details["claims"]] == ["F1", "F2"]
     assert [item["item_score"] for item in result.details["claims"]] == [1.0, 0.0]
@@ -64,7 +112,7 @@ def test_all_unsupported_scores_zero():
     result = FaithfulnessEvaluator(
         Judge({"claims": [_claim(status="unsupported")]}),
     ).evaluate(CASE)
-    assert result.score == 0.0 and result.label == "unfaithful"
+    assert result.score == 0.0 and result.label == "hallucinated"
 
 
 @pytest.mark.parametrize("verbose", [False, True])

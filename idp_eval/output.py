@@ -327,6 +327,101 @@ class PhoenixEvaluationWriter:
 
 
 DEFAULT_REPORT_FIELDS = ("input", "context", "output", "instructions")
+_EXCEL_CELL_LIMIT = 32767
+_EXCEL_SAFE_TEXT_LIMIT = 30000
+_EXCEL_NESTED_STRING_LIMITS = (4000, 3000, 2000, 1000, 500, 250, 125)
+
+
+def _truncate_excel_text(
+    value: str | None, max_chars: int = _EXCEL_SAFE_TEXT_LIMIT
+) -> str | None:
+    """Returns an Excel-safe string preview without mutating ``value``."""
+    if value is None or len(value) <= max_chars:
+        return value
+
+    preview_chars = max_chars
+    while True:
+        removed = len(value) - preview_chars
+        marker = f"...[truncated {removed} characters for Excel]"
+        next_preview_chars = max(0, max_chars - len(marker))
+        if next_preview_chars == preview_chars:
+            break
+        preview_chars = next_preview_chars
+    return f"{value[:preview_chars]}{marker}"[:max_chars]
+
+
+def _truncate_nested_strings(value: Any, max_chars: int) -> Any:
+    """Copies a JSON-like structure while truncating every nested string."""
+    if isinstance(value, str):
+        return _truncate_excel_text(value, max_chars)
+    if isinstance(value, dict):
+        return {
+            key: _truncate_nested_strings(item, max_chars)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_truncate_nested_strings(item, max_chars) for item in value]
+    if isinstance(value, tuple):
+        return tuple(
+            _truncate_nested_strings(item, max_chars) for item in value
+        )
+    return value
+
+
+def _json_for_excel(value: Any, *, sort_keys: bool = False) -> str | None:
+    """Serializes valid, bounded JSON for one Excel cell.
+
+    JSON safety is established with the existing ``default=str`` semantics.
+    Nested strings are shortened before re-serialization; the serialized JSON
+    is never cut in the middle.
+    """
+    if value is None:
+        return None
+    original = json.dumps(value, default=str, sort_keys=sort_keys)
+    if len(original) <= _EXCEL_SAFE_TEXT_LIMIT:
+        return original
+
+    json_safe_value = json.loads(original)
+    for nested_limit in _EXCEL_NESTED_STRING_LIMITS:
+        candidate = json.dumps(
+            _truncate_nested_strings(json_safe_value, nested_limit),
+            default=str,
+            sort_keys=sort_keys,
+        )
+        if len(candidate) <= _EXCEL_SAFE_TEXT_LIMIT:
+            return candidate
+
+    fallback = {
+        "_excel_truncated": True,
+        "_original_json_chars": len(original),
+        "_note": (
+            "Details exceeded the Excel cell limit. Evaluation used full data."
+        ),
+        "_preview": _truncate_excel_text(original, 2000),
+    }
+    serialized = json.dumps(fallback, sort_keys=sort_keys)
+    assert len(serialized) < _EXCEL_CELL_LIMIT
+    return serialized
+
+
+def _json_string_for_excel(value: str | None) -> str | None:
+    """Safely reserializes an existing JSON string when it contains valid JSON."""
+    if value is None:
+        return None
+    try:
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return _truncate_excel_text(value)
+    return _json_for_excel(parsed)
+
+
+def _excel_cell_value(value: Any) -> Any:
+    """Returns a reporting-only Excel-safe copy of one cell value."""
+    if isinstance(value, str):
+        return _truncate_excel_text(value)
+    return value
+
+
 _CASE_REPORT_FIELDS = frozenset(
     {"input", "context", "output", "instructions", "retrieved_documents"}
 )
@@ -528,6 +623,7 @@ _RETRIEVAL_IDENTITY_COLUMNS = (
 _RETRIEVAL_DOCUMENT_COLUMNS = (
     ("rank", "rank"),
     ("document_id", "document_id"),
+    ("text", "text"),
     ("relevant", "relevant"),
     ("relevance_score", "relevance_score"),
     ("reason", "reason"),
@@ -545,6 +641,7 @@ _WIDE_COLUMNS = frozenset(
         "claim",
         "context_item",
         "reference_item",
+        "text",
         "input",
         "context",
         "output",
@@ -646,17 +743,9 @@ class ExcelEvaluationWriter:
         )
 
     def _checkpoint_values(self, record: EvaluationRecord) -> list[Any]:
-        details_json = (
-            json.dumps(record.details, default=str)
-            if record.details is not None
-            else None
-        )
-        metadata_json = (
-            json.dumps(record.metadata, default=str, sort_keys=True)
-            if record.metadata is not None
-            else None
-        )
-        return [
+        details_json = _json_for_excel(record.details)
+        metadata_json = _json_for_excel(record.metadata, sort_keys=True)
+        values = [
             record.run_name,
             record.dataset_name,
             record.case_id,
@@ -677,11 +766,12 @@ class ExcelEvaluationWriter:
             record.output,
             record.instructions,
             record.evaluation_scope,
-            record.retrieved_documents_json,
+            _json_string_for_excel(record.retrieved_documents_json),
             record.retrieved_documents,
             metadata_json,
             record.identifier,
         ]
+        return [_excel_cell_value(value) for value in values]
 
     def _upsert_checkpoint(self, record: EvaluationRecord) -> None:
         values = self._checkpoint_values(record)
@@ -717,13 +807,9 @@ class ExcelEvaluationWriter:
             record.label,
             record.explanation,
             record.timestamp,
-            (
-                json.dumps(record.details, default=str)
-                if record.details is not None
-                else None
-            ),
+            _json_for_excel(record.details),
         ]
-        return values
+        return [_excel_cell_value(value) for value in values]
 
     @staticmethod
     def _render_metadata_value(value: Any) -> str | None:
@@ -916,7 +1002,7 @@ class ExcelEvaluationWriter:
                 record.metric,
             ]
             row.extend(item.get(field) for _, field in spec.columns)
-            sheet.append(row)
+            sheet.append([_excel_cell_value(value) for value in row])
 
     def _append_retrieval_rows(self, record: EvaluationRecord) -> bool:
         """Writes shared retrieved-document rows once per case; returns whether it did.
@@ -949,7 +1035,7 @@ class ExcelEvaluationWriter:
                 record.case_id,
             ]
             row.extend(doc.get(field) for _, field in _RETRIEVAL_DOCUMENT_COLUMNS)
-            sheet.append(row)
+            sheet.append([_excel_cell_value(value) for value in row])
         return True
 
     def _item_sheet(self, spec: _ItemSheet) -> Any:

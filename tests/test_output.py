@@ -9,15 +9,20 @@ from idp_eval import (
     EvaluationCase,
     EvaluationFramework,
     EvaluationResult,
+    Evaluator,
     FaithfulnessEvaluator,
     InstructionAdherenceEvaluator,
     PersistenceError,
+    RelevanceAtKEvaluator,
 )
 from idp_eval.output import (
     ANNOTATOR_KINDS,
     EvaluationRecord,
     ExcelEvaluationWriter,
     PhoenixEvaluationWriter,
+    _json_for_excel,
+    _truncate_excel_text,
+    _truncate_nested_strings,
     build_writers,
     validate_annotator_kind,
 )
@@ -476,6 +481,201 @@ def test_multiple_writers_do_not_rerun_evaluator(tmp_path):
     framework.evaluate(CASE)
     assert judge.calls == 1
     assert second.writes == 1
+
+
+def test_excel_safe_helpers_preserve_small_values_and_do_not_mutate_inputs():
+    short = "short value"
+    long_text = "x" * 40000
+    original = {
+        "short": short,
+        "documents": [{"text": long_text}],
+        "tuple": (long_text, 7, True, None),
+    }
+
+    assert _truncate_excel_text(None) is None
+    assert _truncate_excel_text(short) == short
+    truncated = _truncate_excel_text(long_text)
+    assert len(truncated) <= 30000
+    assert "[truncated " in truncated
+
+    copied = _truncate_nested_strings(original, 1000)
+    assert copied["short"] == short
+    assert len(copied["documents"][0]["text"]) <= 1000
+    assert len(copied["tuple"][0]) <= 1000
+    assert copied["tuple"][1:] == (7, True, None)
+    assert original["documents"][0]["text"] == long_text
+
+    small_json = _json_for_excel({"value": short})
+    assert small_json == json.dumps({"value": short})
+
+
+def test_json_for_excel_uses_valid_fallback_instead_of_slicing():
+    structurally_large = {f"key-{index}": index for index in range(10000)}
+    serialized = _json_for_excel(structurally_large)
+
+    assert len(serialized) <= 30000
+    parsed = json.loads(serialized)
+    assert parsed["_excel_truncated"] is True
+    assert parsed["_original_json_chars"] > 32767
+    assert "Evaluation used full data" in parsed["_note"]
+
+
+class LargeDetailsEvaluator(Evaluator):
+    name = "large_details"
+    required_fields = ("context", "output")
+
+    def __init__(self, document_text):
+        self.document_text = document_text
+        self.calls = 0
+        self.seen = None
+
+    def resume_signature(self):
+        return {"contract_version": 1}
+
+    def evaluate(self, case):
+        self.calls += 1
+        self.seen = (case.context, case.output, case.retrieved_documents)
+        return EvaluationResult(
+            metric=self.name,
+            score=1.0,
+            label="pass",
+            explanation=self.document_text,
+            details={
+                "documents": [
+                    {
+                        "rank": 1,
+                        "document_id": "doc-1",
+                        "text": self.document_text,
+                        "relevant": True,
+                        "relevance_score": 1.0,
+                        "reason": "Relevant document.",
+                        "retrieval_score": 0.9,
+                    }
+                ]
+            },
+        )
+
+
+def test_large_excel_values_remain_valid_visible_and_unmodified(tmp_path):
+    path = tmp_path / "large.xlsx"
+    document_text = "document-content-" * 4000
+    context = "context-content-" * 3000
+    output = "output-content-" * 3000
+    retrieved_documents = [{"text": document_text, "score": 0.9}]
+    case = EvaluationCase(
+        case_id="large-1",
+        context=context,
+        output=output,
+        retrieved_documents=retrieved_documents,
+    )
+    evaluator = LargeDetailsEvaluator(document_text)
+
+    result = EvaluationFramework(
+        [evaluator],
+        output="excel",
+        excel_path=str(path),
+        report_fields=["context", "output", "retrieved_documents"],
+    ).evaluate(case)["large_details"]
+
+    assert evaluator.seen == (context, output, retrieved_documents)
+    assert result.details["documents"][0]["text"] == document_text
+    assert len(result.details["documents"][0]["text"]) == len(document_text)
+
+    summary = _read(path)[1][0]
+    checkpoint = _read(path, "_idp_eval_checkpoint")[1][0]
+    for name in ("context", "output", "retrieved_documents", "explanation"):
+        assert len(summary[name]) <= 30000
+        assert "[truncated " in summary[name]
+    parsed_summary_details = json.loads(summary["raw_details_json"])
+    parsed_checkpoint_details = json.loads(checkpoint["raw_details_json"])
+    parsed_retrieved = json.loads(checkpoint["retrieved_documents_json"])
+    assert parsed_summary_details == parsed_checkpoint_details
+    assert len(parsed_checkpoint_details["documents"][0]["text"]) < len(
+        document_text
+    )
+    assert len(parsed_retrieved[0]["text"]) < len(document_text)
+
+    header, rows = _read(path, "retrieval_documents")
+    assert header == (
+        "run_name",
+        "dataset_name",
+        "key_id",
+        "rank",
+        "document_id",
+        "text",
+        "relevant",
+        "relevance_score",
+        "reason",
+        "retrieval_score",
+    )
+    retrieval_row = rows[0]
+    assert retrieval_row["text"] != document_text
+    assert "[truncated " in retrieval_row["text"]
+    assert retrieval_row["relevant"] is True
+    assert retrieval_row["relevance_score"] == 1.0
+    assert retrieval_row["retrieval_score"] == 0.9
+
+
+def test_resume_after_large_details_skips_evaluator_and_parses_json(tmp_path):
+    path = tmp_path / "large-resume.xlsx"
+    document_text = "large-document-" * 4000
+    case = EvaluationCase(
+        case_id="resume-large",
+        context="authoritative context",
+        output="generated output",
+        retrieved_documents=[{"text": document_text}],
+    )
+    first = LargeDetailsEvaluator(document_text)
+    first_result = EvaluationFramework(
+        [first], output="excel", excel_path=str(path)
+    ).evaluate(case)["large_details"]
+    assert first_result.details["documents"][0]["text"] == document_text
+
+    second = LargeDetailsEvaluator(document_text)
+    resumed_result = EvaluationFramework(
+        [second], output="excel", excel_path=str(path), resume=True
+    ).evaluate(case)["large_details"]
+
+    assert first.calls == 1
+    assert second.calls == 0
+    assert resumed_result.label == "pass"
+    assert json.loads(
+        _read(path, "_idp_eval_checkpoint")[1][0]["raw_details_json"]
+    )
+    assert len(resumed_result.details["documents"][0]["text"]) < len(
+        document_text
+    )
+
+
+def test_excel_safety_does_not_truncate_retrieval_judge_input(tmp_path):
+    class CapturingJudge:
+        def __init__(self):
+            self.prompt = None
+
+        def generate_object(self, prompt, schema):
+            self.prompt = prompt
+            return {
+                "documents": [
+                    {"rank": 1, "relevant": True, "reason": "Relevant."}
+                ]
+            }
+
+    document_text = "complete-judge-document-" * 2000
+    judge = CapturingJudge()
+    result = EvaluationFramework(
+        [RelevanceAtKEvaluator(1, judge, verbose=True)],
+        output="excel",
+        excel_path=str(tmp_path / "judge-input.xlsx"),
+    ).evaluate(
+        EvaluationCase(
+            case_id="judge-input",
+            input="Find the relevant document.",
+            retrieved_documents=[{"text": document_text}],
+        )
+    )["relevance_at_1"]
+
+    assert document_text in str(judge.prompt)
+    assert result.details["documents"][0]["text"] == document_text
 
 
 def test_custom_evaluations_use_same_excel_path(tmp_path):

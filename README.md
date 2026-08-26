@@ -215,6 +215,23 @@ violation reasons. An empty judge-produced instruction set is
 | [`instruction_adherence_evaluator_usage.ipynb`](notebooks/instruction_adherence_evaluator_usage.ipynb) | Instruction Adherence-specific usage |
 | [`retrieval_metrics_usage.ipynb`](notebooks/retrieval_metrics_usage.ipynb) | **Retrieval metrics:** document ranking and retrieved-context quality |
 
+### QA validation notebooks
+
+The acceptance-focused notebooks under [`notebooks/qa/`](notebooks/qa/) each
+exercise one metric with five readable mock cases and write an inspectable Excel
+workbook under the ignored `qa_outputs/` directory:
+
+- [Coverage validation](notebooks/qa/coverage_validation.ipynb)
+- [Faithfulness validation](notebooks/qa/faithfulness_validation.ipynb)
+- [Instruction Adherence validation](notebooks/qa/instruction_adherence_validation.ipynb)
+- [Relevance@5 validation](notebooks/qa/relevance_at_k_validation.ipynb)
+- [nDCG@5 validation](notebooks/qa/ndcg_at_k_validation.ipynb)
+
+They are intended for ticket and acceptance validation: configure the Azure
+judge placeholders, run one notebook top to bottom, compare the broad expected
+behavior with the returned results, and inspect the generated summary and
+item-level Excel sheets. Phoenix is not required.
+
 The guides are backend-independent and use application-owned Azure
 configuration placeholders. The setup guide covers the equivalent gateway
 configuration. Start with the combined guide for generated outputs, the

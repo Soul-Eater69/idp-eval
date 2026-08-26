@@ -622,6 +622,16 @@ concurrency limit. Tracing uses `retrieval.relevance.evaluate`,
 span per document or item.
 See [`notebooks/retrieval_metrics_usage.ipynb`](../notebooks/retrieval_metrics_usage.ipynb).
 
+### QA validation notebooks
+
+For ticket and acceptance testing, [`notebooks/qa/`](../notebooks/qa/) contains
+five self-contained notebooks for Coverage, Faithfulness, Instruction
+Adherence, Relevance@5, and nDCG@5. Each notebook configures one evaluator,
+runs five mock cases, compares results with broad expected behavior, and writes
+an Excel workbook to the ignored `qa_outputs/` directory for summary and
+item-level inspection. Replace the Azure judge placeholders before running;
+these QA notebooks do not require Phoenix tracing.
+
 ## 8. Bulk, grouped, and async APIs
 
 ```python

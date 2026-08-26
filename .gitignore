@@ -24,6 +24,9 @@ htmlcov/
 # Benchmark artifacts (generated)
 benchmark_results/
 
+# QA notebook artifacts (generated)
+qa_outputs/
+
 # Secrets / local env
 .env
 *.env

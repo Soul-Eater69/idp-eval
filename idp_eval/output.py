@@ -482,6 +482,19 @@ _ITEM_SHEETS: dict[str, _ItemSheet] = {
             ("reason", "reason"),
         ),
     ),
+    "few_shot_content_leakage": _ItemSheet(
+        "few_shot_content_leakage_items",
+        "claims",
+        (
+            ("claim_id", "id"),
+            ("claim", "claim"),
+            ("theme_supported", "theme_supported"),
+            ("example_supported", "example_supported"),
+            ("classification", "classification"),
+            ("item_leakage_score", "item_leakage_score"),
+            ("reason", "reason"),
+        ),
+    ),
     "contextual_relevancy": _ItemSheet(
         "contextual_relevancy_items",
         "items",

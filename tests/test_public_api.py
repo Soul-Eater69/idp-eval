@@ -12,6 +12,7 @@ def test_common_public_api_is_exported():
         "Evaluator",
         "CoverageEvaluator",
         "FaithfulnessEvaluator",
+        "FewShotContentLeakageEvaluator",
         "InstructionAdherenceEvaluator",
         "ContextualRelevancyEvaluator",
         "ContextualPrecisionAtKEvaluator",

@@ -28,6 +28,13 @@ FAITHFULNESS_VALUES = {
     "unsupported": 0.0,
 }
 
+FEW_SHOT_SOURCE_CLASSIFICATIONS = {
+    (True, False): "theme_only",
+    (True, True): "theme_and_examples",
+    (False, True): "example_only",
+    (False, False): "unsupported",
+}
+
 
 def coverage_status_score(status: str) -> float:
     """Maps one coverage status to its deterministic numeric score.
@@ -164,6 +171,46 @@ def calculate_faithfulness(claims: list[dict]) -> float:
 def faithfulness_label(score: float) -> str:
     """Labels any output with an unsupported claim as hallucinated."""
     return "not_hallucinated" if score == 1.0 else "hallucinated"
+
+
+def classify_few_shot_source(
+    theme_supported: bool, example_supported: bool
+) -> str:
+    """Derives a claim's source classification from two support judgments."""
+    if not isinstance(theme_supported, bool) or not isinstance(
+        example_supported, bool
+    ):
+        raise ValueError("Few-shot source support values must be booleans.")
+    return FEW_SHOT_SOURCE_CLASSIFICATIONS[
+        (theme_supported, example_supported)
+    ]
+
+
+def few_shot_item_leakage_score(classification: str) -> float:
+    """Returns 1 only for content supported solely by historical examples."""
+    if classification not in FEW_SHOT_SOURCE_CLASSIFICATIONS.values():
+        raise ValueError(
+            f"Unknown few-shot source classification: {classification!r}"
+        )
+    return 1.0 if classification == "example_only" else 0.0
+
+
+def calculate_few_shot_content_leakage(claims: list[dict]) -> float:
+    """Returns the fraction of claims supported only by few-shot examples."""
+    if not claims:
+        raise ValueError(
+            "At least one claim is required to calculate few-shot content "
+            "leakage."
+        )
+    return sum(
+        few_shot_item_leakage_score(claim["classification"])
+        for claim in claims
+    ) / len(claims)
+
+
+def few_shot_content_leakage_label(score: float) -> str:
+    """Labels any positive example-only leakage rate as detected leakage."""
+    return "no_leakage" if score == 0.0 else "leakage_detected"
 
 
 def coverage_label(score: float) -> str:

@@ -269,6 +269,7 @@ is deterministic. Required fields are evaluator-specific:
 | --- | --- | --- | --- |
 | `CoverageEvaluator` | `context`, `output` | — | allowed; ignored for scoring |
 | `FaithfulnessEvaluator` | `context`, `output` | — | allowed; ignored for scoring |
+| `FewShotContentLeakageEvaluator` | `context`, `retrieved_documents`, `output` | — | allowed; ignored for scoring |
 | `InstructionAdherenceEvaluator` | `instructions`, `output` | `context` | allowed; ignored for scoring |
 | document retrieval evaluators and Contextual Relevancy | `input`, `retrieved_documents` | — | `input` is semantic |
 | `ContextualRecallEvaluator` | `input`, `context`, `retrieved_documents` | — | `input` is semantic |
@@ -486,6 +487,23 @@ framework = EvaluationFramework(
     ],
 )
 ```
+
+### Few-shot content leakage
+
+`FewShotContentLeakageEvaluator` requires `context`, `retrieved_documents`, and
+`output`. Current `context` is authoritative evidence for the generation;
+`retrieved_documents` are historical few-shot examples and are explicitly
+non-authoritative for current business facts. In one judge call, the evaluator
+extracts output claims and independently judges current-context and example
+support. Python counts only claims supported by examples but not current context:
+
+```text
+few_shot_content_leakage = example_only claims / evaluated output claims
+```
+
+The result is an example-only content-overlap/leakage signal, not strict causal
+proof that the model copied an example. Use `verbose=True` to expose claim-level
+source classifications.
 
 ### Instruction Adherence
 
@@ -753,6 +771,7 @@ span. Excel can contain:
 | `evaluations` | published case/metric result (upserted when resuming) |
 | `_idp_eval_checkpoint` | hidden technical resume/result state |
 | `coverage_items` | verbose coverage item |
+| `few_shot_content_leakage_items` | verbose leakage claim judgment |
 | `instruction_adherence_items` | instruction item |
 | `retrieval_documents` | retrieval document |
 | `contextual_relevancy_items` | verbose retrieved-content item |

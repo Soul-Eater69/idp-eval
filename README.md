@@ -10,6 +10,7 @@ A reusable evaluation framework built on Arize Phoenix. Cases use generic
 | --- | --- | --- | --- |
 | `coverage` | `context`, `output` | — | allowed; ignored for scoring |
 | `faithfulness` | `context`, `output` | — | allowed; ignored for scoring |
+| `few_shot_content_leakage` | `context`, `retrieved_documents`, `output` | — | allowed; ignored for scoring |
 | `instruction_adherence` | `instructions`, `output` | `context` | allowed; ignored for scoring |
 | `relevance_at_{k}` | `input`, `retrieved_documents` | — | `input` is semantic |
 | `hit_rate_at_{k}` | `input`, `retrieved_documents` | — | `input` is semantic |
@@ -130,6 +131,35 @@ prompt- and Python-enforced rather than expressed with JSON Schema `maxItems`.
 diagnostics only for unsupported claims; `per_item` requires reasons for every
 claim; `none` returns no reasons and no explanation. Every mode still makes
 exactly one judge call, and Python remains authoritative for score and label.
+
+## Few-shot content leakage
+
+`FewShotContentLeakageEvaluator(judge, verbose=False, max_items=None,
+reason_mode="overall")` detects material output claims supported only by
+historical few-shot examples and absent from authoritative current `context`.
+The source roles are strict: `context` is truth for the current generation;
+`retrieved_documents` are non-authoritative historical examples expected to
+influence structure or style, not current business facts.
+
+One structured judge call returns independent `theme_supported` and
+`example_supported` booleans for each output claim. Python derives `theme_only`,
+`theme_and_examples`, `example_only`, or `unsupported`; only `example_only`
+counts as leakage. The score is the example-only claim fraction, so lower is
+better: `0.0` is `no_leakage`, any positive score is `leakage_detected`, and no
+checkable claims is `not_applicable`. This is an attribution/leakage signal, not
+strict causal proof that the model copied an example.
+
+```python
+case = EvaluationCase(
+    context=current_source,
+    retrieved_documents=historical_examples,
+    output=generation,
+)
+result = EvaluationFramework(
+    evaluators=[FewShotContentLeakageEvaluator],
+    judge=judge,
+).evaluate(case)["few_shot_content_leakage"]
+```
 
 ## Instruction adherence
 
@@ -603,6 +633,7 @@ uses these sheets where applicable:
 | `evaluations` | one published case/metric result (upserted when resuming) |
 | `_idp_eval_checkpoint` | hidden technical resume/result state |
 | `coverage_items` | verbose coverage item judgments |
+| `few_shot_content_leakage_items` | verbose leakage claim judgments |
 | `instruction_adherence_items` | instruction judgments |
 | `retrieval_documents` | retrieval judgments |
 | `contextual_relevancy_items` | verbose retrieved-content item judgments |

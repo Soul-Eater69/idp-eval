@@ -2,6 +2,9 @@
 
 from idp_eval.evaluators.coverage import CoverageEvaluator
 from idp_eval.evaluators.faithfulness import FaithfulnessEvaluator
+from idp_eval.evaluators.few_shot_content_leakage import (
+    FewShotContentLeakageEvaluator,
+)
 from idp_eval.evaluators.instruction_adherence import (
     InstructionAdherenceEvaluator,
 )
@@ -17,6 +20,7 @@ from idp_eval.evaluators.retrieval import (
 
 __all__ = [
     "FaithfulnessEvaluator",
+    "FewShotContentLeakageEvaluator",
     "CoverageEvaluator",
     "InstructionAdherenceEvaluator",
     "ContextualRelevancyEvaluator",

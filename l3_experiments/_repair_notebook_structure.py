@@ -113,9 +113,9 @@ INSPECTION_SOURCE = '''if INSPECTION_THEME_ID and INSPECTION_EPIC_KEY:
 
     print("SYSTEM PROMPT")
     print(SYSTEM_PROMPT)
-    print("\nUSER PROMPT")
+    print("\\nUSER PROMPT")
     print(user_prompt)
-    print("\nCANDIDATES")
+    print("\\nCANDIDATES")
     display(pd.DataFrame(candidates))
 
     if candidates:
@@ -125,12 +125,12 @@ INSPECTION_SOURCE = '''if INSPECTION_THEME_ID and INSPECTION_EPIC_KEY:
             epic,
             stage_id,
         )
-        print("\nMODEL RESPONSE")
+        print("\\nMODEL RESPONSE")
         print(result["raw_response"])
-        print("\nCALL METRICS")
+        print("\\nCALL METRICS")
         display(pd.DataFrame([result["metrics"]]))
     else:
-        print("\nNo candidates for this Stage; LLM call skipped.")
+        print("\\nNo candidates for this Stage; LLM call skipped.")
 else:
     print(
         "Set INSPECTION_THEME_ID and INSPECTION_EPIC_KEY "

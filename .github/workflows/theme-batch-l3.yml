@@ -1,4 +1,4 @@
-name: Test theme-batch L3 experiments
+name: Apply theme-batch L3 experiments
 
 on:
   push:
@@ -13,12 +13,22 @@ permissions:
   contents: write
 
 jobs:
-  test:
+  apply-and-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Build E7 and E8 notebooks
+        run: python l3_experiments/_apply_theme_batch.py
       - name: Verify theme-batch experiments
         run: python l3_experiments/_test_theme_batch.py
+      - name: Commit E7 and E8 notebooks
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add l3_experiments/07_theme_batch.ipynb l3_experiments/08_theme_batch_with_hierarchy.ipynb
+          git diff --cached --quiet && exit 0
+          git commit -m "Add Theme-batch L3 experiments"
+          git push

@@ -1,21 +1,35 @@
-name: Test L3 evaluation population
+name: Repair L3 notebooks
 
 on:
   push:
     paths:
+      - "l3_experiments/_repair_notebook_structure.py"
       - "l3_experiments/_test_eval_population.py"
       - ".github/workflows/repair-l3.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  test:
+  repair:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Verify valid evaluation population behavior
+      - name: Apply evaluation population refactor
+        run: python l3_experiments/_repair_notebook_structure.py
+      - name: Verify evaluation population behavior
         run: python l3_experiments/_test_eval_population.py
+      - name: Commit updated notebooks
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add l3_experiments/*.ipynb
+          if git diff --cached --quiet; then
+            echo "No notebook changes to commit."
+          else
+            git commit -m "Score only valid L3 evaluation Epics"
+            git push
+          fi

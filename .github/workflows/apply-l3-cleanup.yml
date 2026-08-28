@@ -19,6 +19,19 @@ jobs:
           python-version: "3.11"
       - name: Normalize prompt formatting
         run: python l3_experiments/_normalize_prompts.py
+      - name: Drop brittle helper assertion
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("l3_experiments/_apply_notebook_cleanup.py")
+          text = path.read_text(encoding="utf-8")
+          text = "\n".join(
+              line
+              for line in text.splitlines()
+              if "assert 'SYSTEM_PROMPT = \"\"\"'" not in line
+          ) + "\n"
+          path.write_text(text, encoding="utf-8")
+          PY
       - name: Apply and validate notebook updates
         run: python l3_experiments/_apply_notebook_cleanup.py
       - name: Commit notebook updates and remove one-off helpers

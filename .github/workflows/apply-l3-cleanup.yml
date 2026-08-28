@@ -39,6 +39,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add l3_experiments/*.ipynb
-          git rm l3_experiments/_apply_notebook_cleanup.py l3_experiments/_normalize_prompts.py .github/workflows/apply-l3-cleanup.yml
+          git rm -f l3_experiments/_apply_notebook_cleanup.py l3_experiments/_normalize_prompts.py .github/workflows/apply-l3-cleanup.yml
           git commit -m "Clean L3 notebooks and add LLM call metrics"
           git push

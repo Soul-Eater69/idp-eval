@@ -33,9 +33,13 @@ def validate_notebook(path, experiment_name, expect_hierarchy):
     builder = find_code(nb, "def build_theme_batch_prompt")
     assert '"epics"' in builder
     assert '"epic_key"' in builder
-    assert '"stages"' in builder
     for forbidden in ("epic_description", "success_criteria", "ground_truth"):
         assert forbidden not in builder, f"{forbidden} leaked into grouped LLM prompt builder"
+
+    batch_builder = find_code(nb, "def build_batch_epics")
+    assert '"epic_key"' in batch_builder
+    assert '"stages"' in batch_builder
+    assert '"candidate_l3_capabilities"' in batch_builder
 
     candidate_cell = find_code(nb, "def candidate_rows_for_stage")
     if expect_hierarchy:

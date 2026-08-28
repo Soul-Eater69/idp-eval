@@ -1,0 +1,29 @@
+name: Apply L3 notebook cleanup
+
+on:
+  push:
+    paths:
+      - "l3_experiments/_apply_notebook_cleanup.py"
+      - ".github/workflows/apply-l3-cleanup.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Apply and validate notebook updates
+        run: python l3_experiments/_apply_notebook_cleanup.py
+      - name: Commit notebook updates and remove one-off helpers
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add l3_experiments/*.ipynb
+          git rm l3_experiments/_apply_notebook_cleanup.py .github/workflows/apply-l3-cleanup.yml
+          git commit -m "Clean L3 notebooks and add LLM call metrics"
+          git push

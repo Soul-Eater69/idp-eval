@@ -1,8 +1,4 @@
-"""Small shared helpers for the L3 capability experiment notebooks.
-
-Keep experiment-specific retrieval and prompt construction in the notebooks.
-This module only contains identical infrastructure used by every experiment.
-"""
+"""Shared infrastructure for the L3 experiment notebooks."""
 
 from __future__ import annotations
 
@@ -10,6 +6,7 @@ import json
 import os
 import re
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Iterable, Mapping
 
 import httpx
@@ -17,13 +14,60 @@ import pandas as pd
 from dotenv import load_dotenv
 
 
+def _assistant_text(response: Mapping[str, Any]) -> str:
+    choice = response.get("choice") or (response.get("choices") or [None])[0]
+    content = (choice or {}).get("message", {}).get("content")
+    if not isinstance(content, str):
+        raise RuntimeError(f"Unexpected IDP gateway response: {response}")
+    return content
+
+
+def _usage_value(usage: Mapping[str, Any], *names: str) -> int | None:
+    for name in names:
+        value = usage.get(name)
+        if value is not None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _token_metrics(response: Mapping[str, Any]) -> dict[str, int | None]:
+    usage = response.get("usage") or response.get("token_usage") or {}
+    if not isinstance(usage, Mapping):
+        usage = {}
+
+    input_tokens = _usage_value(
+        usage,
+        "prompt_tokens",
+        "input_tokens",
+        "promptTokens",
+        "inputTokens",
+    )
+    output_tokens = _usage_value(
+        usage,
+        "completion_tokens",
+        "output_tokens",
+        "completionTokens",
+        "outputTokens",
+    )
+    total_tokens = _usage_value(usage, "total_tokens", "totalTokens")
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
 class IDPGatewayClient:
     """Session-reusable client for the IDP LLM chat-completions gateway."""
 
     def __init__(self, verify_ssl: bool = False, timeout: float = 90.0):
         load_dotenv()
-        self.verify_ssl = verify_ssl
-        self.timeout = timeout
         self.model = self._required_env("LLM_MODEL")
         self.app_id = self._required_env("LLM_APP_ID")
         self.auth_url = self._required_env("IDP_AUTH_URL")
@@ -67,7 +111,6 @@ class IDPGatewayClient:
         messages: list[dict[str, str]],
         **options: Any,
     ) -> dict[str, Any]:
-        """Send chat messages and return the complete gateway response."""
         payload = {
             "model": self.model,
             "messages": messages,
@@ -92,7 +135,6 @@ class IDPGatewayClient:
 
             if response.status_code != 401 or attempt == 1:
                 break
-
             self._token = self._get_token()
 
         if response.is_error:
@@ -111,7 +153,6 @@ class IDPGatewayClient:
         user_prompt: str,
         **options: Any,
     ) -> str:
-        """Return the assistant text for a system prompt and a user prompt."""
         response = self.complete(
             [
                 {"role": "system", "content": system_prompt},
@@ -119,16 +160,9 @@ class IDPGatewayClient:
             ],
             **options,
         )
-
-        choice = response.get("choice") or (response.get("choices") or [None])[0]
-        content = (choice or {}).get("message", {}).get("content")
-
-        if not isinstance(content, str):
-            raise RuntimeError(f"Unexpected IDP gateway response: {response}")
-        return content
+        return _assistant_text(response)
 
     def close(self) -> None:
-        """Close the persistent HTTP connection when the notebook is finished."""
         self._client.close()
 
 
@@ -136,7 +170,6 @@ _idp_gateway: IDPGatewayClient | None = None
 
 
 def get_idp_gateway() -> IDPGatewayClient:
-    """Create the IDP LLM gateway client once and reuse it across notebook cells."""
     global _idp_gateway
     if _idp_gateway is None:
         _idp_gateway = IDPGatewayClient(verify_ssl=False)
@@ -144,22 +177,37 @@ def get_idp_gateway() -> IDPGatewayClient:
 
 
 def load_gateway() -> IDPGatewayClient:
-    """Backward-compatible notebook helper returning the shared IDP gateway."""
     return get_idp_gateway()
 
 
 def call_llm(gateway: Any, system_prompt: str, user_prompt: str) -> str:
-    """Call the IDP gateway using the interface shared by every experiment."""
-    response = gateway.chat(system_prompt=system_prompt, user_prompt=user_prompt)
-    if not isinstance(response, str):
-        raise TypeError(
-            f"gateway.chat(...) must return str, got {type(response).__name__}"
-        )
-    return response
+    """Call the gateway and return only assistant text."""
+    return gateway.chat(system_prompt=system_prompt, user_prompt=user_prompt)
+
+
+def call_llm_with_metrics(
+    gateway: Any,
+    system_prompt: str,
+    user_prompt: str,
+) -> tuple[str, dict[str, float | int | None]]:
+    """Call the gateway and return assistant text plus end-to-end latency/token usage."""
+    started = perf_counter()
+    response = gateway.complete(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+    )
+    latency_seconds = perf_counter() - started
+
+    metrics: dict[str, float | int | None] = {
+        "latency_seconds": latency_seconds,
+        **_token_metrics(response),
+    }
+    return _assistant_text(response), metrics
 
 
 def parse_json_response(text: str) -> dict[str, Any]:
-    """Parse JSON from a model response, tolerating a Markdown fence or surrounding text."""
     if not isinstance(text, str) or not text.strip():
         raise ValueError("LLM returned an empty response.")
 
@@ -198,7 +246,6 @@ def validate_l3_response(
     allow_empty: bool = True,
     max_selected: int = 3,
 ) -> list[dict[str, str]]:
-    """Validate the strict L3 output contract and return normalized selections."""
     if set(payload) != {"l3"}:
         raise ValueError("LLM response must contain exactly one top-level field: l3.")
 
@@ -224,7 +271,6 @@ def validate_l3_response(
 
         capability_id = str(selection.get("capability_id", "")).strip()
         reason = str(selection.get("reason", "")).strip()
-
         if not capability_id:
             raise ValueError(f"L3 selection #{index} is missing capability_id.")
         if capability_id not in allowed:
@@ -246,7 +292,6 @@ def score_sets(
     predicted: Iterable[str],
     truth: Iterable[str],
 ) -> dict[str, float | int]:
-    """Calculate exact-set match, precision, recall and F1 for one Epic."""
     predicted_set = {str(value).strip() for value in predicted if str(value).strip()}
     truth_set = {str(value).strip() for value in truth if str(value).strip()}
 
@@ -256,11 +301,7 @@ def score_sets(
         true_positives = len(predicted_set & truth_set)
         precision = true_positives / len(predicted_set) if predicted_set else 0.0
         recall = true_positives / len(truth_set) if truth_set else 0.0
-        f1 = (
-            2 * precision * recall / (precision + recall)
-            if precision + recall
-            else 0.0
-        )
+        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
 
     return {
         "exact_match": int(predicted_set == truth_set),
@@ -273,39 +314,16 @@ def score_sets(
 
 
 def summarize_results(results: pd.DataFrame) -> pd.DataFrame:
-    """Return a compact one-row summary over rows that have evaluation metrics."""
-    if results.empty:
-        return pd.DataFrame(
-            [
-                {
-                    "evaluated_epics": 0,
-                    "exact_match_accuracy": 0.0,
-                    "mean_precision": 0.0,
-                    "mean_recall": 0.0,
-                    "mean_f1": 0.0,
-                    "error_rows": 0,
-                }
-            ]
-        )
-
-    evaluated = results.loc[results["exact_match"].notna()].copy()
+    evaluated = results.loc[results["exact_match"].notna()].copy() if not results.empty else results
     return pd.DataFrame(
         [
             {
                 "evaluated_epics": int(len(evaluated)),
-                "exact_match_accuracy": float(evaluated["exact_match"].mean())
-                if len(evaluated)
-                else 0.0,
-                "mean_precision": float(evaluated["precision"].mean())
-                if len(evaluated)
-                else 0.0,
-                "mean_recall": float(evaluated["recall"].mean())
-                if len(evaluated)
-                else 0.0,
+                "exact_match_accuracy": float(evaluated["exact_match"].mean()) if len(evaluated) else 0.0,
+                "mean_precision": float(evaluated["precision"].mean()) if len(evaluated) else 0.0,
+                "mean_recall": float(evaluated["recall"].mean()) if len(evaluated) else 0.0,
                 "mean_f1": float(evaluated["f1"].mean()) if len(evaluated) else 0.0,
-                "error_rows": int((results["status"] == "error").sum())
-                if "status" in results
-                else 0,
+                "error_rows": int((results["status"] == "error").sum()) if "status" in results else 0,
             }
         ]
     )
@@ -315,19 +333,25 @@ def save_results_excel(
     results: pd.DataFrame,
     experiment_name: str,
     output_dir: str | Path = "results",
+    extra_sheets: Mapping[str, pd.DataFrame] | None = None,
 ) -> Path:
-    """Save prediction rows and summary to a single Excel workbook."""
+    """Save predictions plus optional experiment-specific metric sheets."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{experiment_name}.xlsx"
-    summary = summarize_results(results)
+
+    sheets: dict[str, pd.DataFrame] = {
+        "predictions": results,
+        "summary": summarize_results(results),
+    }
+    if extra_sheets:
+        sheets.update(extra_sheets)
 
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-        results.to_excel(writer, sheet_name="predictions", index=False)
-        summary.to_excel(writer, sheet_name="summary", index=False)
-
-        for sheet_name in ("predictions", "summary"):
-            worksheet = writer.sheets[sheet_name]
+        for sheet_name, frame in sheets.items():
+            safe_name = sheet_name[:31]
+            frame.to_excel(writer, sheet_name=safe_name, index=False)
+            worksheet = writer.sheets[safe_name]
             worksheet.freeze_panes = "A2"
             worksheet.auto_filter.ref = worksheet.dimensions
             for column_cells in worksheet.columns:
@@ -335,8 +359,6 @@ def save_results_excel(
                     max(len(str(cell.value or "")) for cell in column_cells) + 2,
                     80,
                 )
-                worksheet.column_dimensions[
-                    column_cells[0].column_letter
-                ].width = width
+                worksheet.column_dimensions[column_cells[0].column_letter].width = width
 
     return output_path

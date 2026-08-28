@@ -99,6 +99,260 @@ EXPERIMENT_NAME = "{experiment_name}"
 '''
 
 
+BASE_CANDIDATE_SOURCE = '''def candidate_rows_for_stage(stage_id):
+    rows = stage_capability_map.loc[
+        stage_capability_map["Value Stream Stage ID"].astype(str).str.strip()
+        == stage_id
+    ].copy()
+    rows = (
+        rows.drop_duplicates(subset=["Capability ID"], keep="first")
+        .sort_values(["Capability Name", "Capability ID"], kind="stable")
+    )
+
+    return [
+        {
+            "capability_id": clean_text(row["Capability ID"]),
+            "capability_name": clean_text(row["Capability Name"]),
+            "capability_description": clean_text(row["Capability Description"]),
+            "capability_tier": clean_text(row["Capability Tier"]),
+        }
+        for _, row in rows.iterrows()
+    ]
+'''
+
+
+HIERARCHY_CANDIDATE_SOURCE = '''def candidate_rows_for_stage(stage_id):
+    rows = stage_capability_map.loc[
+        stage_capability_map["Value Stream Stage ID"].astype(str).str.strip()
+        == stage_id
+    ].copy()
+    rows = (
+        rows.drop_duplicates(subset=["Capability ID"], keep="first")
+        .sort_values(["Capability Name", "Capability ID"], kind="stable")
+    )
+
+    return [
+        {
+            "capability_id": clean_text(row["Capability ID"]),
+            "capability_name": clean_text(row["Capability Name"]),
+            "capability_description": clean_text(row["Capability Description"]),
+            "capability_tier": clean_text(row["Capability Tier"]),
+            "level_1_name": clean_text(row["Level 1 Name"]),
+            "level_2_name": clean_text(row["Level 2 Name"]),
+        }
+        for _, row in rows.iterrows()
+    ]
+'''
+
+
+PREDICTION_SOURCE = '''def predict_for_stage(gateway, theme, epic, stage_id):
+    stage = stage_context(stage_id)
+    candidates = candidate_rows_for_stage(stage_id)
+    if not candidates:
+        return {
+            "stage": stage,
+            "candidates": [],
+            "user_prompt": build_user_prompt(theme, epic, stage, []),
+            "raw_response": None,
+            "selections": [],
+            "metrics": None,
+        }
+
+    user_prompt = build_user_prompt(theme, epic, stage, candidates)
+    raw_response, metrics = call_llm_with_metrics(
+        gateway,
+        SYSTEM_PROMPT,
+        user_prompt,
+    )
+    selections = validate_l3_response(
+        parse_json_response(raw_response),
+        [candidate["capability_id"] for candidate in candidates],
+        allow_empty=True,
+        max_selected=3,
+    )
+    return {
+        "stage": stage,
+        "candidates": candidates,
+        "user_prompt": user_prompt,
+        "raw_response": raw_response,
+        "selections": selections,
+        "metrics": metrics,
+    }
+
+
+def metric_text(value):
+    return "n/a" if value is None else str(value)
+
+
+def summarize_llm_calls(call_metrics):
+    successful = call_metrics.loc[call_metrics["status"] == "ok"].copy()
+
+    def numeric(column):
+        return pd.to_numeric(successful[column], errors="coerce").dropna()
+
+    latency = numeric("latency_seconds")
+    input_tokens = numeric("input_tokens")
+    output_tokens = numeric("output_tokens")
+    total_tokens = numeric("total_tokens")
+
+    return pd.DataFrame([{
+        "successful_calls": len(successful),
+        "failed_calls": int((call_metrics["status"] == "error").sum()),
+        "usage_reported_calls": len(total_tokens),
+        "avg_latency_seconds": float(latency.mean()) if len(latency) else None,
+        "p50_latency_seconds": float(latency.quantile(0.50)) if len(latency) else None,
+        "p95_latency_seconds": float(latency.quantile(0.95)) if len(latency) else None,
+        "avg_input_tokens": float(input_tokens.mean()) if len(input_tokens) else None,
+        "avg_output_tokens": float(output_tokens.mean()) if len(output_tokens) else None,
+        "avg_total_tokens": float(total_tokens.mean()) if len(total_tokens) else None,
+        "total_input_tokens": int(input_tokens.sum()) if len(input_tokens) else None,
+        "total_output_tokens": int(output_tokens.sum()) if len(output_tokens) else None,
+        "total_tokens": int(total_tokens.sum()) if len(total_tokens) else None,
+    }])
+
+
+def run_predictions():
+    gateway = load_gateway()
+    prediction_rows = []
+    call_rows = []
+    total_epics = sum(len(theme["epics"]) for theme in themes.values())
+    epic_index = 0
+
+    print(f"Running {EXPERIMENT_NAME}: {len(themes)} themes / {total_epics} epics")
+
+    for theme_id, theme in themes.items():
+        for epic in theme["epics"]:
+            epic_index += 1
+            epic_key = epic["key"]
+            stage_ids = []
+            stage_predictions = []
+            available_ids = set()
+            predicted_ids = set()
+            reasons = []
+            status = "ok"
+            error = None
+
+            print(f"\\n[{epic_index}/{total_epics}] {theme_id} | {epic_key}")
+
+            try:
+                stage_ids = epic_stage_ids(epic_key)
+            except Exception as exc:
+                status = "error"
+                error = str(exc)
+                print(f"  JIRA ERROR | {error}")
+
+            if status == "ok" and not stage_ids:
+                status = "no_stage"
+                print("  SKIP | no Value Stream Stage")
+
+            if status == "ok":
+                for stage_id in stage_ids:
+                    started = perf_counter()
+                    try:
+                        result = predict_for_stage(gateway, theme, epic, stage_id)
+                        candidates = result["candidates"]
+                        available_ids.update(
+                            candidate["capability_id"] for candidate in candidates
+                        )
+
+                        if not candidates:
+                            print(f"  {stage_id} SKIP | no candidates")
+                            continue
+
+                        metrics = result["metrics"]
+                        selected_ids = [
+                            selection["capability_id"]
+                            for selection in result["selections"]
+                        ]
+                        print(
+                            f"  {stage_id} OK"
+                            f" | candidates={len(candidates)}"
+                            f" | latency={metrics['latency_seconds']:.3f}s"
+                            f" | input_tokens={metric_text(metrics['input_tokens'])}"
+                            f" | output_tokens={metric_text(metrics['output_tokens'])}"
+                            f" | total_tokens={metric_text(metrics['total_tokens'])}"
+                            f" | selected={selected_ids}"
+                        )
+
+                        call_rows.append({
+                            "experiment": EXPERIMENT_NAME,
+                            "theme_id": theme_id,
+                            "epic_key": epic_key,
+                            "stage_id": stage_id,
+                            "candidate_count": len(candidates),
+                            "status": "ok",
+                            "latency_seconds": metrics["latency_seconds"],
+                            "input_tokens": metrics["input_tokens"],
+                            "output_tokens": metrics["output_tokens"],
+                            "total_tokens": metrics["total_tokens"],
+                            "selected_count": len(selected_ids),
+                            "error": None,
+                        })
+                        stage_predictions.append({
+                            "stage_id": stage_id,
+                            "selections": result["selections"],
+                        })
+                        for selection in result["selections"]:
+                            predicted_ids.add(selection["capability_id"])
+                            reasons.append({"stage_id": stage_id, **selection})
+                    except Exception as exc:
+                        latency = perf_counter() - started
+                        status = "error"
+                        error = str(exc)
+                        print(f"  {stage_id} ERROR | latency={latency:.3f}s | {error}")
+                        call_rows.append({
+                            "experiment": EXPERIMENT_NAME,
+                            "theme_id": theme_id,
+                            "epic_key": epic_key,
+                            "stage_id": stage_id,
+                            "candidate_count": None,
+                            "status": "error",
+                            "latency_seconds": latency,
+                            "input_tokens": None,
+                            "output_tokens": None,
+                            "total_tokens": None,
+                            "selected_count": None,
+                            "error": error,
+                        })
+                        break
+
+            if status == "ok" and stage_ids and not available_ids:
+                status = "no_candidates"
+
+            prediction_rows.append({
+                "experiment": EXPERIMENT_NAME,
+                "theme_id": theme_id,
+                "epic_key": epic_key,
+                "stage_ids": json.dumps(stage_ids),
+                "available_candidate_l3_ids": json.dumps(sorted(available_ids)),
+                "predicted_l3_ids": json.dumps(sorted(predicted_ids)),
+                "model_reasons": json.dumps(reasons, ensure_ascii=False),
+                "stage_predictions": json.dumps(stage_predictions, ensure_ascii=False),
+                "status": status,
+                "error": error,
+            })
+
+    call_columns = [
+        "experiment",
+        "theme_id",
+        "epic_key",
+        "stage_id",
+        "candidate_count",
+        "status",
+        "latency_seconds",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "selected_count",
+        "error",
+    ]
+    return (
+        pd.DataFrame(prediction_rows),
+        pd.DataFrame(call_rows, columns=call_columns),
+    )
+'''
+
+
 INSPECTION_SOURCE = '''if INSPECTION_THEME_ID and INSPECTION_EPIC_KEY:
     theme = themes[INSPECTION_THEME_ID]
     epic = next(
@@ -189,15 +443,17 @@ def validate_notebook(path: Path, notebook):
     config_text = source(config)
     assert config_text.startswith("from pathlib import Path\n")
     assert "from time import perf_counter" in config_text
-    assert "from common import (" in config_text
     assert "call_llm_with_metrics" in config_text
     assert "EXPERIMENT_NAME =" in config_text
-    assert "INSPECTION_THEME_ID = None" in config_text
+
+    candidate = code_after_heading(notebook, "## Candidate construction")
+    candidate_text = source(candidate)
+    assert "drop_duplicates(subset=[\"Capability ID\"]" in candidate_text
+    assert "sort_values" in candidate_text
 
     inspection = code_after_heading(notebook, "## Single-example inspection")
     inspection_text = source(inspection)
     assert "CALL METRICS" in inspection_text
-    assert "predict_for_stage" in inspection_text
 
     all_code = "\n".join(
         source(cell)
@@ -242,6 +498,12 @@ def main():
         code_after_heading(notebook, "## Configuration and imports")["source"] = (
             config_source(EXPERIMENT_NAMES[name])
         )
+        code_after_heading(notebook, "## Candidate construction")["source"] = (
+            HIERARCHY_CANDIDATE_SOURCE
+            if name == "05_full_with_hierarchy.ipynb"
+            else BASE_CANDIDATE_SOURCE
+        )
+        code_after_heading(notebook, "## Prediction")["source"] = PREDICTION_SOURCE
         code_after_heading(notebook, "## Single-example inspection")["source"] = (
             INSPECTION_SOURCE
         )

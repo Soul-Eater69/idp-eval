@@ -1,0 +1,23 @@
+name: Test E6 enhanced prompt
+
+on:
+  push:
+    paths:
+      - "l3_experiments/_test_e6_prompt.py"
+      - "l3_experiments/_apply_e6_prompt.py"
+      - "l3_experiments/06_enhanced_full_with_hierarchy.ipynb"
+      - ".github/workflows/e6-enhanced-prompt.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify E6 enhanced prompt experiment
+        run: python l3_experiments/_test_e6_prompt.py

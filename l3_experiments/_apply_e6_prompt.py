@@ -93,17 +93,25 @@ e6["cells"][0]["source"] = (
     "with explicit coverage, pruning, and missed-capability checks."
 )
 
-# Keep the same notebook logic and data flow; only rename the experiment.
+# Rename the experiment and match the 20-theme population used for the current
+# E1-E5 comparison. This does not change the per-Epic LLM-visible context.
 for cell in e6["cells"]:
     if cell["cell_type"] != "code":
         continue
     text = source(cell)
-    if 'EXPERIMENT_NAME = "E5_FULL_WITH_HIERARCHY"' in text:
-        cell["source"] = text.replace(
-            'EXPERIMENT_NAME = "E5_FULL_WITH_HIERARCHY"',
-            'EXPERIMENT_NAME = "E6_ENHANCED_FULL_WITH_HIERARCHY"',
+    if 'EXPERIMENT_NAME = "E5_FULL_WITH_HIERARCHY"' not in text:
+        continue
+    text = text.replace(
+        'EXPERIMENT_NAME = "E5_FULL_WITH_HIERARCHY"',
+        'EXPERIMENT_NAME = "E6_ENHANCED_FULL_WITH_HIERARCHY"',
+    )
+    if ".head(20)" not in text:
+        text = text.replace(
+            "    .drop_duplicates()\n    .tolist()",
+            "    .drop_duplicates()\n    .head(20)\n    .tolist()",
         )
-        break
+    cell["source"] = text
+    break
 else:
     raise AssertionError("E5 experiment name not found")
 
@@ -116,7 +124,12 @@ for cell in e6["cells"]:
         continue
     build_start = text.index("def build_user_prompt")
     build_source = text[build_start:]
-    cell["source"] = f'SYSTEM_PROMPT = {ENHANCED_PROMPT!r}\n\n{build_source}'
+    cell["source"] = (
+        'SYSTEM_PROMPT = """'
+        + ENHANCED_PROMPT
+        + '"""\n\n'
+        + build_source
+    )
     break
 else:
     raise AssertionError("Production prompt cell not found")

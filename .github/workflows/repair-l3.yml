@@ -1,28 +1,21 @@
-name: Repair L3 notebooks
+name: Test L3 evaluation population
 
 on:
   push:
     paths:
-      - "l3_experiments/_repair_notebook_structure.py"
+      - "l3_experiments/_test_eval_population.py"
       - ".github/workflows/repair-l3.yml"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  repair:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Repair and verify notebooks
-        run: python l3_experiments/_repair_notebook_structure.py
-      - name: Commit repaired notebooks
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add l3_experiments/*.ipynb
-          git commit -m "Repair L3 notebook structure"
-          git push
+      - name: Verify valid evaluation population behavior
+        run: python l3_experiments/_test_eval_population.py

@@ -42,6 +42,7 @@ e6 = json.loads(ENHANCED.read_text(encoding="utf-8"))
 all_e6 = "\n".join(source(cell) for cell in e6["cells"])
 assert "# Experiment 6 — Enhanced Full Context + Hierarchy" in all_e6
 assert 'EXPERIMENT_NAME = "E6_ENHANCED_FULL_WITH_HIERARCHY"' in all_e6
+assert ".head(20)" in all_e6, "E6 must match the current 20-theme comparison run"
 
 prompt = system_prompt(e6)
 base_prompt = system_prompt(base)
@@ -57,6 +58,7 @@ for required in (
 
 base_prompt_cell = find_code(base, "SYSTEM_PROMPT")
 e6_prompt_cell = find_code(e6, "SYSTEM_PROMPT")
+assert 'SYSTEM_PROMPT = """' in e6_prompt_cell, "Keep E6 prompt readable as a multiline string"
 base_build = base_prompt_cell[base_prompt_cell.index("def build_user_prompt"):]
 e6_build = e6_prompt_cell[e6_prompt_cell.index("def build_user_prompt"):]
 assert e6_build == base_build, "E6 changed the user-prompt payload"

@@ -1,0 +1,24 @@
+name: Test business-needs L3 experiments
+
+on:
+  push:
+    paths:
+      - "l3_experiments/_test_business_needs_experiments.py"
+      - "l3_experiments/_apply_business_needs_experiments.py"
+      - "l3_experiments/09_business_needs_stage.ipynb"
+      - "l3_experiments/10_business_needs_theme_batch.ipynb"
+      - ".github/workflows/business-needs-l3.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify business-needs-only experiments
+        run: python l3_experiments/_test_business_needs_experiments.py

@@ -1,0 +1,23 @@
+name: Test E11 business-needs hierarchy batch
+
+on:
+  push:
+    paths:
+      - "l3_experiments/_test_e11.py"
+      - "l3_experiments/_apply_e11.py"
+      - "l3_experiments/11_business_needs_theme_batch_with_hierarchy.ipynb"
+      - ".github/workflows/e11-business-needs-hierarchy.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify E11
+        run: python l3_experiments/_test_e11.py

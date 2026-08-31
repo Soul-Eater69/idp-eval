@@ -1,81 +1,10 @@
 name: Format L3 prompts multiline
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'l3_experiments/_format_prompts_multiline.py'
-      - '.github/workflows/format-prompts-multiline.yml'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  format:
+  retired:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Format prompts
-        run: python l3_experiments/_format_prompts_multiline.py
-      - name: Verify formatting
-        run: |
-          python - <<'PY'
-          import ast
-          import json
-          from pathlib import Path
-
-          base = Path('l3_experiments')
-          targets = []
-          for path in sorted(base.glob('*.ipynb')):
-              prefix = path.name.split('_', 1)[0]
-              if prefix.isdigit() and 12 <= int(prefix) <= 16:
-                  targets.append(path)
-
-          assert targets
-          for path in targets:
-              notebook = json.loads(path.read_text(encoding='utf-8'))
-              found = False
-              for index, cell in enumerate(notebook['cells'], start=1):
-                  if cell.get('cell_type') != 'code':
-                      continue
-                  source = cell.get('source', '')
-                  compile(source, f'{path.name}:cell_{index}', 'exec')
-                  if 'SYSTEM_PROMPT = ' in source:
-                      found = True
-                      assignment_line = next(
-                          line for line in source.splitlines()
-                          if line.startswith('SYSTEM_PROMPT = ')
-                      )
-                      assert assignment_line.endswith(chr(92))
-                      assert (
-                          assignment_line.startswith("SYSTEM_PROMPT = '''")
-                          or assignment_line.startswith('SYSTEM_PROMPT = """')
-                      )
-                      tree = ast.parse(source)
-                      value = None
-                      for node in tree.body:
-                          if isinstance(node, ast.Assign) and any(
-                              isinstance(target, ast.Name) and target.id == 'SYSTEM_PROMPT'
-                              for target in node.targets
-                          ):
-                              value = ast.literal_eval(node.value)
-                              break
-                      assert isinstance(value, str) and '\n' in value
-              assert found, f'No SYSTEM_PROMPT in {path.name}'
-          print(f'Verified multiline prompt formatting in {len(targets)} notebooks')
-          PY
-      - name: Commit formatted notebooks
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add l3_experiments/12*.ipynb l3_experiments/13*.ipynb l3_experiments/14*.ipynb l3_experiments/15*.ipynb l3_experiments/16*.ipynb
-          if git diff --cached --quiet; then
-            echo "No notebook changes to commit."
-            exit 0
-          fi
-          git commit -m "Format L3 experiment prompts as multiline blocks"
-          git push
+      - run: echo "Prompt formatting migration completed; workflow retained only because connector deletion is unavailable."

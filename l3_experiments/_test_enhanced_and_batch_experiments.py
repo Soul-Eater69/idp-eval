@@ -24,7 +24,7 @@ for name, experiment in EXPECTED.items():
     assert "SAMPLE_SIZE = 50" in code
     assert "SAMPLE_SEED = 42" in code
     assert 'reasoning_effort="low"' in code
-    assert "reason\"" not in code
+    assert '"reason":' not in code
     assert "Select 0 to 3" not in code
 
 for name in [

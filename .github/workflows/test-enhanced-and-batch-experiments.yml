@@ -1,0 +1,23 @@
+name: Verify enhanced and batch experiments
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'l3_experiments/_test_enhanced_and_batch_experiments.py'
+      - 'l3_experiments/12_business_needs_stage_enhanced_prompt.ipynb'
+      - 'l3_experiments/14_theme_needs_description_stage_enhanced_prompt.ipynb'
+      - 'l3_experiments/15_theme_needs_description_theme_batch_custom_prompt.ipynb'
+      - 'l3_experiments/16_business_needs_theme_batch_custom_prompt.ipynb'
+      - '.github/workflows/test-enhanced-and-batch-experiments.yml'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python l3_experiments/_test_enhanced_and_batch_experiments.py

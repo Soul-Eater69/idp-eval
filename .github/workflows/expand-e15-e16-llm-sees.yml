@@ -1,0 +1,67 @@
+name: Expand E15 E16 LLM-visible sections
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'l3_experiments/_expand_llm_sees_e15_e16.py'
+      - '.github/workflows/expand-e15-e16-llm-sees.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Expand sections
+        run: python l3_experiments/_expand_llm_sees_e15_e16.py
+      - name: Verify sections
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          expected = {
+              '15_theme_needs_description_theme_batch_custom_prompt.ipynb': [
+                  '✅ Theme Business Needs', '✅ Theme Description', '✅ Epic key',
+                  'stage_description', 'entrance_criteria', 'exit_criteria',
+                  'capability_id', 'capability_name', 'capability_description', 'capability_tier',
+                  '❌ Epic description', '❌ Epic success criteria', '❌ Ground truth L3s', '❌ L1/L2 hierarchy',
+                  'One LLM call per Theme',
+              ],
+              '16_business_needs_theme_batch_custom_prompt.ipynb': [
+                  '✅ Theme Business Needs', '❌ Theme Description', '✅ Epic key',
+                  'stage_description', 'entrance_criteria', 'exit_criteria',
+                  'capability_id', 'capability_name', 'capability_description', 'capability_tier',
+                  '❌ Epic description', '❌ Epic success criteria', '❌ Ground truth L3s', '❌ L1/L2 hierarchy',
+                  'One LLM call per Theme',
+              ],
+          }
+
+          for filename, required in expected.items():
+              notebook = json.loads((Path('l3_experiments') / filename).read_text(encoding='utf-8'))
+              section = next(
+                  cell['source'] for cell in notebook['cells']
+                  if cell.get('cell_type') == 'markdown' and cell.get('source', '').startswith('## What the LLM sees')
+              )
+              for text in required:
+                  assert text in section, (filename, text)
+          print('Verified expanded LLM-visible sections in E15 and E16')
+          PY
+      - name: Commit notebooks
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add l3_experiments/15_theme_needs_description_theme_batch_custom_prompt.ipynb l3_experiments/16_business_needs_theme_batch_custom_prompt.ipynb
+          if git diff --cached --quiet; then
+            echo "No notebook changes to commit."
+            exit 0
+          fi
+          git commit -m "Expand E15 E16 LLM-visible context sections"
+          git push

@@ -26,3 +26,4 @@ for index, source in enumerate(code_cells, start=1):
     compile(source, f"cell_{index}", "exec")
 
 print("GT fetch notebook structure is valid")
+# workflow trigger

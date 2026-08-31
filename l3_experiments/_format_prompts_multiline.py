@@ -34,7 +34,12 @@ def format_prompt_cell(source: str) -> str:
     else:
         raise ValueError("Prompt contains both triple-quote delimiters")
 
-    formatted_assignment = f"SYSTEM_PROMPT = {delimiter}{before_value}{delimiter}"
+    # Put the prompt body on its own physical lines while using a line-continuation
+    # immediately after the opening delimiter so the runtime prompt text is unchanged.
+    formatted_assignment = (
+        f"SYSTEM_PROMPT = {delimiter}{chr(92)}\n"
+        f"{before_value}{delimiter}"
+    )
     formatted = source[:start] + formatted_assignment + source[line_end:]
 
     after_value = prompt_value(formatted)
@@ -70,8 +75,7 @@ for path in targets:
         source = cell.get("source", "")
         if "SYSTEM_PROMPT = " in source:
             found_prompt = True
-            new_source = format_prompt_cell(source)
-            cell["source"] = new_source
+            cell["source"] = format_prompt_cell(source)
 
         compile(cell.get("source", ""), f"{path.name}:cell_{index}", "exec")
 

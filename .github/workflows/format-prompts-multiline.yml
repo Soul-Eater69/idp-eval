@@ -50,7 +50,11 @@ jobs:
                           line for line in source.splitlines()
                           if line.startswith('SYSTEM_PROMPT = ')
                       )
-                      assert assignment_line in {"SYSTEM_PROMPT = '''", 'SYSTEM_PROMPT = """'}
+                      assert assignment_line.endswith(chr(92))
+                      assert (
+                          assignment_line.startswith("SYSTEM_PROMPT = '''")
+                          or assignment_line.startswith('SYSTEM_PROMPT = """')
+                      )
                       tree = ast.parse(source)
                       value = None
                       for node in tree.body:

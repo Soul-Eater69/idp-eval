@@ -1,0 +1,23 @@
+name: Verify low reasoning effort
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'l3_experiments/_test_reasoning_effort_low.py'
+      - 'l3_experiments/common.py'
+      - 'l3_experiments/12_business_needs_stage_custom_prompt.ipynb'
+      - 'l3_experiments/13_theme_description_stage_custom_prompt.ipynb'
+      - 'l3_experiments/14_theme_needs_description_stage_custom_prompt.ipynb'
+      - '.github/workflows/test-reasoning-effort-low.yml'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python l3_experiments/_test_reasoning_effort_low.py

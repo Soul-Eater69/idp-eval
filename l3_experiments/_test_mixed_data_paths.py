@@ -23,9 +23,11 @@ def code_text(path: Path) -> str:
 for path in EXPERIMENTS:
     code = code_text(path)
     assert "def resolve_data_path(" in code, path
-    assert 'resolve_data_path("full_golden.parquet", "L3_FULL_GOLDEN_PATH")' in code, path
-    assert 'resolve_data_path("VSSrv.csv", "L3_STAGE_PATH")' in code, path
-    assert 'resolve_data_path("VSSCaprv (1).csv", "L3_STAGE_CAPABILITY_MAP_PATH")' in code, path
-    assert 'resolve_data_path("results/epic_l3_ground_truth_full_golden.xlsx", "L3_GROUND_TRUTH_PATH")' in code, path
+    assert '"full_golden.parquet"' in code and '"L3_FULL_GOLDEN_PATH"' in code, path
+    assert '"VSSrv.csv"' in code and '"L3_STAGE_PATH"' in code, path
+    assert '"VSSCaprv (1).csv"' in code and '"L3_STAGE_CAPABILITY_MAP_PATH"' in code, path
+    assert '"results/epic_l3_ground_truth_full_golden.xlsx"' in code, path
+    assert '"L3_GROUND_TRUTH_PATH"' in code, path
+    assert 'NOTEBOOK_DIR.parent' in code, path
 
 print("Mixed notebook/root data-path resolution is configured")

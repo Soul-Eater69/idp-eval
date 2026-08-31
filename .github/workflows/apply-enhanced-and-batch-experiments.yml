@@ -38,3 +38,5 @@ jobs:
           fi
           git commit -m "Add enhanced and theme batch L3 experiments"
           git push
+
+# Regenerate after IDs-only verification refinement.

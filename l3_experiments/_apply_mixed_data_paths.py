@@ -109,3 +109,5 @@ def update_notebook(path: Path) -> None:
 
 for experiment in EXPERIMENTS:
     update_notebook(experiment)
+
+# Keep this updater temporary; this comment only retriggers CI after test correction.

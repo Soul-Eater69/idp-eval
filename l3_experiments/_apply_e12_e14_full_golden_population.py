@@ -415,9 +415,11 @@ display(evaluation_population.head(50))
 
     print("SYSTEM PROMPT")
     print(SYSTEM_PROMPT)
-    print("\nUSER PROMPT")
+    print()
+    print("USER PROMPT")
     print(user_prompt)
-    print("\nCANDIDATES")
+    print()
+    print("CANDIDATES")
     display(pd.DataFrame(candidates))
 
     if candidates:
@@ -427,12 +429,15 @@ display(evaluation_population.head(50))
             epic,
             stage_id,
         )
-        print("\nMODEL RESPONSE")
+        print()
+        print("MODEL RESPONSE")
         print(result["raw_response"])
-        print("\nCALL METRICS")
+        print()
+        print("CALL METRICS")
         display(pd.DataFrame([result["metrics"]]))
     else:
-        print("\nNo candidates for this Stage; LLM call skipped.")
+        print()
+        print("No candidates for this Stage; LLM call skipped.")
 else:
     print(
         "Set INSPECTION_THEME_ID and INSPECTION_EPIC_KEY "
@@ -476,7 +481,8 @@ else:
         )
 
     preflight = pd.DataFrame(rows)
-    print("\n================ POPULATION SUMMARY ================")
+    print()
+    print("================ POPULATION SUMMARY ================")
     print(f"Sample seed: {SAMPLE_SEED}")
     print(f"Epics selected: {len(preflight)}")
     print(f"Themes represented: {preflight['theme_id'].nunique()}")
@@ -549,13 +555,17 @@ results = evaluate_predictions(predictions)
 summary, diagnostics = evaluation_summary(results, preflight)
 llm_call_summary = summarize_llm_calls(llm_calls)
 
-print("\nEvaluation summary")
+print()
+print("Evaluation summary")
 display(summary)
-print("\nPopulation diagnostics")
+print()
+print("Population diagnostics")
 display(diagnostics)
-print("\nLLM latency / token summary")
+print()
+print("LLM latency / token summary")
 display(llm_call_summary)
-print("\nPer-call LLM metrics")
+print()
+print("Per-call LLM metrics")
 display(llm_calls.head(50))
 if len(results):
     display(results.head(50))

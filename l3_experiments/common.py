@@ -189,6 +189,7 @@ def call_llm_with_metrics(
     gateway: Any,
     system_prompt: str,
     user_prompt: str,
+    **options: Any,
 ) -> tuple[str, dict[str, float | int | None]]:
     """Call the gateway and return assistant text plus end-to-end latency/token usage."""
     started = perf_counter()
@@ -196,7 +197,8 @@ def call_llm_with_metrics(
         [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
-        ]
+        ],
+        **options,
     )
     latency_seconds = perf_counter() - started
 

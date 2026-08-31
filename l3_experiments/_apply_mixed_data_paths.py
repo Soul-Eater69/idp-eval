@@ -33,7 +33,7 @@ GROUND_TRUTH_PATH = Path(
 )
 '''
 
-NEW_BLOCK = '''NOTEBOOK_DIR = Path.cwd()
+NEW_BLOCK = r'''NOTEBOOK_DIR = Path.cwd()
 
 
 def resolve_data_path(relative_path: str, env_var: str) -> Path:

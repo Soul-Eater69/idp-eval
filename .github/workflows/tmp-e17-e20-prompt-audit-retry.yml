@@ -1,0 +1,59 @@
+name: Retry E17-E20 prompt audit and comparison
+
+on:
+  push:
+    paths:
+      - '.github/workflows/tmp-e17-e20-prompt-audit-retry.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: RED - current notebooks must fail new audit requirements
+        run: |
+          if python scripts/.tmp_check_e17_e20_prompt_audit.py; then
+            echo "Expected current code to fail the new audit requirements, but it passed."
+            exit 1
+          else
+            echo "RED verified."
+          fi
+
+      - name: Fix temporary notebook generator escaping
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/.tmp_update_e17_e20_prompt_audit.py')
+          text = p.read_text()
+          old = "    audit_source = '''# PROMPT_AUDIT_EXPORT_E17_E20"
+          new = "    audit_source = r'''# PROMPT_AUDIT_EXPORT_E17_E20"
+          if text.count(old) != 1:
+              raise SystemExit(f'Expected one audit_source marker, found {text.count(old)}')
+          p.write_text(text.replace(old, new, 1))
+          print('Generator escaping corrected.')
+          PY
+
+      - name: Apply E17-E20 prompt audit update
+        run: python scripts/.tmp_update_e17_e20_prompt_audit.py
+
+      - name: GREEN - verify corrected notebooks and report
+        run: python scripts/.tmp_check_e17_e20_prompt_audit.py
+
+      - name: Remove temporary updater, verifier, and workflows
+        run: |
+          rm scripts/.tmp_update_e17_e20_prompt_audit.py
+          rm scripts/.tmp_check_e17_e20_prompt_audit.py
+          rm .github/workflows/tmp-e17-e20-prompt-audit.yml
+          rm .github/workflows/tmp-e17-e20-prompt-audit-retry.yml
+
+      - name: Commit verified update
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Add E17-E20 prompt audit and results comparison'
+          git push

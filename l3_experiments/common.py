@@ -180,6 +180,19 @@ def load_gateway() -> IDPGatewayClient:
     return get_idp_gateway()
 
 
+_prompt_audit_log: list[dict[str, Any]] = []
+
+
+def reset_prompt_audit_log() -> None:
+    """Clear exact prompt audit entries before an experiment run."""
+    _prompt_audit_log.clear()
+
+
+def get_prompt_audit_log() -> list[dict[str, Any]]:
+    """Return a copy of exact prompt audit entries in gateway-call order."""
+    return [dict(entry) for entry in _prompt_audit_log]
+
+
 def call_llm(gateway: Any, system_prompt: str, user_prompt: str) -> str:
     """Call the gateway and return only assistant text."""
     return gateway.chat(system_prompt=system_prompt, user_prompt=user_prompt)
@@ -191,22 +204,53 @@ def call_llm_with_metrics(
     user_prompt: str,
     **options: Any,
 ) -> tuple[str, dict[str, float | int | None]]:
-    """Call the gateway and return assistant text plus end-to-end latency/token usage."""
+    """Call the gateway, recording the exact prompts plus latency/token usage."""
     started = perf_counter()
-    response = gateway.complete(
-        [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        **options,
-    )
+    audit_entry: dict[str, Any] = {
+        "call_index": len(_prompt_audit_log) + 1,
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
+        "status": "started",
+        "latency_seconds": None,
+        "input_tokens": None,
+        "output_tokens": None,
+        "total_tokens": None,
+        "error": None,
+    }
+    _prompt_audit_log.append(audit_entry)
+
+    try:
+        response = gateway.complete(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            **options,
+        )
+    except Exception as exc:
+        latency_seconds = perf_counter() - started
+        audit_entry.update(
+            status="error",
+            latency_seconds=latency_seconds,
+            error=str(exc),
+        )
+        raise
+
     latency_seconds = perf_counter() - started
+    token_metrics = _token_metrics(response)
+    audit_entry.update(
+        status="ok",
+        latency_seconds=latency_seconds,
+        **token_metrics,
+    )
 
     metrics: dict[str, float | int | None] = {
         "latency_seconds": latency_seconds,
-        **_token_metrics(response),
+        **token_metrics,
+        "prompt_call_index": audit_entry["call_index"],
     }
     return _assistant_text(response), metrics
+
 
 
 def parse_json_response(text: str) -> dict[str, Any]:

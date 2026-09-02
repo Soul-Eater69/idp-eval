@@ -1,0 +1,36 @@
+name: Implement E21 and E22 notebooks
+
+on:
+  push:
+    paths:
+      - '.github/workflows/tmp-e21-e22-implement.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply E21 E22 notebook generation
+        run: python scripts/.tmp_update_e21_e22.py
+
+      - name: GREEN - verify E21 E22
+        run: python scripts/.tmp_check_e21_e22.py
+
+      - name: Remove temporary TDD files
+        run: |
+          rm scripts/.tmp_update_e21_e22.py
+          rm scripts/.tmp_check_e21_e22.py
+          rm .github/workflows/tmp-e21-e22-red.yml
+          rm .github/workflows/tmp-e21-e22-implement.yml
+
+      - name: Commit verified notebooks
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Add E21 recall-tuned and E22 relevance experiments'
+          git push
